@@ -25,6 +25,13 @@ const api = {
     ipcRenderer.invoke('dialog:saveTacticExport', format),
   exportTacticFrames: (args: ExportTacticFramesRequest): Promise<void> =>
     ipcRenderer.invoke('video:exportTacticFrames', args),
+  getCachedPlaybackPath: (sourcePath: string): Promise<string | null> =>
+    ipcRenderer.invoke('video:getCachedPlaybackPath', sourcePath),
+  transcodeForPlayback: (args: { sourcePath: string; durationSec: number }): Promise<string> =>
+    ipcRenderer.invoke('video:transcodeForPlayback', args),
+  onTranscodeProgress: (cb: (percent: number) => void): void => {
+    ipcRenderer.on('video:transcodeProgress', (_e, percent: number) => cb(percent))
+  },
 
   createTeam: (name: string): Promise<Team> => ipcRenderer.invoke('db:createTeam', name),
   listTeams: (): Promise<Team[]> => ipcRenderer.invoke('db:listTeams'),

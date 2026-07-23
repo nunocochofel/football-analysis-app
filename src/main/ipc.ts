@@ -2,7 +2,15 @@ import { dialog, ipcMain, BrowserWindow } from 'electron'
 import { readFile } from 'fs/promises'
 import * as XLSX from 'xlsx'
 import Papa from 'papaparse'
-import { probeVideo, cutClip, exportSequence, exportImageSequence } from './ffmpeg'
+import {
+  probeVideo,
+  cutClip,
+  exportSequence,
+  exportImageSequence,
+  hasTranscodedCache,
+  transcodedCachePath,
+  transcodeForPlayback
+} from './ffmpeg'
 import * as q from './db/queries'
 import type { ExportClipRequest, ExportTacticFramesRequest } from '../shared/types'
 
@@ -80,6 +88,17 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   )
   ipcMain.handle('video:exportTacticFrames', (_e, args: ExportTacticFramesRequest) =>
     exportImageSequence(args.frames, args.fps, args.outputPath, args.format)
+  )
+
+  // Playback fallback for codecs (e.g. HEVC/.mov straight off an iPhone) that Chromium's <video>
+  // element can't decode — see the big comment above transcodeForPlayback() in ffmpeg.ts.
+  ipcMain.handle('video:getCachedPlaybackPath', (_e, sourcePath: string) =>
+    hasTranscodedCache(sourcePath) ? transcodedCachePath(sourcePath) : null
+  )
+  ipcMain.handle('video:transcodeForPlayback', (e, args: { sourcePath: string; durationSec: number }) =>
+    transcodeForPlayback(args.sourcePath, args.durationSec, (percent) => {
+      e.sender.send('video:transcodeProgress', percent)
+    })
   )
 
   // Teams / players

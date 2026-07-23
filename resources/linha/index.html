@@ -853,7 +853,13 @@
           <div class="empty-state" id="videoErrorState" style="display:none;">
             <h3 style="color:var(--crimson);">Não foi possível carregar este vídeo</h3>
             <p id="videoErrorMsg">O navegador não conseguiu reproduzir o arquivo.</p>
-            <button class="btn" id="btnRetryVideo" style="margin-top:6px;">Tentar novamente</button>
+            <div style="display:flex; gap:8px; margin-top:6px; justify-content:center;">
+              <button class="btn" id="btnRetryVideo">Tentar novamente</button>
+              <button class="btn primary" id="btnConvertVideo" style="display:none;">Converter vídeo para reprodução</button>
+            </div>
+            <p id="btnConvertVideoHint" style="display:none; color:var(--muted); font-size:12px; margin-top:8px;">
+              Este formato (comum em vídeos gravados no iPhone) não é suportado para reprodução direta. A conversão corre uma vez só — as próximas aberturas deste vídeo já usam a cópia convertida.
+            </p>
           </div>
           <div class="video-zoom-layer" id="videoZoomLayer">
             <video id="videoEl" playsinline muted></video>
@@ -1463,7 +1469,7 @@ async function tryRestoreVideo(){
     // A plain absolute path doesn't need a permission prompt or a stale-handle check the way
     // the File System Access API restore below does — if the file moved, the native <video>
     // element's own 'error' event (handled in loadVideoFromElectronPath) surfaces that.
-    if(state.videoPath) loadVideoFromElectronPath(state.videoPath);
+    if(state.videoPath) openElectronVideoPath(state.videoPath);
     return;
   }
   const handle = await loadVideoHandle(currentProjectId);
@@ -2263,8 +2269,15 @@ function isElectron(){ return !!window.api; }
 // returns can't be resolved to a real filesystem path (webUtils.getPathForFile comes back empty
 // for it), which the native tracking pipeline needs to hand to ffmpeg. dialog.showOpenDialog
 // gives us that absolute path directly, with no File/handle object in the way at all.
-function loadVideoFromElectronPath(filePath){
+//
+// `originalPath` is the real source file (used for clip cutting/export and to know what to
+// re-transcode if playback fails); `filePath` is what actually gets loaded into <video> — usually
+// the same, but can be a cached H.264 conversion of a source Chromium can't decode (see
+// convertVideoForPlayback below).
+let electronVideoSourcePath = null;
+function loadVideoFromElectronPath(filePath, originalPath){
   currentVideoFile = null;
+  electronVideoSourcePath = originalPath || filePath;
   hideVideoError();
   document.getElementById('videoEmptyState').style.display='none';
   clearTimeout(videoLoadTimeoutId);
@@ -2275,9 +2288,19 @@ function loadVideoFromElectronPath(filePath){
   videoEl.load();
   videoLoadTimeoutId = setTimeout(()=>{
     if(videoEl.readyState===0){
-      showVideoError('O vídeo não respondeu depois de um tempo. Verifica se o ficheiro ainda existe no caminho original: '+filePath);
+      showVideoError('O vídeo não respondeu depois de um tempo. Pode ser um formato não suportado para reprodução direta, ou o ficheiro pode já não existir no caminho original: '+filePath);
     }
   }, 10000);
+}
+// Checks for an already-converted playback copy before loading — avoids re-paying the (possibly
+// multi-minute) transcode cost every time the same project/video is reopened.
+async function openElectronVideoPath(originalPath){
+  let playPath = originalPath;
+  try{
+    const cached = await window.api.getCachedPlaybackPath(originalPath);
+    if(cached) playPath = cached;
+  }catch(err){ console.error(err); }
+  loadVideoFromElectronPath(playPath, originalPath);
 }
 
 function guessMimeFromName(name){
@@ -2311,7 +2334,7 @@ document.getElementById('btnUploadVideo').addEventListener('click', async ()=>{
       if(!result) return;
       state.videoPath = result.filePath;
       saveState();
-      loadVideoFromElectronPath(result.filePath);
+      openElectronVideoPath(result.filePath);
     }catch(err){
       console.error(err); toast('Não foi possível abrir o vídeo.');
     }
@@ -2342,9 +2365,36 @@ document.getElementById('fileVideo').addEventListener('change', e=>{
   handleChosenVideoFile(file);
 });
 document.getElementById('btnRetryVideo').addEventListener('click', ()=>{
-  if(currentVideoFile) loadVideoFile(currentVideoFile);
+  if(videoEl.dataset.strategy==='electron-path' && electronVideoSourcePath) openElectronVideoPath(electronVideoSourcePath);
+  else if(currentVideoFile) loadVideoFile(currentVideoFile);
   else document.getElementById('fileVideo').click();
 });
+// Playback fallback: re-encodes the source once via the bundled ffmpeg into widely-supported
+// H.264/AAC and loads that instead — for codecs Chromium's <video> can't decode at all (HEVC/.mov
+// straight off an iPhone being the classic case), no amount of retrying the original ever works.
+document.getElementById('btnConvertVideo').addEventListener('click', async ()=>{
+  if(!electronVideoSourcePath || !isElectron()) return;
+  const btn = document.getElementById('btnConvertVideo');
+  btn.disabled = true;
+  btn.textContent = 'A converter… 0%';
+  try{
+    const probe = await window.api.probeVideo(electronVideoSourcePath);
+    const playPath = await window.api.transcodeForPlayback({sourcePath: electronVideoSourcePath, durationSec: probe.durationSec});
+    loadVideoFromElectronPath(playPath, electronVideoSourcePath);
+  }catch(err){
+    console.error(err);
+    showVideoError('Não foi possível converter este vídeo: '+(err && err.message ? err.message : err));
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Converter vídeo para reprodução';
+  }
+});
+if(window.api && window.api.onTranscodeProgress){
+  window.api.onTranscodeProgress(percent=>{
+    const btn = document.getElementById('btnConvertVideo');
+    if(btn && btn.disabled) btn.textContent = 'A converter… '+percent+'%';
+  });
+}
 
 function showVideoError(msg){
   clearTimeout(videoLoadTimeoutId);
@@ -2354,6 +2404,12 @@ function showVideoError(msg){
   const errEl = document.getElementById('videoErrorState');
   errEl.style.display='block';
   document.getElementById('videoErrorMsg').textContent = msg;
+  // Converting only makes sense for the native Electron path strategy (ffmpeg needs a real
+  // filesystem path) and only once — offering it again on an already-converted copy that still
+  // somehow fails would just loop.
+  const offerConvert = isElectron() && videoEl.dataset.strategy==='electron-path' && !!electronVideoSourcePath;
+  document.getElementById('btnConvertVideo').style.display = offerConvert ? '' : 'none';
+  document.getElementById('btnConvertVideoHint').style.display = offerConvert ? '' : 'none';
 }
 function hideVideoError(){
   videoEl.dataset.errored = '';
@@ -2417,7 +2473,7 @@ function handleVideoLoadStuck(file, immediate){
 videoEl.addEventListener('error', ()=>{
   if(videoEl.dataset.strategy==='electron-path'){
     clearTimeout(videoLoadTimeoutId);
-    showVideoError('Não foi possível reproduzir este vídeo. Verifica se o ficheiro ainda existe no caminho original.');
+    showVideoError('Não foi possível reproduzir este vídeo. Pode ser um formato/codec não suportado para reprodução direta (comum em vídeos gravados no iPhone) — experimenta convertê-lo abaixo. Se o problema persistir, verifica se o ficheiro ainda existe no caminho original.');
     return;
   }
   if(!currentVideoFile) return;
