@@ -1,0 +1,413 @@
+:root {
+  color-scheme: dark;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #14161a;
+  color: #e6e8eb;
+}
+
+button {
+  background: #2a2f37;
+  color: #e6e8eb;
+  border: 1px solid #3a4048;
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+button:hover {
+  background: #3a4048;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+button.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+}
+
+input,
+select {
+  background: #1c1f24;
+  color: #e6e8eb;
+  border: 1px solid #3a4048;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #60a5fa;
+  padding: 2px 4px;
+  text-decoration: underline;
+}
+
+.link-button.danger {
+  color: #f87171;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  flex-wrap: wrap;
+}
+
+.panel {
+  background: #1c1f24;
+  border: 1px solid #2a2f37;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 12px 0;
+}
+
+.setup-screen {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.chip-list,
+.player-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  background: #2a2f37;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.player-list {
+  flex-direction: column;
+}
+
+.error {
+  color: #f87171;
+}
+
+.workspace {
+  padding: 12px 16px;
+}
+
+.workspace-header h2 {
+  margin: 0;
+  font-size: 16px;
+  flex: 1;
+}
+
+.status-message {
+  font-size: 12px;
+  color: #a3e635;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 16px;
+  align-items: start;
+}
+
+.video-stage {
+  position: relative;
+  background: black;
+}
+
+.video-stage video {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.drawing-overlay-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.drawing-toolbar {
+  position: absolute;
+  top: -34px;
+  left: 0;
+  display: flex;
+  gap: 4px;
+  z-index: 2;
+}
+
+.drawing-toolbar .hint {
+  font-size: 11px;
+  color: #9aa1ab;
+  align-self: center;
+}
+
+.follow-vertices-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #9aa1ab;
+  align-self: center;
+}
+
+.tracking-progress-overlay {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 3;
+  background: rgba(20, 22, 26, 0.85);
+  border: 1px solid #3b82f6;
+  color: #e6e8eb;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.seed-capture-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  cursor: crosshair;
+  background: rgba(59, 130, 246, 0.12);
+  border: 2px dashed #3b82f6;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.seed-capture-overlay span {
+  margin-top: 12px;
+  background: rgba(20, 22, 26, 0.9);
+  color: #e6e8eb;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.player-track-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.player-track-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.player-track-row label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.player-track-status {
+  font-size: 11px;
+  color: #9aa1ab;
+  min-width: 90px;
+  text-align: right;
+}
+
+.player-track-actions {
+  margin-top: 8px;
+  gap: 6px;
+}
+
+.drawing-stage {
+  position: relative;
+  z-index: 1;
+}
+
+.playback-controls .time-readout {
+  font-variant-numeric: tabular-nums;
+  margin-left: 8px;
+}
+
+.tagging-panel {
+  margin-top: 8px;
+}
+
+.tag-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-button {
+  position: relative;
+  border-width: 2px;
+  padding-right: 22px;
+}
+
+.tag-button.tag-open {
+  color: #14161a;
+  font-weight: bold;
+}
+
+.tag-name {
+  margin-right: 4px;
+}
+
+.tag-shortcut {
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+.tag-delete {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  bottom: 2px;
+  width: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  line-height: 1;
+}
+
+.new-category {
+  margin-top: 10px;
+  border: 1px dashed #3a4048;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.color-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+}
+
+.color-swatch.selected {
+  border-color: white;
+}
+
+.field-diagram {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 68 / 105;
+  background: #1f7a3f;
+  border: 2px solid #d7dfe6;
+  cursor: crosshair;
+}
+
+.field-diagram.disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.field-halfway-line {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: #d7dfe6;
+}
+
+.field-center-circle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 25%;
+  aspect-ratio: 1;
+  border: 1px solid #d7dfe6;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.field-marker {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #ef4444;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.side-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+.timeline-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.timeline-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-left: 4px solid #666;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.timeline-row.selected {
+  background: #1c1f24;
+}
+
+.timeline-select {
+  flex: 1;
+  text-align: left;
+}
+
+.matrix-scroll {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+th,
+td {
+  border: 1px solid #2a2f37;
+  padding: 4px 8px;
+  text-align: center;
+}
+
+th:first-child,
+td:first-child {
+  text-align: left;
+}
