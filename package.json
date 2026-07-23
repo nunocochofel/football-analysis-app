@@ -85,7 +85,7 @@
       "icon": "build/icon.png",
       "category": "public.app-category.sports",
       "identity": null,
-      "x64ArchFiles": "**/ffmpeg-static/ffmpeg,**/ffprobe-static/bin/darwin/x64/ffprobe,**/ffprobe-static/bin/darwin/arm64/ffprobe"
+      "x64ArchFiles": "**/{ffmpeg-static,ffprobe-static}/**"
     }
   }
 }
