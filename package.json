@@ -84,8 +84,8 @@
       "target": [{ "target": "dmg", "arch": ["universal"] }],
       "icon": "build/icon.png",
       "category": "public.app-category.sports",
-      "identity": null
-    },
-    "x64ArchFiles": "**/ffmpeg-static/ffmpeg,**/ffprobe-static/bin/darwin/x64/ffprobe,**/ffprobe-static/bin/darwin/arm64/ffprobe"
+      "identity": null,
+      "x64ArchFiles": "**/ffmpeg-static/ffmpeg,**/ffprobe-static/bin/darwin/x64/ffprobe,**/ffprobe-static/bin/darwin/arm64/ffprobe"
+    }
   }
 }
