@@ -554,12 +554,20 @@
   }
   .scenes-strip{display:flex; gap:8px; padding:10px 14px; border-top:1px solid var(--line); background:var(--panel); overflow-x:auto; flex-shrink:0;}
   .scene-thumb{
-    flex-shrink:0; width:96px; height:64px; border-radius:6px; background:var(--pitch-dark); border:2px solid var(--line);
+    flex-shrink:0; width:112px; height:76px; border-radius:6px; background:var(--pitch-dark); border:2px solid var(--line);
     display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:11px; position:relative; cursor:pointer;
   }
   .scene-thumb.active{border-color:var(--amber);}
+  .scene-thumb .scene-label{margin-bottom:14px;}
   .scene-thumb .del{position:absolute; top:2px; right:2px; background:rgba(0,0,0,.5); color:#fff; border:none; width:16px; height:16px; border-radius:50%; font-size:10px; line-height:1;}
-  .scene-add{flex-shrink:0; width:96px; height:64px; border-radius:6px; border:2px dashed var(--line); background:transparent; color:var(--muted); display:flex; align-items:center; justify-content:center; font-size:22px;}
+  .scene-actions{position:absolute; bottom:3px; left:3px; right:3px; display:flex; gap:3px; justify-content:center;}
+  .scene-actions button{
+    background:rgba(0,0,0,.45); color:#fff; border:none; border-radius:3px; font-size:10px;
+    width:26px; height:18px; line-height:1; cursor:pointer;
+  }
+  .scene-actions button:hover{background:rgba(0,0,0,.75);}
+  .scene-actions button:disabled{opacity:.3; cursor:default;}
+  .scene-add{flex-shrink:0; width:112px; height:76px; border-radius:6px; border:2px dashed var(--line); background:transparent; color:var(--muted); display:flex; align-items:center; justify-content:center; font-size:22px;}
   .tactic-side{width:230px; background:var(--panel); border-left:1px solid var(--line); padding:14px; overflow-y:auto; flex-shrink:0;}
   .formation-btns{display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:14px;}
   .formation-btns button{width:100%; text-align:center; padding:6px 4px; font-size:12px;}
@@ -3956,6 +3964,7 @@ let tacticShapes = [];
 let tTool = 'move';
 let tColor = state.drawColors[1];
 let tDragId = null;
+let tacticShapeDragSession = null; // {shape, startX, startY, orig} — dragging a canvas text shape
 
 // "Campo Inteiro", "Campo p/ Zonas" and "Área" are independent boards sharing one DOM/canvas — switching
 // mode snapshots the outgoing board's live tokens/shapes into an in-memory buffer and loads the
@@ -4004,6 +4013,7 @@ function setBoardMode(mode){
   if(buf){ tokens = buf.tokens; tacticShapes = buf.shapes; }
   else { defaultTokens(); tacticShapes = []; }
   tZonePts = [];
+  activeSceneIndex = null; // each board mode has its own separate scene list
   initPitchSVG();
   tacticPitch.classList.toggle('box-mode', boardMode==='box');
   document.getElementById('formationSections').style.display = boardMode==='box' ? 'none' : '';
@@ -4226,6 +4236,15 @@ tacticPitch.addEventListener('mousemove', e=>{
   }
 });
 window.addEventListener('mouseup', ()=>{ tDragId=null; tRotateId=null; });
+window.addEventListener('mousemove', e=>{
+  if(!tacticShapeDragSession) return;
+  const r = tacticPitch.getBoundingClientRect();
+  const dx = (e.clientX-tacticShapeDragSession.startX)/r.width;
+  const dy = (e.clientY-tacticShapeDragSession.startY)/r.height;
+  applyShapeGeometry(tacticShapeDragSession.shape, tacticShapeDragSession.orig, dx, dy);
+  redrawTactic();
+});
+window.addEventListener('mouseup', ()=>{ tacticShapeDragSession = null; });
 
 function setTacticTool(tool){
   const b = document.querySelector(`[data-ttool="${tool}"]`);
@@ -4263,7 +4282,19 @@ tacticCanvas.addEventListener('mousedown', e=>{
   // it as a left-click and start a brand new shape at the same spot just erased from (same fix
   // already applied to the video tab's drawCanvas).
   if(e.button!==0) return;
-  if(tTool==='move') return;
+  if(tTool==='move'){
+    // Tokens (players/objects/images) are DOM elements and already drag via their own mousedown
+    // handlers — this is the equivalent for canvas-drawn text shapes, which have no such handle.
+    const p = tRelPt(e);
+    const px = p.x*tacticCanvas.width, py = p.y*tacticCanvas.height;
+    for(let i=tacticShapes.length-1;i>=0;i--){
+      if(tacticShapes[i].type==='text' && shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){
+        tacticShapeDragSession = {shape:tacticShapes[i], startX:e.clientX, startY:e.clientY, orig:cloneShapeGeometry(tacticShapes[i])};
+        break;
+      }
+    }
+    return;
+  }
   if(tTool==='eraser'){ tErasing=true; if(eraseTacticShapeAt(e)) redrawTactic(); return; }
   const p = tRelPt(e);
   if(tTool==='zone'){ tZonePts.push(p); return; }
@@ -4392,22 +4423,64 @@ document.getElementById('btnTacticUndo').addEventListener('click', ()=>{ tacticS
 document.getElementById('btnTacticClear').addEventListener('click', ()=>{ tacticShapes=[]; tZonePts=[]; redrawTactic(); });
 
 /* ---------- Scenes (save/playback of tactical board arrangements) ---------- */
+// Tracks which scene was last loaded/edited in THIS board mode, so "💾" on a thumbnail knows
+// which one to overwrite — reset whenever the strip is rebuilt for a different board/scene count
+// to avoid pointing at a stale index after a delete/reorder.
+let activeSceneIndex = null;
 function renderScenesStrip(){
   const strip = document.getElementById('scenesStrip');
   const scenes = activeScenesArray();
   strip.querySelectorAll('.scene-thumb').forEach(s=>s.remove());
   scenes.forEach((sc,i)=>{
     const el = document.createElement('div');
-    el.className='scene-thumb';
-    el.innerHTML = 'Cena '+(i+1)+'<button class="del">✕</button>';
-    el.addEventListener('click', e=>{ if(e.target.classList.contains('del')) return; loadScene(sc); });
-    el.querySelector('.del').addEventListener('click', ()=>{ scenes.splice(i,1); renderScenesStrip(); saveState(); });
+    el.className='scene-thumb'+(i===activeSceneIndex ? ' active' : '');
+    el.innerHTML = `
+      <div class="scene-label">Cena ${i+1}</div>
+      <button class="del" title="Eliminar esta cena">✕</button>
+      <div class="scene-actions">
+        <button class="mv" data-dir="-1" title="Mover para trás" ${i===0?'disabled':''}>◀</button>
+        <button class="upd" title="Guardar o estado atual do quadro nesta cena">💾</button>
+        <button class="mv" data-dir="1" title="Mover para a frente" ${i===scenes.length-1?'disabled':''}>▶</button>
+      </div>`;
+    el.addEventListener('click', e=>{
+      if(e.target.closest('button')) return;
+      activeSceneIndex = i;
+      loadScene(sc);
+      renderScenesStrip();
+    });
+    el.querySelector('.del').addEventListener('click', e=>{
+      e.stopPropagation();
+      scenes.splice(i,1);
+      if(activeSceneIndex===i) activeSceneIndex = null;
+      else if(activeSceneIndex!=null && activeSceneIndex>i) activeSceneIndex--;
+      renderScenesStrip(); saveState();
+    });
+    el.querySelector('.upd').addEventListener('click', e=>{
+      e.stopPropagation();
+      scenes[i] = {tokens: JSON.parse(JSON.stringify(tokens)), shapes: JSON.parse(JSON.stringify(tacticShapes))};
+      activeSceneIndex = i;
+      renderScenesStrip(); saveState();
+      toast('Cena '+(i+1)+' atualizada.');
+    });
+    el.querySelectorAll('.mv').forEach(b=>{
+      b.addEventListener('click', e=>{
+        e.stopPropagation();
+        const dir = Number(b.dataset.dir);
+        const j = i+dir;
+        if(j<0 || j>=scenes.length) return;
+        [scenes[i], scenes[j]] = [scenes[j], scenes[i]];
+        if(activeSceneIndex===i) activeSceneIndex = j;
+        else if(activeSceneIndex===j) activeSceneIndex = i;
+        renderScenesStrip(); saveState();
+      });
+    });
     strip.insertBefore(el, document.getElementById('btnAddScene'));
   });
 }
 document.getElementById('btnAddScene').addEventListener('click', ()=>{
   const scenes = activeScenesArray();
   scenes.push({tokens: JSON.parse(JSON.stringify(tokens)), shapes: JSON.parse(JSON.stringify(tacticShapes))});
+  activeSceneIndex = scenes.length-1;
   renderScenesStrip(); saveState();
   toast('Cena salva ('+scenes.length+').');
 });
