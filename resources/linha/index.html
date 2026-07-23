@@ -4270,6 +4270,10 @@ tacticCanvas.addEventListener('mousedown', e=>{
   if(tTool==='text'){
     tacticShapes.push({type:'text', p, text:'', color:tColor, bold:true, italic:false, fontScale:1});
     redrawTactic();
+    // Back to the move tool immediately — otherwise it stays armed and a follow-up double-click
+    // meant to EDIT the box you just placed instead drops two more on top of it (same fix as the
+    // video tab's text tool).
+    setTacticTool('move');
     return;
   }
   tDrawing=true; tStart=p;
