@@ -4,14 +4,6 @@ import { autoUpdater } from 'electron-updater'
 import { registerIpcHandlers } from './ipc'
 import { initDatabase } from './db'
 
-// Chromium's GPU/compositor path is the most common reason an Electron app opens fine on one
-// machine and fails to even show a window (or crashes/shows a blank one) on another — especially
-// with older, less common, or poorly-driver-supported integrated graphics. This has to run before
-// app.whenReady(). Trading a little GPU-accelerated smoothness for actually starting reliably
-// across a wide spread of processors/graphics (old Intel integrated through recent AMD Ryzen APUs)
-// is the right call for a tool meant to be shared with non-technical friends on unknown hardware.
-app.disableHardwareAcceleration()
-
 let mainWindow: BrowserWindow | null = null
 
 // The LINHA web app (resources/linha/index.html) is the primary UI — it has no build step of
