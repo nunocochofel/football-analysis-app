@@ -76,11 +76,6 @@ const api = {
 
   onAutoUpdateStatus: (cb: (message: string) => void): void => {
     ipcRenderer.on('autoUpdate:status', (_e, message: string) => cb(message))
-  },
-
-  toggleFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window:toggleFullScreen'),
-  onFullScreenChanged: (cb: (isFullScreen: boolean) => void): void => {
-    ipcRenderer.on('window:fullscreenChanged', (_e, isFullScreen: boolean) => cb(isFullScreen))
   }
 }
 

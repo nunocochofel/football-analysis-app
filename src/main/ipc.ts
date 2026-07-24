@@ -15,13 +15,6 @@ import * as q from './db/queries'
 import type { ExportClipRequest, ExportTacticFramesRequest } from '../shared/types'
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void {
-  ipcMain.handle('window:toggleFullScreen', () => {
-    const win = getWindow()
-    if (!win) return false
-    win.setFullScreen(!win.isFullScreen())
-    return win.isFullScreen()
-  })
-
   // File dialogs
   ipcMain.handle('dialog:openVideo', async () => {
     const win = getWindow()

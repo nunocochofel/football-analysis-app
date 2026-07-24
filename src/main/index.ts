@@ -32,14 +32,10 @@ function createWindow(): void {
   })
 
   // F12 isn't bound to DevTools by Electron's default menu (that's a browser convention, not an
-  // Electron one) — bind it explicitly so it's reliable regardless of menu/focus state. Same for
-  // F11/real fullscreen — Electron doesn't wire either by default.
+  // Electron one) — bind it explicitly so it's reliable regardless of menu/focus state.
   mainWindow.webContents.on('before-input-event', (_event, input) => {
     if (input.type === 'keyDown' && input.key === 'F12') {
       mainWindow?.webContents.toggleDevTools()
-    }
-    if (input.type === 'keyDown' && input.key === 'F11') {
-      mainWindow?.setFullScreen(!mainWindow.isFullScreen())
     }
   })
 
@@ -47,11 +43,6 @@ function createWindow(): void {
   // before starting the update check — otherwise an event that fires quickly could be sent before
   // anything in the renderer is listening for it yet.
   mainWindow.webContents.once('did-finish-load', () => setupAutoUpdate())
-
-  // Keeps the on-screen fullscreen button's active state correct no matter how fullscreen was
-  // toggled — F11, the button itself, or an OS-level shortcut (e.g. the window manager's own).
-  mainWindow.on('enter-full-screen', () => mainWindow?.webContents.send('window:fullscreenChanged', true))
-  mainWindow.on('leave-full-screen', () => mainWindow?.webContents.send('window:fullscreenChanged', false))
 
   mainWindow.loadFile(resolveLinhaPath())
 }
