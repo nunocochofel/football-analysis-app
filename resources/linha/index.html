@@ -3924,8 +3924,12 @@ function renderClipRow(t, cat){
   const p = playerById(t.teamId, t.playerId);
   const isExpanded = expandedClipIds.has(t.id);
   const isEditing = selectedClipId === t.id;
+  // A thin strip in the acting team's colour, only when one was actually specified for this clip
+  // — not every event has (or needs) a team, so unspecified ones keep the plain default border.
+  const teamColor = t.teamId ? state.roster[t.teamId].color : null;
+  const teamStripStyle = teamColor ? ` style="border-left:4px solid ${teamColor};"` : '';
   return `
-  <div class="clip-row ${isEditing ? 'selected' : ''}" data-id="${t.id}">
+  <div class="clip-row ${isEditing ? 'selected' : ''}" data-id="${t.id}"${teamStripStyle}>
     <div class="clip-row-head" data-id="${t.id}">
       <span class="clip-row-time">${fmtTime(t.inSec)}–${fmtTime(t.outSec)}</span>
       <span class="clip-row-player">${p ? escapeHtml(p.name) : '—'}</span>
