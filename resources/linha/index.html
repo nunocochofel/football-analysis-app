@@ -862,12 +862,19 @@
             <span class="mono" id="possReadout" style="color:var(--muted); font-size:11px;"></span>
           </div>
           <div class="toolbar-sep"></div>
-          <div class="possession-control" id="quickTagControl" title="Marca estes eventos com um clique — usa a categoria correspondente, criando-a se ainda não existir">
-            <span class="mono" style="color:var(--muted); font-size:11px;">Ações:</span>
-            <button class="btn" id="btnQuickPassOk">✅ Passe certo</button>
-            <button class="btn" id="btnQuickPassErr">❌ Passe errado</button>
-            <button class="btn" id="btnQuickShot">🎯 Remate</button>
-            <button class="btn" id="btnQuickShotTarget">🥅 Remate à baliza</button>
+          <div class="possession-control" id="quickTagA" title="Marca estes eventos para esta equipa com um clique — usa a categoria correspondente, criando-a se ainda não existir">
+            <span class="mono quicktag-team-label" id="quickTagLabelA" style="color:var(--muted); font-size:11px;">A:</span>
+            <button class="btn icon" data-qt="passok" title="Passe certo">✅</button>
+            <button class="btn icon" data-qt="passerr" title="Passe errado">❌</button>
+            <button class="btn icon" data-qt="shot" title="Remate">🎯</button>
+            <button class="btn icon" data-qt="shottarget" title="Remate à baliza">🥅</button>
+          </div>
+          <div class="possession-control" id="quickTagB" title="Marca estes eventos para esta equipa com um clique — usa a categoria correspondente, criando-a se ainda não existir">
+            <span class="mono quicktag-team-label" id="quickTagLabelB" style="color:var(--muted); font-size:11px;">B:</span>
+            <button class="btn icon" data-qt="passok" title="Passe certo">✅</button>
+            <button class="btn icon" data-qt="passerr" title="Passe errado">❌</button>
+            <button class="btn icon" data-qt="shot" title="Remate">🎯</button>
+            <button class="btn icon" data-qt="shottarget" title="Remate à baliza">🥅</button>
           </div>
           <div class="toolbar-sep"></div>
           <div style="flex:1;"></div>
@@ -2079,9 +2086,16 @@ function currentTimeValue(){
 const DEFAULT_PRE_ROLL = 15;
 const DEFAULT_POST_ROLL = 15;
 
-function createTag(catId){
+// forceTeamId: used by the per-team quick-tag buttons to attribute the event to a specific team
+// regardless of whichever team/player happens to be selected in the sidebar. Since that team was
+// chosen explicitly (not implied by a selected player), playerId is left unset rather than
+// possibly carrying over a stale/mismatched player from the sidebar's current selection.
+function createTag(catId, forceTeamId){
   const cat = catById(catId); if(!cat) return;
   const t = currentTimeValue();
+  const teamId = forceTeamId!=null
+    ? forceTeamId
+    : (activePlayerId ? activeTeam : (state.roster[activeTeam].players.length ? activeTeam : null));
   const tag = {
     id:uid(),
     time: t,
@@ -2089,8 +2103,8 @@ function createTag(catId){
     outSec: t + DEFAULT_POST_ROLL,
     half: activeHalf,
     categoryId: catId,
-    teamId: activePlayerId ? activeTeam : (state.roster[activeTeam].players.length ? activeTeam : null),
-    playerId: activePlayerId,
+    teamId,
+    playerId: forceTeamId!=null ? null : activePlayerId,
     x: pendingLoc ? pendingLoc.x : null,
     y: pendingLoc ? pendingLoc.y : null,
     mode: mode,
@@ -2126,21 +2140,26 @@ function findOrCreateCategory(label, key, color, extra){
   }
   return cat;
 }
-document.getElementById('btnQuickPassOk').addEventListener('click', ()=>{
-  createTag(findOrCreateCategory('Passe certo','1','#3F9142').id);
-});
-document.getElementById('btnQuickPassErr').addEventListener('click', ()=>{
-  createTag(findOrCreateCategory('Passe errado','2','#C1533D').id);
-});
-document.getElementById('btnQuickShot').addEventListener('click', ()=>{
-  createTag(findOrCreateCategory('Remate','3','#E2A63B').id);
-});
-document.getElementById('btnQuickShotTarget').addEventListener('click', ()=>{
-  const shotCat = findOrCreateCategory('Remate','3','#E2A63B');
-  const onTargetCat = findOrCreateCategory('Remate à baliza','r','#C9A23F',{countsToward:shotCat.id});
-  if(!onTargetCat.countsToward){ onTargetCat.countsToward = shotCat.id; saveState(); }
-  createTag(onTargetCat.id);
-});
+function quickTagAction(action, teamId){
+  let cat;
+  if(action==='passok') cat = findOrCreateCategory('Passe certo','1','#3F9142');
+  else if(action==='passerr') cat = findOrCreateCategory('Passe errado','2','#C1533D');
+  else if(action==='shot') cat = findOrCreateCategory('Remate','3','#E2A63B');
+  else if(action==='shottarget'){
+    const shotCat = findOrCreateCategory('Remate','3','#E2A63B');
+    cat = findOrCreateCategory('Remate à baliza','r','#C9A23F',{countsToward:shotCat.id});
+    if(!cat.countsToward){ cat.countsToward = shotCat.id; saveState(); }
+  }
+  if(cat) createTag(cat.id, teamId);
+}
+document.querySelectorAll('#quickTagA [data-qt]').forEach(b=>b.addEventListener('click', ()=>quickTagAction(b.dataset.qt, 'A')));
+document.querySelectorAll('#quickTagB [data-qt]').forEach(b=>b.addEventListener('click', ()=>quickTagAction(b.dataset.qt, 'B')));
+function renderQuickTagLabels(){
+  const a = document.getElementById('quickTagLabelA');
+  if(a){ a.textContent = state.roster.A.name+':'; a.style.color = state.roster.A.color; }
+  const b = document.getElementById('quickTagLabelB');
+  if(b){ b.textContent = state.roster.B.name+':'; b.style.color = state.roster.B.color; }
+}
 
 /* ===================================================================
    CLIP EDITING — select a clip to seek to its in-point, review it,
@@ -5085,6 +5104,7 @@ function refreshAllUI(){
   safeRender(redrawTactic);
   safeRender(renderScenesStrip);
   safeRender(renderPossessionControl);
+  safeRender(renderQuickTagLabels);
   safeRender(renderStats);
 }
 
