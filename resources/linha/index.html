@@ -171,6 +171,13 @@
   .zoom-control input[type=range]{width:90px;}
   .zoom-control .mono{color:var(--chalk); width:36px;}
 
+  .possession-control{display:flex; align-items:center; gap:6px;}
+  .poss-btn{font-size:12px; padding:5px 10px;}
+  .poss-btn.active{color:#08110A; font-weight:700;}
+  .poss-split-bar{display:flex; height:28px; border-radius:6px; overflow:hidden; margin:4px 0 8px;}
+  .poss-split-seg{display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#08110A; transition:width .3s ease; white-space:nowrap;}
+  .poss-split-labels{display:flex; justify-content:space-between; font-size:12px; color:var(--muted);}
+
   .video-zoom-layer{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; transform-origin:center center;}
   .stage-toolbar{
     display:flex; align-items:center; gap:6px; padding:5px 10px;
@@ -847,6 +854,14 @@
             <span class="mono" id="zoomReadout">1.0×</span>
           </label>
           <div class="toolbar-sep"></div>
+          <div class="possession-control" id="possessionControl" title="Regista quem tem a posse de bola, para calcular a percentagem de posse nas Estatísticas">
+            <span class="mono" style="color:var(--muted); font-size:11px;">Posse:</span>
+            <button class="btn poss-btn" id="btnPossA" data-team="A">Time A</button>
+            <button class="btn poss-btn" id="btnPossB" data-team="B">Time B</button>
+            <button class="btn icon" id="btnPossStop" title="Parar contagem de posse (bola fora/parada)">⏹</button>
+            <span class="mono" id="possReadout" style="color:var(--muted); font-size:11px;"></span>
+          </div>
+          <div class="toolbar-sep"></div>
           <div style="flex:1;"></div>
           <button class="btn" id="btnModeStopwatch" title="Alternar para codificação sem vídeo (só cronômetro)">⏱ Sem vídeo</button>
           <button class="btn icon" id="btnFocusVideo" title="Maximizar área de vídeo">⛶</button>
@@ -1066,6 +1081,11 @@
   <section class="tab-panel" id="tab-stats">
     <div class="stats-grid" id="statCards"></div>
 
+    <div class="panel-block" id="possessionCard">
+      <h3>Posse de bola</h3>
+      <div id="possessionStatBar"></div>
+    </div>
+
     <div class="stats-cols">
       <div class="panel-block">
         <h3>Eventos por categoria</h3>
@@ -1100,6 +1120,7 @@
         <h2 id="repTitle">Relatório da sessão</h2>
         <div class="report-meta" id="repMeta"></div>
         <div class="score-row" id="repScoreRow"></div>
+        <div id="repPossession"></div>
         <div id="repBody"></div>
       </div>
     </div>
@@ -1206,13 +1227,15 @@ const DEFAULT_CATS = [
   {id:'c5', key:'5', label:'Falta', color:'#D1495B'},
   {id:'c6', key:'6', label:'Cartão', color:'#D9C24C'},
   {id:'c7', key:'7', label:'Escanteio', color:'#3FAF9A'},
-  {id:'c8', key:'8', label:'Gol', color:'#9B6FD1'},
+  {id:'c8', key:'8', label:'Gol', color:'#9B6FD1', isGoal:true},
   {id:'c9', key:'9', label:'Substituição', color:'#8993A1'},
   {id:'c10', key:'0', label:'Outro', color:'#C98A3F'},
   {id:'c11', key:'a', label:'Org. ofensiva', color:'#E2793F', isTeamPhase:true},
   {id:'c12', key:'d', label:'Org. defensiva', color:'#3F6FA6', isTeamPhase:true},
   {id:'c13', key:'s', label:'Transição def.', color:'#7F5FA6', isTeamPhase:true},
   {id:'c14', key:'f', label:'Transição of.', color:'#4FA68F', isTeamPhase:true},
+  {id:'c15', key:'c', label:'Condução', color:'#4FA6C9'},
+  {id:'c16', key:'o', label:'Fora de jogo', color:'#8A3F5C'},
 ];
 
 function defaultPlayers(prefix,count){
@@ -1229,6 +1252,7 @@ function defaultState(){
     },
     categories: JSON.parse(JSON.stringify(DEFAULT_CATS)),
     tags: [],
+    possession: [], // [{team:'A'|'B', startSec, endSec|null}] — endSec null means still ongoing
     scenes: [],
     boxScenes: [], // same shape as `scenes`, but for the independent "Área" board
     zoneScenes: [], // same shape as `scenes`, but for the independent "Campo p/ Zonas" board
@@ -1616,7 +1640,7 @@ async function saveState(){
   if(!currentProjectId) return;
   try{
     localStorage.setItem('linha:project:' + currentProjectId, JSON.stringify({
-      roster:state.roster, categories:state.categories, tags:state.tags,
+      roster:state.roster, categories:state.categories, tags:state.tags, possession:state.possession,
       scenes:state.scenes, boxScenes:state.boxScenes, zoneScenes:state.zoneScenes, report:state.report,
       videoPath:state.videoPath
     }));
@@ -1633,6 +1657,7 @@ async function loadState(){
       state.roster = parsed.roster || state.roster;
       state.categories = parsed.categories || state.categories;
       state.tags = parsed.tags || [];
+      state.possession = parsed.possession || [];
       state.scenes = parsed.scenes || [];
       state.boxScenes = parsed.boxScenes || [];
       state.zoneScenes = parsed.zoneScenes || [];
@@ -1915,6 +1940,7 @@ function renderCatsModal(){
     <button class="btn" id="btnAddCat" style="margin-top:8px;">+ Adicionar categoria</button>
     <p style="color:var(--muted); font-size:12px; margin-top:10px;">Atalhos duplicados sobrescrevem uns aos outros — use teclas únicas (letras ou números). Dica: na aba de vídeo, pressionar uma tecla ainda não usada abre um criador rápido de categoria na hora.</p>
     <p style="color:var(--muted); font-size:12px; margin-top:6px;">Marca "fase de equipa" para comportamentos coletivos (ex.: organização ofensiva/defensiva, transição ofensiva/defensiva) — o relatório calcula o tempo médio e total dessas categorias em vez de só contar ocorrências, como faz para remates, passes ou lances individuais.</p>
+    <p style="color:var(--muted); font-size:12px; margin-top:6px;">Marca "golo" para que marcar essa categoria some automaticamente ao placar do time do lance.</p>
   `;
   const list = el.querySelector('#catEditList');
   function draw(){
@@ -1926,6 +1952,9 @@ function renderCatsModal(){
         <label class="cat-team-toggle" title="Fase/comportamento de equipa (organização ofensiva/defensiva, transições)">
           <input type="checkbox" class="cat-team-check" ${c.isTeamPhase?'checked':''}> equipa
         </label>
+        <label class="cat-team-toggle" title="Marcar esta categoria soma ao placar do time do lance">
+          <input type="checkbox" class="cat-goal-check" ${c.isGoal?'checked':''}> golo
+        </label>
         <button class="btn icon cat-del">✕</button>
       </div>`).join('');
     list.querySelectorAll('.cat-edit-row').forEach(row=>{
@@ -1935,6 +1964,7 @@ function renderCatsModal(){
       row.querySelector('input[type=color]').addEventListener('input', e=>{ c.color = e.target.value; saveState(); });
       row.querySelector('input[type=text]:not(.key-input)').addEventListener('input', e=>{ c.label = e.target.value; saveState(); });
       row.querySelector('.cat-team-check').addEventListener('change', e=>{ c.isTeamPhase = e.target.checked; saveState(); });
+      row.querySelector('.cat-goal-check').addEventListener('change', e=>{ c.isGoal = e.target.checked; saveState(); });
       row.querySelector('.cat-del').addEventListener('click', ()=>{
         state.categories = state.categories.filter(x=>x.id!==cid);
         draw();
@@ -2051,6 +2081,13 @@ function createTag(catId){
   document.getElementById('locHint').textContent = 'Clique no campo para marcar onde o evento ocorreu.';
   renderTouchlineFlags();
   renderClipTable();
+  // A category marked "golo" bumps the scoreboard automatically, so the report score stays in
+  // sync with what was actually tagged during review instead of needing separate manual entry.
+  if(cat.isGoal && tag.teamId){
+    const key = 'score'+tag.teamId;
+    state.report[key] = (Number(state.report[key])||0) + 1;
+    renderReport();
+  }
   saveState();
   toast('Marcado: '+cat.label+' — '+fmtTime(tag.time));
 }
@@ -2513,6 +2550,57 @@ function tryDataUrlFallback(file){
 }
 videoEl.addEventListener('loadedmetadata', ()=>{ sizeDrawCanvas(); updateTimeReadout(); renderTouchlineTicks(); });
 window.addEventListener('resize', ()=>{ sizeDrawCanvas(); sizeTacticCanvas(); });
+
+/* ---------- Ball possession — start/stop intervals per team, not an instant tag ---------- */
+// Unlike createTag() (a short fixed-length clip around one moment), possession genuinely needs a
+// real start/stop duration to give a meaningful percentage — so it's tracked as its own list of
+// {team, startSec, endSec|null} intervals instead of reusing the category/tag system.
+function currentPossessionEntry(){
+  const last = state.possession[state.possession.length-1];
+  return (last && last.endSec==null) ? last : null;
+}
+function setPossession(team){
+  const t = currentTimeValue();
+  const open = currentPossessionEntry();
+  if(open){
+    if(open.team===team){ renderPossessionControl(); return; }
+    open.endSec = t;
+  }
+  state.possession.push({team, startSec:t, endSec:null});
+  saveState();
+  renderPossessionControl();
+}
+function stopPossession(){
+  const open = currentPossessionEntry();
+  if(!open) return;
+  open.endSec = currentTimeValue();
+  saveState();
+  renderPossessionControl();
+}
+function possessionTotals(){
+  const totals = {A:0, B:0};
+  const nowFallback = (videoEl && videoEl.duration) ? videoEl.duration : currentTimeValue();
+  state.possession.forEach(p=>{
+    const end = p.endSec!=null ? p.endSec : nowFallback;
+    totals[p.team] = (totals[p.team]||0) + Math.max(0, end - p.startSec);
+  });
+  return totals;
+}
+function renderPossessionControl(){
+  const open = currentPossessionEntry();
+  document.querySelectorAll('.poss-btn').forEach(b=>{
+    b.classList.toggle('active', !!(open && open.team===b.dataset.team));
+    b.textContent = state.roster[b.dataset.team].name;
+  });
+  const totals = possessionTotals();
+  const sum = totals.A + totals.B;
+  const readout = document.getElementById('possReadout');
+  if(readout) readout.textContent = sum>0 ? Math.round(totals.A/sum*100)+'% / '+Math.round(totals.B/sum*100)+'%' : '';
+}
+document.getElementById('btnPossA').addEventListener('click', ()=>setPossession('A'));
+document.getElementById('btnPossB').addEventListener('click', ()=>setPossession('B'));
+document.getElementById('btnPossStop').addEventListener('click', stopPossession);
+videoEl.addEventListener('timeupdate', ()=>{ if(currentPossessionEntry()) renderPossessionControl(); });
 
 // The canvas must match the video's actual rendered content box, not the whole video-wrap —
 // the <video> element scales itself down (max-width/max-height, flex-centered) to preserve its
@@ -4739,10 +4827,33 @@ document.addEventListener('click', e=>{
 =================================================================== */
 function renderStats(){
   renderStatCards();
+  renderPossessionStat();
   renderCatBars();
   renderPlayerBars();
   renderHeatmap();
   renderReport();
+}
+function renderPossessionStat(){
+  const el = document.getElementById('possessionStatBar');
+  if(!el) return;
+  const totals = possessionTotals();
+  const sum = totals.A + totals.B;
+  if(sum<=0){
+    el.innerHTML = '<p style="color:var(--muted); font-size:13px;">Sem posse registada ainda — usa os botões "Posse" na aba de vídeo enquanto revês o jogo.</p>';
+    return;
+  }
+  const pctA = Math.round(totals.A/sum*100);
+  const pctB = 100-pctA;
+  el.innerHTML = `
+    <div class="poss-split-bar">
+      <div class="poss-split-seg" style="width:${pctA}%; background:${state.roster.A.color};">${pctA>=10?pctA+'%':''}</div>
+      <div class="poss-split-seg" style="width:${pctB}%; background:${state.roster.B.color};">${pctB>=10?pctB+'%':''}</div>
+    </div>
+    <div class="poss-split-labels">
+      <span>${escapeHtml(state.roster.A.name)} — ${fmtTime(totals.A)}</span>
+      <span>${escapeHtml(state.roster.B.name)} — ${fmtTime(totals.B)}</span>
+    </div>
+  `;
 }
 function renderStatCards(){
   const total = state.tags.length;
@@ -4830,6 +4941,14 @@ function updateReportBody(){
   document.getElementById('scoreA')?.addEventListener('input', e=>{ state.report.scoreA=e.target.value; saveState(); });
   document.getElementById('scoreB')?.addEventListener('input', e=>{ state.report.scoreB=e.target.value; saveState(); });
 
+  const possTotals = possessionTotals();
+  const possSum = possTotals.A + possTotals.B;
+  document.getElementById('repPossession').innerHTML = possSum>0 ? `
+    <p style="margin-top:10px; color:var(--muted); font-size:13px;">
+      Posse de bola: <b style="color:var(--chalk);">${escapeHtml(state.roster.A.name)} ${Math.round(possTotals.A/possSum*100)}%</b> ·
+      <b style="color:var(--chalk);">${escapeHtml(state.roster.B.name)} ${Math.round(possTotals.B/possSum*100)}%</b>
+    </p>` : '';
+
   const catCounts = state.categories.filter(c=>!c.isTeamPhase).map(c=>({label:c.label, n:state.tags.filter(t=>t.categoryId===c.id).length})).filter(c=>c.n>0);
   const topEvents = state.tags.slice().sort((a,b)=>a.time-b.time).slice(0,25);
 
@@ -4902,6 +5021,7 @@ function refreshAllUI(){
   safeRender(renderTokens);
   safeRender(redrawTactic);
   safeRender(renderScenesStrip);
+  safeRender(renderPossessionControl);
   safeRender(renderStats);
 }
 
