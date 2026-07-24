@@ -2629,12 +2629,22 @@ function stopPossession(){
 }
 function possessionTotals(){
   const totals = {A:0, B:0};
-  const nowFallback = (videoEl && videoEl.duration) ? videoEl.duration : currentTimeValue();
+  // An interval still open (endSec===null) must stop "now" — i.e. how far playback has actually
+  // reached — never at the full video duration. Using duration made a team's possession balloon
+  // to cover the entire REST of the match the instant you clicked their button, since almost none
+  // of that time had actually been watched/decided yet.
+  const now = currentTimeValue();
   state.possession.forEach(p=>{
-    const end = p.endSec!=null ? p.endSec : nowFallback;
+    const end = p.endSec!=null ? p.endSec : now;
     totals[p.team] = (totals[p.team]||0) + Math.max(0, end - p.startSec);
   });
   return totals;
+}
+// Denominator for the percentage: elapsed match time reviewed so far (not just totals.A+totals.B),
+// so time before the first possession click, or after pressing ⏹, correctly shows as "not yet
+// tracked" instead of being silently absorbed into whichever team happens to have a total.
+function possessionElapsed(){
+  return Math.max(currentTimeValue(), 0.001);
 }
 function renderPossessionControl(){
   const open = currentPossessionEntry();
@@ -2643,9 +2653,9 @@ function renderPossessionControl(){
     b.textContent = state.roster[b.dataset.team].name;
   });
   const totals = possessionTotals();
-  const sum = totals.A + totals.B;
+  const elapsed = possessionElapsed();
   const readout = document.getElementById('possReadout');
-  if(readout) readout.textContent = sum>0 ? Math.round(totals.A/sum*100)+'% / '+Math.round(totals.B/sum*100)+'%' : '';
+  if(readout) readout.textContent = (totals.A+totals.B)>0 ? Math.round(totals.A/elapsed*100)+'% / '+Math.round(totals.B/elapsed*100)+'%' : '';
 }
 document.getElementById('btnPossA').addEventListener('click', ()=>setPossession('A'));
 document.getElementById('btnPossB').addEventListener('click', ()=>setPossession('B'));
@@ -4887,13 +4897,16 @@ function renderPossessionStat(){
   const el = document.getElementById('possessionStatBar');
   if(!el) return;
   const totals = possessionTotals();
-  const sum = totals.A + totals.B;
-  if(sum<=0){
+  if((totals.A+totals.B)<=0){
     el.innerHTML = '<p style="color:var(--muted); font-size:13px;">Sem posse registada ainda — usa os botões "Posse" na aba de vídeo enquanto revês o jogo.</p>';
     return;
   }
-  const pctA = Math.round(totals.A/sum*100);
-  const pctB = 100-pctA;
+  // % of match time reviewed so far, not just of tracked time — so time before the first click
+  // (or after ⏹) correctly shows as an untracked gap in the bar instead of vanishing into
+  // whichever team happens to have possession right now.
+  const elapsed = possessionElapsed();
+  const pctA = Math.round(totals.A/elapsed*100);
+  const pctB = Math.round(totals.B/elapsed*100);
   el.innerHTML = `
     <div class="poss-split-bar">
       <div class="poss-split-seg" style="width:${pctA}%; background:${state.roster.A.color};">${pctA>=10?pctA+'%':''}</div>
@@ -4992,11 +5005,11 @@ function updateReportBody(){
   document.getElementById('scoreB')?.addEventListener('input', e=>{ state.report.scoreB=e.target.value; saveState(); });
 
   const possTotals = possessionTotals();
-  const possSum = possTotals.A + possTotals.B;
-  document.getElementById('repPossession').innerHTML = possSum>0 ? `
+  const possElapsed = possessionElapsed();
+  document.getElementById('repPossession').innerHTML = (possTotals.A+possTotals.B)>0 ? `
     <p style="margin-top:10px; color:var(--muted); font-size:13px;">
-      Posse de bola: <b style="color:var(--chalk);">${escapeHtml(state.roster.A.name)} ${Math.round(possTotals.A/possSum*100)}%</b> ·
-      <b style="color:var(--chalk);">${escapeHtml(state.roster.B.name)} ${Math.round(possTotals.B/possSum*100)}%</b>
+      Posse de bola: <b style="color:var(--chalk);">${escapeHtml(state.roster.A.name)} ${Math.round(possTotals.A/possElapsed*100)}%</b> ·
+      <b style="color:var(--chalk);">${escapeHtml(state.roster.B.name)} ${Math.round(possTotals.B/possElapsed*100)}%</b>
     </p>` : '';
 
   const catCounts = state.categories.filter(c=>!c.isTeamPhase).map(c=>({label:c.label, n:categoryTagCount(c.id)})).filter(c=>c.n>0);
