@@ -2659,12 +2659,6 @@ function possessionTotals(){
   });
   return totals;
 }
-// Denominator for the percentage: elapsed match time reviewed so far (not just totals.A+totals.B),
-// so time before the first possession click, or after pressing ⏹, correctly shows as "not yet
-// tracked" instead of being silently absorbed into whichever team happens to have a total.
-function possessionElapsed(){
-  return Math.max(currentTimeValue(), 0.001);
-}
 function renderPossessionControl(){
   const open = currentPossessionEntry();
   document.querySelectorAll('.poss-btn').forEach(b=>{
@@ -2672,9 +2666,9 @@ function renderPossessionControl(){
     b.textContent = state.roster[b.dataset.team].name;
   });
   const totals = possessionTotals();
-  const elapsed = possessionElapsed();
+  const sum = totals.A + totals.B;
   const readout = document.getElementById('possReadout');
-  if(readout) readout.textContent = (totals.A+totals.B)>0 ? Math.round(totals.A/elapsed*100)+'% / '+Math.round(totals.B/elapsed*100)+'%' : '';
+  if(readout) readout.textContent = sum>0 ? Math.round(totals.A/sum*100)+'% / '+Math.round(totals.B/sum*100)+'%' : '';
 }
 document.getElementById('btnPossA').addEventListener('click', ()=>setPossession('A'));
 document.getElementById('btnPossB').addEventListener('click', ()=>setPossession('B'));
@@ -4916,16 +4910,13 @@ function renderPossessionStat(){
   const el = document.getElementById('possessionStatBar');
   if(!el) return;
   const totals = possessionTotals();
-  if((totals.A+totals.B)<=0){
+  const sum = totals.A + totals.B;
+  if(sum<=0){
     el.innerHTML = '<p style="color:var(--muted); font-size:13px;">Sem posse registada ainda — usa os botões "Posse" na aba de vídeo enquanto revês o jogo.</p>';
     return;
   }
-  // % of match time reviewed so far, not just of tracked time — so time before the first click
-  // (or after ⏹) correctly shows as an untracked gap in the bar instead of vanishing into
-  // whichever team happens to have possession right now.
-  const elapsed = possessionElapsed();
-  const pctA = Math.round(totals.A/elapsed*100);
-  const pctB = Math.round(totals.B/elapsed*100);
+  const pctA = Math.round(totals.A/sum*100);
+  const pctB = 100-pctA;
   el.innerHTML = `
     <div class="poss-split-bar">
       <div class="poss-split-seg" style="width:${pctA}%; background:${state.roster.A.color};">${pctA>=10?pctA+'%':''}</div>
@@ -5024,11 +5015,11 @@ function updateReportBody(){
   document.getElementById('scoreB')?.addEventListener('input', e=>{ state.report.scoreB=e.target.value; saveState(); });
 
   const possTotals = possessionTotals();
-  const possElapsed = possessionElapsed();
-  document.getElementById('repPossession').innerHTML = (possTotals.A+possTotals.B)>0 ? `
+  const possSum = possTotals.A + possTotals.B;
+  document.getElementById('repPossession').innerHTML = possSum>0 ? `
     <p style="margin-top:10px; color:var(--muted); font-size:13px;">
-      Posse de bola: <b style="color:var(--chalk);">${escapeHtml(state.roster.A.name)} ${Math.round(possTotals.A/possElapsed*100)}%</b> ·
-      <b style="color:var(--chalk);">${escapeHtml(state.roster.B.name)} ${Math.round(possTotals.B/possElapsed*100)}%</b>
+      Posse de bola: <b style="color:var(--chalk);">${escapeHtml(state.roster.A.name)} ${Math.round(possTotals.A/possSum*100)}%</b> ·
+      <b style="color:var(--chalk);">${escapeHtml(state.roster.B.name)} ${Math.round(possTotals.B/possSum*100)}%</b>
     </p>` : '';
 
   const catCounts = state.categories.filter(c=>!c.isTeamPhase).map(c=>({label:c.label, n:categoryTagCount(c.id)})).filter(c=>c.n>0);
