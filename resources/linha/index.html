@@ -613,6 +613,11 @@
   .report-card .score-row input{width:46px; text-align:center; font-size:22px; font-family:'Space Grotesk'; font-weight:700; background:#f2f2f2; color:#111; border:1px solid #ddd;}
   .report-card table{width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px;}
   .report-card th, .report-card td{padding:5px 8px; border-bottom:1px solid #e4e4e4; text-align:left;}
+  .report-card table.stat-compare th, .report-card table.stat-compare td{text-align:center;}
+  .report-card table.stat-compare .stat-val{width:30%; font-family:'Space Grotesk'; font-size:16px; font-weight:700;}
+  .report-card table.stat-compare .stat-label{width:40%; font-size:12px; color:#333; font-weight:600;}
+  .report-card table.stat-compare .stat-outcome{font-family:'Inter',sans-serif; font-size:10.5px; font-weight:400; color:#666; margin-top:2px;}
+  .report-card table.stat-compare .stat-sub{font-family:'Inter',sans-serif; font-size:10px; font-weight:400; color:#777; margin-top:2px;}
   .report-meta-inputs{display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap;}
   .report-meta-inputs input{background:#f2f2f2; color:#111; border:1px solid #ddd;}
   @media print{
@@ -3933,6 +3938,7 @@ function renderClipRow(t, cat){
     <div class="clip-row-head" data-id="${t.id}">
       <span class="clip-row-time">${fmtTime(t.inSec)}–${fmtTime(t.outSec)}</span>
       <span class="clip-row-player">${p ? escapeHtml(p.name) : '—'}</span>
+      ${t.outcome ? `<span title="${t.outcome==='positive'?'Positiva':'Negativa'}">${t.outcome==='positive'?'👍':'👎'}</span>` : ''}
       <span>${isExpanded ? '▾' : '▸'}</span>
     </div>
     ${isExpanded ? `
@@ -3945,6 +3951,10 @@ function renderClipRow(t, cat){
         <option value="">Jogador...</option>
         ${allPlayersFlat().map(pl => `<option value="${pl.id}|${pl.teamId}" ${t.playerId===pl.id?'selected':''}>${escapeHtml(pl.name)}</option>`).join('')}
       </select>
+      <div class="clip-row-btns">
+        <button class="btn ${t.outcome==='positive'?'primary':''}" data-act="posOutcome">👍 Positiva</button>
+        <button class="btn ${t.outcome==='negative'?'danger':''}" data-act="negOutcome">👎 Negativa</button>
+      </div>
       <div class="clip-row-btns">
         <button class="btn" data-act="review">▶ Rever</button>
         <button class="btn ${isEditing?'primary':''}" data-act="edit">🖊 ${isEditing?'A editar':'Editar desenhos'}</button>
@@ -4021,6 +4031,14 @@ function wireClipRows(container){
         state.tags = state.tags.filter(x => x.id !== id);
         if(selectedClipId === id) selectedClipId = null;
         renderClipTable(); renderTouchlineFlags(); saveState();
+      }
+      else if(act === 'posOutcome'){
+        t.outcome = t.outcome==='positive' ? null : 'positive';
+        renderClipTable(); saveState();
+      }
+      else if(act === 'negOutcome'){
+        t.outcome = t.outcome==='negative' ? null : 'negative';
+        renderClipTable(); saveState();
       }
     });
   });
@@ -5040,55 +5058,86 @@ function updateReportBody(){
   const passOkCat = catByLabel('Passe certo'), passErrCat = catByLabel('Passe errado');
   const shotCat = catByLabel('Remate'), shotTargetCat = catByLabel('Remate à baliza');
   const cornerCat = catByLabel('Canto');
-  const cnt = (cat, teamId) => cat ? categoryTagCount(cat.id, teamId) : 0;
+
+  // Tags for a category AND anything that counts toward it (e.g. "Remate à baliza" -> "Remate"),
+  // for one team — same own+linked semantics as categoryTagCount, but returns the tag objects
+  // themselves so callers can also derive a positive/negative outcome breakdown from them.
+  function catTagsForTeam(cat, teamId){
+    if(!cat) return [];
+    const ids = [cat.id, ...state.categories.filter(c=>c.countsToward===cat.id).map(c=>c.id)];
+    return state.tags.filter(t=>ids.includes(t.categoryId) && t.teamId===teamId);
+  }
+  function outcomeBreakdown(tags){
+    const pos = tags.filter(t=>t.outcome==='positive').length;
+    const neg = tags.filter(t=>t.outcome==='negative').length;
+    if(!pos && !neg) return '';
+    return `<div class="stat-outcome">👍 ${pos} &nbsp; 👎 ${neg}</div>`;
+  }
+  // Broadcast-style comparison row: Team A's value on the left, the stat label centered,
+  // Team B's value on the right — with a positive/negative breakdown under each side
+  // whenever the underlying clips for that side have an outcome tagged.
+  function compareRow(label, valueA, tagsA, valueB, tagsB){
+    return `<tr>
+      <td class="stat-val stat-val-a">${valueA}${outcomeBreakdown(tagsA)}</td>
+      <td class="stat-label">${escapeHtml(label)}</td>
+      <td class="stat-val stat-val-b">${valueB}${outcomeBreakdown(tagsB)}</td>
+    </tr>`;
+  }
 
   // A curated, football-specific summary (possession, passes, shots, corners) side by side per
   // team — the generic "one row per category" table below still covers everything else tagged
   // (fouls, cards, subs, etc.) without duplicating what's already summarised here.
-  const statRows = [];
-  if(possSum>0) statRows.push(['Posse de bola', pctA+'%', pctB+'%']);
+  const statRowsHtml = [];
+  if(possSum>0) statRowsHtml.push(compareRow('Posse de bola', pctA+'%', [], pctB+'%', []));
   if(passOkCat || passErrCat){
-    statRows.push(['Passes (total)', cnt(passOkCat,'A')+cnt(passErrCat,'A'), cnt(passOkCat,'B')+cnt(passErrCat,'B')]);
-    if(passOkCat) statRows.push(['— certos', cnt(passOkCat,'A'), cnt(passOkCat,'B')]);
-    if(passErrCat) statRows.push(['— errados', cnt(passErrCat,'A'), cnt(passErrCat,'B')]);
+    const okA = catTagsForTeam(passOkCat,'A'), okB = catTagsForTeam(passOkCat,'B');
+    const errA = catTagsForTeam(passErrCat,'A'), errB = catTagsForTeam(passErrCat,'B');
+    statRowsHtml.push(compareRow('Passes (total)', okA.length+errA.length, okA.concat(errA), okB.length+errB.length, okB.concat(errB)));
+    if(passOkCat) statRowsHtml.push(compareRow('— certos', okA.length, okA, okB.length, okB));
+    if(passErrCat) statRowsHtml.push(compareRow('— errados', errA.length, errA, errB.length, errB));
   }
   if(shotCat){
-    statRows.push(['Remates', cnt(shotCat,'A'), cnt(shotCat,'B')]);
-    if(shotTargetCat) statRows.push(['— à baliza', cnt(shotTargetCat,'A'), cnt(shotTargetCat,'B')]);
+    const shotA = catTagsForTeam(shotCat,'A'), shotB = catTagsForTeam(shotCat,'B');
+    statRowsHtml.push(compareRow('Remates', shotA.length, shotA, shotB.length, shotB));
+    if(shotTargetCat){
+      const stA = catTagsForTeam(shotTargetCat,'A'), stB = catTagsForTeam(shotTargetCat,'B');
+      statRowsHtml.push(compareRow('— à baliza', stA.length, stA, stB.length, stB));
+    }
   }
-  if(cornerCat) statRows.push(['Cantos', cnt(cornerCat,'A'), cnt(cornerCat,'B')]);
+  if(cornerCat){
+    const cA = catTagsForTeam(cornerCat,'A'), cB = catTagsForTeam(cornerCat,'B');
+    statRowsHtml.push(compareRow('Cantos', cA.length, cA, cB.length, cB));
+  }
 
-  const statsSection = statRows.length ? `
+  const statsSection = statRowsHtml.length ? `
     <h3 style="font-size:14px;">Estatísticas</h3>
-    <table>
-      <thead><tr><th></th><th>${nameA}</th><th>${nameB}</th></tr></thead>
-      <tbody>${statRows.map(r=>`<tr><td>${escapeHtml(String(r[0]))}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}</tbody>
+    <table class="stat-compare">
+      <thead><tr><th class="stat-val-a">${nameA}</th><th></th><th class="stat-val-b">${nameB}</th></tr></thead>
+      <tbody>${statRowsHtml.join('')}</tbody>
     </table>
   ` : '';
 
   // Team-phase categories (organização ofensiva/defensiva, transições, etc.) are a
-  // collective behaviour with a real duration, so they get average/total time per
-  // team instead of a plain occurrence count — shown as part of the same "Estatísticas"
-  // section rather than a separately-headed block.
+  // collective behaviour with a real duration, so they get an occurrence count plus
+  // average/total time per team, shown in the same A-left/B-right comparison layout.
   const teamPhaseCats = state.categories.filter(c=>c.isTeamPhase);
-  const teamPhaseRows = [];
+  const teamPhaseRowsHtml = [];
   teamPhaseCats.forEach(c=>{
-    ['A','B'].forEach(teamId=>{
+    const phaseSide = teamId => {
       const events = state.tags.filter(t=>t.categoryId===c.id && t.teamId===teamId && t.mode!=='stopwatch');
-      if(!events.length) return;
+      if(!events.length) return {html:'—', tags:[]};
       const totalSec = events.reduce((sum,t)=>sum+Math.max(0, t.outSec-t.inSec), 0);
-      teamPhaseRows.push({
-        catLabel:c.label, teamName:state.roster[teamId].name,
-        count:events.length, avgSec: totalSec/events.length, totalSec
-      });
-    });
+      const avgSec = totalSec/events.length;
+      return {html:`${events.length}<div class="stat-sub">méd ${fmtTime(avgSec)} · total ${fmtTime(totalSec)}</div>`, tags:events};
+    };
+    const a = phaseSide('A'), b = phaseSide('B');
+    if(!a.tags.length && !b.tags.length) return;
+    teamPhaseRowsHtml.push(compareRow(c.label, a.html, a.tags, b.html, b.tags));
   });
-  const teamPhaseSection = teamPhaseRows.length ? `
-    <table style="margin-top:10px;">
-      <thead><tr><th>Fase</th><th>Time</th><th>Ocorrências</th><th>Tempo médio</th><th>Tempo total</th></tr></thead>
-      <tbody>${teamPhaseRows.map(r=>`
-        <tr><td>${escapeHtml(r.catLabel)}</td><td>${escapeHtml(r.teamName)}</td><td>${r.count}</td><td>${fmtTime(r.avgSec)}</td><td>${fmtTime(r.totalSec)}</td></tr>
-      `).join('')}</tbody>
+  const teamPhaseSection = teamPhaseRowsHtml.length ? `
+    <table class="stat-compare" style="margin-top:10px;">
+      <thead><tr><th class="stat-val-a">${nameA}</th><th></th><th class="stat-val-b">${nameB}</th></tr></thead>
+      <tbody>${teamPhaseRowsHtml.join('')}</tbody>
     </table>
   ` : '';
 
@@ -5099,7 +5148,6 @@ function updateReportBody(){
     .filter(c=>!c.isTeamPhase && !summarisedIds.has(c.id))
     .map(c=>({label:c.label, n:categoryTagCount(c.id)}))
     .filter(c=>c.n>0);
-  const topEvents = state.tags.slice().sort((a,b)=>a.time-b.time).slice(0,25);
 
   document.getElementById('repBody').innerHTML = `
     ${statsSection}
@@ -5108,14 +5156,6 @@ function updateReportBody(){
     <table>
       <thead><tr><th>Categoria</th><th>Total</th></tr></thead>
       <tbody>${otherCatCounts.map(c=>`<tr><td>${escapeHtml(c.label)}</td><td>${c.n}</td></tr>`).join('') || '<tr><td colspan="2">Sem outros eventos registados.</td></tr>'}</tbody>
-    </table>
-    <h3 style="margin-top:16px; font-size:14px;">Linha do tempo de eventos</h3>
-    <table>
-      <thead><tr><th>Tempo</th><th>Categoria</th><th>Jogador</th><th>Time</th></tr></thead>
-      <tbody>${topEvents.map(t=>{
-        const cat=catById(t.categoryId); const p=playerById(t.teamId,t.playerId); const team=t.teamId?state.roster[t.teamId]:null;
-        return `<tr><td>${fmtTime(t.time)}</td><td>${escapeHtml(cat?cat.label:'—')}</td><td>${p?escapeHtml(p.name):'—'}</td><td>${team?escapeHtml(team.name):'—'}</td></tr>`;
-      }).join('') || '<tr><td colspan="4">Sem eventos.</td></tr>'}</tbody>
     </table>
   `;
 }
