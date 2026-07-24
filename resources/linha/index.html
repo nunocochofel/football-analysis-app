@@ -1241,8 +1241,8 @@ const DEFAULT_CATS = [
   {id:'c4', key:'4', label:'Desarme', color:'#4F8FC9'},
   {id:'c5', key:'5', label:'Falta', color:'#D1495B'},
   {id:'c6', key:'6', label:'Cartão', color:'#D9C24C'},
-  {id:'c7', key:'7', label:'Escanteio', color:'#3FAF9A'},
-  {id:'c8', key:'8', label:'Gol', color:'#9B6FD1', isGoal:true},
+  {id:'c7', key:'7', label:'Canto', color:'#3FAF9A'},
+  {id:'c8', key:'8', label:'Golo', color:'#9B6FD1', isGoal:true},
   {id:'c9', key:'9', label:'Substituição', color:'#8993A1'},
   {id:'c10', key:'0', label:'Outro', color:'#C98A3F'},
   {id:'c11', key:'a', label:'Org. ofensiva', color:'#E2793F', isTeamPhase:true},
@@ -1256,10 +1256,15 @@ const DEFAULT_CATS = [
 // Total occurrences of a category, folding in any OTHER category whose `countsToward` points at
 // it (e.g. "Remate à baliza" also counts as a "Remate") — used everywhere a category count is
 // shown (bars, report), so shots-on-target are never invisible from the shots total.
-function categoryTagCount(catId){
-  const own = state.tags.filter(t=>t.categoryId===catId).length;
-  const linked = state.categories.filter(c=>c.countsToward===catId).reduce((sum,c)=>sum+state.tags.filter(t=>t.categoryId===c.id).length, 0);
+function categoryTagCount(catId, teamId){
+  const matches = t => t.categoryId===catId && (teamId==null || t.teamId===teamId);
+  const own = state.tags.filter(matches).length;
+  const linked = state.categories.filter(c=>c.countsToward===catId)
+    .reduce((sum,c)=>sum+state.tags.filter(t=>t.categoryId===c.id && (teamId==null || t.teamId===teamId)).length, 0);
   return own + linked;
+}
+function catByLabel(label){
+  return state.categories.find(c=>c.label.toLowerCase()===label.toLowerCase());
 }
 
 function defaultPlayers(prefix,count){
@@ -1680,6 +1685,12 @@ async function loadState(){
       const parsed = JSON.parse(raw);
       state.roster = parsed.roster || state.roster;
       state.categories = parsed.categories || state.categories;
+      // One-time relabel for projects created before this terminology change — matches the
+      // current DEFAULT_CATS naming without disturbing the category's id, color or tagged events.
+      state.categories.forEach(c=>{
+        if(c.label==='Escanteio') c.label = 'Canto';
+        else if(c.label==='Gol') c.label = 'Golo';
+      });
       state.tags = parsed.tags || [];
       state.possession = parsed.possession || [];
       state.scenes = parsed.scenes || [];
@@ -5014,20 +5025,47 @@ function updateReportBody(){
   document.getElementById('scoreA')?.addEventListener('input', e=>{ state.report.scoreA=e.target.value; saveState(); });
   document.getElementById('scoreB')?.addEventListener('input', e=>{ state.report.scoreB=e.target.value; saveState(); });
 
+  document.getElementById('repPossession').innerHTML = '';
+
+  const nameA = escapeHtml(state.roster.A.name), nameB = escapeHtml(state.roster.B.name);
   const possTotals = possessionTotals();
   const possSum = possTotals.A + possTotals.B;
-  document.getElementById('repPossession').innerHTML = possSum>0 ? `
-    <p style="margin-top:10px; color:var(--muted); font-size:13px;">
-      Posse de bola: <b style="color:var(--chalk);">${escapeHtml(state.roster.A.name)} ${Math.round(possTotals.A/possSum*100)}%</b> ·
-      <b style="color:var(--chalk);">${escapeHtml(state.roster.B.name)} ${Math.round(possTotals.B/possSum*100)}%</b>
-    </p>` : '';
+  const pctA = possSum>0 ? Math.round(possTotals.A/possSum*100) : 0;
+  const pctB = possSum>0 ? Math.round(possTotals.B/possSum*100) : 0;
 
-  const catCounts = state.categories.filter(c=>!c.isTeamPhase).map(c=>({label:c.label, n:categoryTagCount(c.id)})).filter(c=>c.n>0);
-  const topEvents = state.tags.slice().sort((a,b)=>a.time-b.time).slice(0,25);
+  const passOkCat = catByLabel('Passe certo'), passErrCat = catByLabel('Passe errado');
+  const shotCat = catByLabel('Remate'), shotTargetCat = catByLabel('Remate à baliza');
+  const cornerCat = catByLabel('Canto');
+  const cnt = (cat, teamId) => cat ? categoryTagCount(cat.id, teamId) : 0;
+
+  // A curated, football-specific summary (possession, passes, shots, corners) side by side per
+  // team — the generic "one row per category" table below still covers everything else tagged
+  // (fouls, cards, subs, etc.) without duplicating what's already summarised here.
+  const statRows = [];
+  if(possSum>0) statRows.push(['Posse de bola', pctA+'%', pctB+'%']);
+  if(passOkCat || passErrCat){
+    statRows.push(['Passes (total)', cnt(passOkCat,'A')+cnt(passErrCat,'A'), cnt(passOkCat,'B')+cnt(passErrCat,'B')]);
+    if(passOkCat) statRows.push(['— certos', cnt(passOkCat,'A'), cnt(passOkCat,'B')]);
+    if(passErrCat) statRows.push(['— errados', cnt(passErrCat,'A'), cnt(passErrCat,'B')]);
+  }
+  if(shotCat){
+    statRows.push(['Remates', cnt(shotCat,'A'), cnt(shotCat,'B')]);
+    if(shotTargetCat) statRows.push(['— à baliza', cnt(shotTargetCat,'A'), cnt(shotTargetCat,'B')]);
+  }
+  if(cornerCat) statRows.push(['Cantos', cnt(cornerCat,'A'), cnt(cornerCat,'B')]);
+
+  const statsSection = statRows.length ? `
+    <h3 style="font-size:14px;">Estatísticas</h3>
+    <table>
+      <thead><tr><th></th><th>${nameA}</th><th>${nameB}</th></tr></thead>
+      <tbody>${statRows.map(r=>`<tr><td>${escapeHtml(String(r[0]))}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}</tbody>
+    </table>
+  ` : '';
 
   // Team-phase categories (organização ofensiva/defensiva, transições, etc.) are a
   // collective behaviour with a real duration, so they get average/total time per
-  // team instead of a plain occurrence count.
+  // team instead of a plain occurrence count — shown as part of the same "Estatísticas"
+  // section rather than a separately-headed block.
   const teamPhaseCats = state.categories.filter(c=>c.isTeamPhase);
   const teamPhaseRows = [];
   teamPhaseCats.forEach(c=>{
@@ -5036,28 +5074,36 @@ function updateReportBody(){
       if(!events.length) return;
       const totalSec = events.reduce((sum,t)=>sum+Math.max(0, t.outSec-t.inSec), 0);
       teamPhaseRows.push({
-        catLabel:c.label, catColor:c.color, teamName:state.roster[teamId].name,
+        catLabel:c.label, teamName:state.roster[teamId].name,
         count:events.length, avgSec: totalSec/events.length, totalSec
       });
     });
   });
-
-  const teamPhaseSection = teamPhaseCats.length ? `
-    <h3 style="margin-top:16px; font-size:14px;">Fases de jogo (comportamento de equipa)</h3>
-    <table>
+  const teamPhaseSection = teamPhaseRows.length ? `
+    <table style="margin-top:10px;">
       <thead><tr><th>Fase</th><th>Time</th><th>Ocorrências</th><th>Tempo médio</th><th>Tempo total</th></tr></thead>
       <tbody>${teamPhaseRows.map(r=>`
         <tr><td>${escapeHtml(r.catLabel)}</td><td>${escapeHtml(r.teamName)}</td><td>${r.count}</td><td>${fmtTime(r.avgSec)}</td><td>${fmtTime(r.totalSec)}</td></tr>
-      `).join('') || '<tr><td colspan="5">Sem fases de equipa registadas ainda.</td></tr>'}</tbody>
+      `).join('')}</tbody>
     </table>
   ` : '';
 
+  // Everything tagged that isn't already summarised above (faltas, cartões, substituições,
+  // condução, fora de jogo, etc.) and isn't itself folded into another category via countsToward.
+  const summarisedIds = new Set([passOkCat,passErrCat,shotCat,shotTargetCat,cornerCat].filter(Boolean).map(c=>c.id));
+  const otherCatCounts = state.categories
+    .filter(c=>!c.isTeamPhase && !summarisedIds.has(c.id))
+    .map(c=>({label:c.label, n:categoryTagCount(c.id)}))
+    .filter(c=>c.n>0);
+  const topEvents = state.tags.slice().sort((a,b)=>a.time-b.time).slice(0,25);
+
   document.getElementById('repBody').innerHTML = `
+    ${statsSection}
     ${teamPhaseSection}
-    <h3 style="margin-top:16px; font-size:14px;">Eventos individuais</h3>
+    <h3 style="margin-top:16px; font-size:14px;">Outros eventos</h3>
     <table>
       <thead><tr><th>Categoria</th><th>Total</th></tr></thead>
-      <tbody>${catCounts.map(c=>`<tr><td>${escapeHtml(c.label)}</td><td>${c.n}</td></tr>`).join('') || '<tr><td colspan="2">Sem eventos registrados.</td></tr>'}</tbody>
+      <tbody>${otherCatCounts.map(c=>`<tr><td>${escapeHtml(c.label)}</td><td>${c.n}</td></tr>`).join('') || '<tr><td colspan="2">Sem outros eventos registados.</td></tr>'}</tbody>
     </table>
     <h3 style="margin-top:16px; font-size:14px;">Linha do tempo de eventos</h3>
     <table>
