@@ -862,6 +862,14 @@
             <span class="mono" id="possReadout" style="color:var(--muted); font-size:11px;"></span>
           </div>
           <div class="toolbar-sep"></div>
+          <div class="possession-control" id="quickTagControl" title="Marca estes eventos com um clique — usa a categoria correspondente, criando-a se ainda não existir">
+            <span class="mono" style="color:var(--muted); font-size:11px;">Ações:</span>
+            <button class="btn" id="btnQuickPassOk">✅ Passe certo</button>
+            <button class="btn" id="btnQuickPassErr">❌ Passe errado</button>
+            <button class="btn" id="btnQuickShot">🎯 Remate</button>
+            <button class="btn" id="btnQuickShotTarget">🥅 Remate à baliza</button>
+          </div>
+          <div class="toolbar-sep"></div>
           <div style="flex:1;"></div>
           <button class="btn" id="btnModeStopwatch" title="Alternar para codificação sem vídeo (só cronômetro)">⏱ Sem vídeo</button>
           <button class="btn icon" id="btnFocusVideo" title="Maximizar área de vídeo">⛶</button>
@@ -2105,6 +2113,34 @@ function createTag(catId){
   saveState();
   toast('Marcado: '+cat.label+' — '+fmtTime(tag.time));
 }
+
+// Finds a category by label (case-insensitive) or creates it — used by the toolbar's quick-tag
+// buttons so they work on any project regardless of whether it already has these exact
+// categories (an older project, or one where they were renamed/deleted), without ever failing.
+function findOrCreateCategory(label, key, color, extra){
+  let cat = state.categories.find(c=>c.label.toLowerCase()===label.toLowerCase());
+  if(!cat){
+    cat = Object.assign({id:'c'+uid(), key, label, color}, extra||{});
+    state.categories.push(cat);
+    saveState();
+  }
+  return cat;
+}
+document.getElementById('btnQuickPassOk').addEventListener('click', ()=>{
+  createTag(findOrCreateCategory('Passe certo','1','#3F9142').id);
+});
+document.getElementById('btnQuickPassErr').addEventListener('click', ()=>{
+  createTag(findOrCreateCategory('Passe errado','2','#C1533D').id);
+});
+document.getElementById('btnQuickShot').addEventListener('click', ()=>{
+  createTag(findOrCreateCategory('Remate','3','#E2A63B').id);
+});
+document.getElementById('btnQuickShotTarget').addEventListener('click', ()=>{
+  const shotCat = findOrCreateCategory('Remate','3','#E2A63B');
+  const onTargetCat = findOrCreateCategory('Remate à baliza','r','#C9A23F',{countsToward:shotCat.id});
+  if(!onTargetCat.countsToward){ onTargetCat.countsToward = shotCat.id; saveState(); }
+  createTag(onTargetCat.id);
+});
 
 /* ===================================================================
    CLIP EDITING — select a clip to seek to its in-point, review it,
