@@ -118,7 +118,11 @@
   .col-resizer{background:var(--line); cursor:col-resize; position:relative;}
   .col-resizer:hover, .col-resizer.dragging{background:var(--pitch);}
   .col-resizer::after{content:''; position:absolute; inset:0 -3px;}
-  .video-stage{background:var(--bg); display:flex; flex-direction:column; overflow:hidden;}
+  /* min-width/min-height:0 override grid's default "never shrink below content size" — without
+     it, the video's own intrinsic size can keep this track from actually collapsing/expanding
+     right when .focused toggles, leaving the grid container's own background (var(--line), a
+     dark blue-grey) visible instead of the video filling the space. */
+  .video-stage{background:var(--bg); display:flex; flex-direction:column; overflow:hidden; min-width:0; min-height:0;}
 
   /* Left: clips organized by category */
   .clip-sidebar{background:var(--panel); display:flex; flex-direction:column; overflow:hidden;}
@@ -2555,12 +2559,33 @@ document.getElementById('btnMute').addEventListener('click', ()=>{
   document.getElementById('btnMute').textContent = videoEl.muted ? '🔇' : '🔊';
 });
 
-document.getElementById('btnFocusVideo').addEventListener('click', ()=>{
+// "Maximizar" now does two things together: hides the side panels (more room for the video within
+// the window) AND — inside Electron — puts the actual OS window into real fullscreen (hides the
+// title bar/taskbar too), which is what people actually mean by "full screen".
+document.getElementById('btnFocusVideo').addEventListener('click', async ()=>{
   const body = document.querySelector('#tab-video .video-body');
   const focused = body.classList.toggle('focused');
   document.getElementById('btnFocusVideo').classList.toggle('active', focused);
   requestAnimationFrame(sizeDrawCanvas);
+  if(isElectron() && window.api.toggleFullScreen){
+    const isFullScreen = await window.api.toggleFullScreen();
+    // Keep the panel-hiding state in sync with the window's actual fullscreen state, in case the
+    // two get out of step (e.g. exiting fullscreen via F11 rather than this same button).
+    body.classList.toggle('focused', isFullScreen);
+    document.getElementById('btnFocusVideo').classList.toggle('active', isFullScreen);
+    requestAnimationFrame(sizeDrawCanvas);
+  }
 });
+if(window.api && window.api.onFullScreenChanged){
+  window.api.onFullScreenChanged(isFullScreen=>{
+    document.querySelector('#tab-video .video-body').classList.toggle('focused', isFullScreen);
+    document.getElementById('btnFocusVideo').classList.toggle('active', isFullScreen);
+    requestAnimationFrame(sizeDrawCanvas);
+  });
+}
+// F11 also toggles OS fullscreen (bound in the Electron main process); keep the panel-hiding
+// layout in sync there too via the same 'window:fullscreenChanged' event above — no extra
+// listener needed here.
 
 /* ---------- Resizable columns: drag the thin dividers to make the video
    area, clip list, or side panel wider/narrower ---------- */
