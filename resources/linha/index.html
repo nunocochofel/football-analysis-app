@@ -157,6 +157,10 @@
   .clip-row-range input{width:64px; font-size:11px; padding:4px 5px;}
   .clip-row-btns{display:flex; gap:4px; flex-wrap:wrap;}
   .clip-row-btns .btn{font-size:11px; padding:4px 7px;}
+  .clip-row-freezes{display:flex; flex-direction:column; gap:4px;}
+  .freeze-chip{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); background:#1c242c; border:1px solid var(--line); border-radius:5px; padding:4px 6px;}
+  .freeze-chip .freeze-hold{width:44px; font-size:11px; padding:3px 4px;}
+  .freeze-chip .btn{font-size:11px; padding:2px 6px; margin-left:auto;}
 
   /* Drawing tool flyout */
   .tool-flyout-wrap{position:relative;}
@@ -1697,6 +1701,7 @@ async function loadState(){
         else if(c.label==='Gol') c.label = 'Golo';
       });
       state.tags = parsed.tags || [];
+      state.tags.forEach(t=>{ if(!t.freezes) t.freezes = []; });
       state.possession = parsed.possession || [];
       state.scenes = parsed.scenes || [];
       state.boxScenes = parsed.boxScenes || [];
@@ -2126,6 +2131,7 @@ function createTag(catId, forceTeamId){
     mode: mode,
     shapes: [],
     zoom: null,
+    freezes: [],
   };
   state.tags.push(tag);
   state.tags.sort((a,b)=>a.time-b.time);
@@ -2221,17 +2227,41 @@ function renderClipEditBanner(){
   el.querySelector('#btnReviewClip').addEventListener('click', () => reviewClip(clip));
   el.querySelector('#btnExitClipEdit').addEventListener('click', exitClipEdit);
 }
+// Tracks the in-flight review playback (if any) so a second "Rever" click cleanly tears down
+// the previous one instead of leaving a stray timeupdate listener / pending freeze timeout
+// racing against the new playback.
+let activeReview = null;
 function reviewClip(clip){
   if(!videoEl.duration) return;
+  if(activeReview){
+    videoEl.removeEventListener('timeupdate', activeReview.handler);
+    if(activeReview.timeoutId) clearTimeout(activeReview.timeoutId);
+    activeReview = null;
+  }
+  const pendingFreezes = (clip.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
   videoEl.currentTime = clip.inSec;
   videoEl.play();
-  const stopAt = () => {
+  const rv = {handler:null, timeoutId:null};
+  rv.handler = () => {
+    // Hold the current (paused) frame in place for holdSec real seconds — the drawings stay
+    // put because nothing about the image is changing, then playback resumes from here.
+    if(pendingFreezes.length && videoEl.currentTime >= pendingFreezes[0].atSec){
+      const f = pendingFreezes.shift();
+      videoEl.pause();
+      rv.timeoutId = setTimeout(() => {
+        rv.timeoutId = null;
+        if(activeReview===rv && videoEl.currentTime < clip.outSec) videoEl.play();
+      }, Math.max(0, f.holdSec)*1000);
+      return;
+    }
     if(videoEl.currentTime >= clip.outSec){
       videoEl.pause();
-      videoEl.removeEventListener('timeupdate', stopAt);
+      videoEl.removeEventListener('timeupdate', rv.handler);
+      if(activeReview===rv) activeReview = null;
     }
   };
-  videoEl.addEventListener('timeupdate', stopAt);
+  videoEl.addEventListener('timeupdate', rv.handler);
+  activeReview = rv;
 }
 
 /* ---------- Per-drawing mini timeline: each shape on a clip gets its own
@@ -3955,6 +3985,18 @@ function renderClipRow(t, cat){
         <button class="btn ${t.outcome==='positive'?'primary':''}" data-act="posOutcome">👍 Positiva</button>
         <button class="btn ${t.outcome==='negative'?'danger':''}" data-act="negOutcome">👎 Negativa</button>
       </div>
+      <div class="clip-row-freezes">
+        ${(t.freezes||[]).map(f => `
+          <div class="freeze-chip" data-fid="${f.id}">
+            <span>⏸ ${fmtTime(f.atSec)}</span>
+            <label>parar <input type="number" step="0.5" min="0.5" class="freeze-hold" value="${f.holdSec}"> s</label>
+            <button class="btn danger" data-act="delFreeze">✕</button>
+          </div>
+        `).join('') || '<p class="shape-tl-empty">Sem pausas de imagem — pausa o vídeo no momento certo e usa o botão abaixo para o desenho ficar alinhado com os jogadores.</p>'}
+        <div class="clip-row-btns">
+          <button class="btn" data-act="addFreeze">⏸ Parar imagem no tempo atual</button>
+        </div>
+      </div>
       <div class="clip-row-btns">
         <button class="btn" data-act="review">▶ Rever</button>
         <button class="btn ${isEditing?'primary':''}" data-act="edit">🖊 ${isEditing?'A editar':'Editar desenhos'}</button>
@@ -4040,6 +4082,30 @@ function wireClipRows(container){
         t.outcome = t.outcome==='negative' ? null : 'negative';
         renderClipTable(); saveState();
       }
+      else if(act === 'addFreeze'){
+        if(!videoEl.duration){ toast('Carrega um vídeo primeiro.'); return; }
+        if(!t.freezes) t.freezes = [];
+        const atSec = clamp(videoEl.currentTime, t.inSec, t.outSec);
+        t.freezes.push({id:uid(), atSec, holdSec:2});
+        t.freezes.sort((a,b)=>a.atSec-b.atSec);
+        renderClipTable(); saveState();
+      }
+      else if(act === 'delFreeze'){
+        const fid = e.target.closest('.freeze-chip')?.dataset.fid;
+        t.freezes = (t.freezes||[]).filter(f=>f.id!==fid);
+        renderClipTable(); saveState();
+      }
+    });
+  });
+  container.querySelectorAll('.freeze-hold').forEach(inp => {
+    inp.addEventListener('change', e => {
+      const row = e.target.closest('.clip-row');
+      const t = state.tags.find(x => x.id === row.dataset.id);
+      const fid = e.target.closest('.freeze-chip')?.dataset.fid;
+      const f = t && (t.freezes||[]).find(x=>x.id===fid);
+      if(!f) return;
+      f.holdSec = Math.max(0.5, parseFloat(e.target.value) || 2);
+      saveState();
     });
   });
 }
@@ -4116,7 +4182,9 @@ async function exportClip(tag, dirHandle){
 
   return new Promise((resolve) => {
     exportBusy = true;
-    toast('A exportar "'+(cat?cat.label:'clip')+'"… ('+Math.max(0,(tag.outSec-tag.inSec)).toFixed(1)+'s em tempo real)');
+    const freezeTotal = (tag.freezes||[]).reduce((sum,f)=>sum+Math.max(0,f.holdSec), 0);
+    const expectedSec = Math.max(0,(tag.outSec-tag.inSec)) + freezeTotal;
+    toast('A exportar "'+(cat?cat.label:'clip')+'"… ('+expectedSec.toFixed(1)+'s em tempo real'+(freezeTotal>0?', incl. pausas':'')+')');
 
     const exportCanvas = document.createElement('canvas');
     exportCanvas.width = videoEl.videoWidth || 1280;
@@ -4164,9 +4232,25 @@ async function exportClip(tag, dirHandle){
       recorder.start();
       videoEl.play();
       drawFrame();
+      // Freeze points bake into the export the same way they play back in "Rever": pause the
+      // source video (drawFrame keeps re-capturing that same still frame at a fixed 30fps, so
+      // the recording gains holdSec of real duration) then resume from where it stopped.
+      const pendingFreezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
+      let freezeTimeoutId = null;
       const watchdog = setInterval(() => {
+        if(freezeTimeoutId) return;
+        if(pendingFreezes.length && videoEl.currentTime >= pendingFreezes[0].atSec){
+          const f = pendingFreezes.shift();
+          videoEl.pause();
+          freezeTimeoutId = setTimeout(() => {
+            freezeTimeoutId = null;
+            if(videoEl.currentTime < tag.outSec) videoEl.play();
+          }, Math.max(0, f.holdSec)*1000);
+          return;
+        }
         if(videoEl.currentTime >= tag.outSec){
           clearInterval(watchdog);
+          if(freezeTimeoutId) clearTimeout(freezeTimeoutId);
           videoEl.pause();
           recorder.stop();
         }
