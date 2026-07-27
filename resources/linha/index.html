@@ -2753,6 +2753,12 @@ let freezeTrackedClipId = null;
 let freezeTriggered = new Set();
 let freezeHoldTimeout = null;
 videoEl.addEventListener('timeupdate', ()=>{
+  // A clip export drives videoEl itself (its own seek/play/pause + freeze-hold watchdog, see
+  // exportClip) — usually while that very clip is also selectedClipId (the normal flow is edit
+  // clip, then export it). Left running, this handler's own freeze/bounds logic would fight the
+  // export's over who gets to pause/resume the video, and the export could hang forever waiting
+  // for an outSec it never reaches. So it stands down entirely for the duration of an export.
+  if(exportBusy){ return; }
   if(selectedClipId){
     const clip = state.tags.find(t=>t.id===selectedClipId);
     if(clip){
