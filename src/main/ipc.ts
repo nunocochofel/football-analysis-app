@@ -1,5 +1,8 @@
 import { dialog, ipcMain, BrowserWindow } from 'electron'
-import { readFile } from 'fs/promises'
+import { randomUUID } from 'crypto'
+import { readFile, unlink, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import * as XLSX from 'xlsx'
 import Papa from 'papaparse'
 import {
@@ -7,6 +10,7 @@ import {
   cutClip,
   exportSequence,
   exportImageSequence,
+  finalizeClipExport,
   hasTranscodedCache,
   transcodedCachePath,
   transcodeForPlayback
@@ -76,6 +80,25 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return result.filePath
   })
 
+  ipcMain.handle('dialog:saveClipExport', async (_e, suggestedName: string) => {
+    const win = getWindow()
+    if (!win) return null
+    const result = await dialog.showSaveDialog(win, {
+      defaultPath: suggestedName,
+      filters: [{ name: 'Vídeo MP4', extensions: ['mp4'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    return result.filePath
+  })
+
+  ipcMain.handle('dialog:chooseExportFolder', async () => {
+    const win = getWindow()
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
   // Video processing
   ipcMain.handle('video:probe', (_e, filePath: string) => probeVideo(filePath))
   ipcMain.handle(
@@ -99,6 +122,37 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     transcodeForPlayback(args.sourcePath, args.durationSec, (percent) => {
       e.sender.send('video:transcodeProgress', percent)
     })
+  )
+
+  // Clip export finalize: the renderer hands over the raw bytes it just recorded (canvas +
+  // MediaRecorder, so drawings/zoom/freeze are already burned into the pixels) — this writes
+  // them to a scratch file and re-encodes into a real MP4 at the chosen destination. See the
+  // big comment above finalizeClipExport() in ffmpeg.ts for why the re-encode is necessary.
+  ipcMain.handle(
+    'video:finalizeClipExport',
+    async (
+      e,
+      args: {
+        arrayBuffer: ArrayBuffer
+        outputPath?: string
+        folderPath?: string
+        filename?: string
+        durationSec: number
+        sourceExt: string
+      }
+    ) => {
+      const outputPath = args.outputPath ?? join(args.folderPath as string, args.filename as string)
+      const tempPath = join(tmpdir(), `linha-export-${randomUUID()}.${args.sourceExt}`)
+      await writeFile(tempPath, Buffer.from(args.arrayBuffer))
+      try {
+        await finalizeClipExport(tempPath, outputPath, args.durationSec, (percent) => {
+          e.sender.send('video:exportProgress', percent)
+        })
+      } finally {
+        await unlink(tempPath).catch(() => {})
+      }
+      return outputPath
+    }
   )
 
   // Teams / players

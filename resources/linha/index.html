@@ -2544,6 +2544,11 @@ if(window.api && window.api.onTranscodeProgress){
     if(btn && btn.disabled) btn.textContent = 'A converter… '+percent+'%';
   });
 }
+if(window.api && window.api.onExportProgress){
+  window.api.onExportProgress(percent=>{
+    toast('A finalizar em MP4… '+percent+'%');
+  });
+}
 
 function showVideoError(msg){
   clearTimeout(videoLoadTimeoutId);
@@ -4146,40 +4151,32 @@ function playNextInReel(){
 =================================================================== */
 let exportBusy = false;
 
-// MP4 is what people actually want to share/open elsewhere, so it's tried first — Electron's
-// bundled Chromium (43+) records H.264/AAC MP4 natively via MediaRecorder. WebM is kept as a
-// fallback only for older runtimes that don't support it.
+// WebM is what MediaRecorder is actually reliable at — a native MP4 mimeType is technically
+// accepted by Chromium's MediaRecorder, but the file it produces is a fragmented stream that
+// Windows' own player and PowerPoint both reject ("codec de 64 bits em falta" / 0xC00D36C4),
+// even though Chrome/VLC play it fine. Recording stays WebM regardless of final output format —
+// inside Electron the real, standards-compliant MP4 comes from re-encoding through ffmpeg after
+// the fact (see finalizeClipExport in exportClip below), not from MediaRecorder directly.
 function pickSupportedMime(){
-  const options = [
-    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-    'video/mp4;codecs=avc1,mp4a.40.2',
-    'video/mp4;codecs=h264,aac',
-    'video/mp4',
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm'
-  ];
+  const options = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
   return options.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || 'video/webm';
 }
-function extForMime(mime){ return mime.startsWith('video/mp4') ? 'mp4' : 'webm'; }
-let mp4UnsupportedWarned = false;
 
-// Lets the user pick exactly where a clip is saved. If `dirHandle` is given
-// (batch export), the file goes straight into that folder with no extra
-// prompt. Otherwise, for a single clip, this opens a native "save as" dialog
-// so the destination is chosen up front — before the (real-time) recording
-// even starts, so cancelling costs nothing.
-async function resolveExportTarget(filename, dirHandle, mime){
+// Browser fallback only (no Electron ffmpeg pipeline available): lets the user pick exactly
+// where a clip is saved. If `dirHandle` is given (batch export), the file goes straight into
+// that folder with no extra prompt. Otherwise, for a single clip, this opens a native "save as"
+// dialog so the destination is chosen up front — before the (real-time) recording even starts,
+// so cancelling costs nothing.
+async function resolveExportTarget(filename, dirHandle){
   if(dirHandle){
     try{ return await dirHandle.getFileHandle(filename, {create:true}); }
     catch(err){ toast('Não foi possível criar o ficheiro na pasta escolhida.'); return undefined; }
   }
   if(window.showSaveFilePicker){
-    const ext = extForMime(mime || 'video/webm');
     try{
       return await window.showSaveFilePicker({
         suggestedName: filename,
-        types: [{ description: ext==='mp4' ? 'Vídeo MP4' : 'Vídeo WebM', accept:{ [ext==='mp4'?'video/mp4':'video/webm']:['.'+ext] } }]
+        types: [{ description:'Vídeo WebM', accept:{ 'video/webm':['.webm'] } }]
       });
     }catch(err){
       if(err && err.name==='AbortError') return undefined; // user cancelled
@@ -4189,7 +4186,10 @@ async function resolveExportTarget(filename, dirHandle, mime){
   return null; // no File System Access API — fall back to auto-download
 }
 
-async function exportClip(tag, dirHandle){
+// `exportFolder` is a real OS folder path (Electron batch export) or a File System Access
+// FileSystemDirectoryHandle (browser fallback batch export) depending on isElectron() — never
+// mixed, since each branch below only ever touches the kind it produced itself.
+async function exportClip(tag, exportFolder){
   if(exportBusy){ toast('Já há uma exportação em curso — aguarda terminar.'); return; }
   if(!videoEl.duration){ toast('Carrega um vídeo primeiro.'); return; }
   if(typeof MediaRecorder === 'undefined' || !drawCanvas.captureStream){
@@ -4199,15 +4199,23 @@ async function exportClip(tag, dirHandle){
   const cat = catById(tag.categoryId);
   const safeLabel = (cat ? cat.label : 'clip').replace(/[^\w\-]+/g,'_');
   const mime = pickSupportedMime();
-  const ext = extForMime(mime);
-  if(ext !== 'mp4' && !mp4UnsupportedWarned){
-    mp4UnsupportedWarned = true;
-    toast('Este PC não suporta gravação MP4 nativa — a exportar em WebM.');
-  }
-  const filename = `${safeLabel}_${fmtTime(tag.inSec).replace(':','m')}s.${ext}`;
+  const baseName = `${safeLabel}_${fmtTime(tag.inSec).replace(':','m')}s`;
+  // Inside Electron, output is always a real MP4 (ffmpeg re-encode after recording — see below).
+  // Outside Electron (plain browser fallback, no ffmpeg available) it stays WebM, same as before.
+  const electron = isElectron();
+  const filename = electron ? `${baseName}.mp4` : `${baseName}.webm`;
 
-  const fileHandle = await resolveExportTarget(filename, dirHandle, mime);
-  if(fileHandle === undefined) return; // user cancelled the location picker
+  let outputPath = null; // Electron: real filesystem path from the native save dialog
+  let fileHandle;        // browser fallback: File System Access API handle
+  if(electron){
+    if(!exportFolder){
+      outputPath = await window.api.saveClipExport(filename);
+      if(!outputPath) return; // user cancelled the save dialog
+    }
+  } else {
+    fileHandle = await resolveExportTarget(filename, exportFolder);
+    if(fileHandle === undefined) return; // user cancelled the location picker
+  }
 
   return new Promise((resolve) => {
     exportBusy = true;
@@ -4290,18 +4298,34 @@ async function exportClip(tag, dirHandle){
       finish();
       const blob = new Blob(chunks, {type: mime});
       try{
-        if(fileHandle){
+        if(electron){
+          // The WebM MediaRecorder just produced is only an intermediate — ffmpeg re-encodes it
+          // into a real, non-fragmented MP4 (H.264/AAC) at the chosen destination, which is what
+          // actually opens in Windows' player / PowerPoint. See finalizeClipExport in ffmpeg.ts.
+          toast('A finalizar em MP4…');
+          const arrayBuffer = await blob.arrayBuffer();
+          const finalPath = await window.api.finalizeClipExport({
+            arrayBuffer,
+            outputPath: outputPath || undefined,
+            folderPath: exportFolder || undefined,
+            filename: exportFolder ? filename : undefined,
+            durationSec: expectedSec,
+            sourceExt: 'webm'
+          });
+          toast('Exportado: '+finalPath);
+        } else if(fileHandle){
           const writable = await fileHandle.createWritable();
           await writable.write(blob);
           await writable.close();
+          toast('Exportado: '+filename);
         } else {
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url; a.download = filename;
           document.body.appendChild(a); a.click(); a.remove();
           setTimeout(() => URL.revokeObjectURL(url), 5000);
+          toast('Exportado: '+filename);
         }
-        toast('Exportado: '+filename);
       }catch(err){
         console.error(err);
         toast('Não foi possível guardar o ficheiro exportado.');
@@ -4320,17 +4344,21 @@ async function exportAllClips(){
 
   // Pick the destination folder once, up front, so batch export doesn't
   // pop a "save as" dialog for every single clip.
-  let dirHandle = null;
-  if(window.showDirectoryPicker){
-    try{ dirHandle = await window.showDirectoryPicker(); }
+  const electron = isElectron();
+  let exportFolder = null;
+  if(electron){
+    exportFolder = await window.api.chooseExportFolder();
+    if(!exportFolder) return; // user cancelled
+  } else if(window.showDirectoryPicker){
+    try{ exportFolder = await window.showDirectoryPicker(); }
     catch(err){ if(err && err.name==='AbortError') return; }
   }
-  const destExt = extForMime(pickSupportedMime());
-  const destNote = dirHandle ? 'na pasta que escolheres' : ('vai descarregar '+list.length+' ficheiro(s) .'+destExt+' para a pasta de transferências');
+  const destExt = electron ? 'mp4' : 'webm';
+  const destNote = exportFolder ? 'na pasta que escolheres' : ('vai descarregar '+list.length+' ficheiro(s) .'+destExt+' para a pasta de transferências');
   if(!confirm('Vais exportar '+list.length+' clipe(s), '+destNote+'. Cada um demora o tempo real da sua duração — isto pode levar vários minutos. Continuar?')) return;
   for(let i=0;i<list.length;i++){
     toast('Exportando clipe '+(i+1)+'/'+list.length+'…');
-    await exportClip(list[i], dirHandle);
+    await exportClip(list[i], exportFolder);
   }
   toast('Exportação de todos os clipes concluída.');
 }

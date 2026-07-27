@@ -90,6 +90,50 @@ export async function transcodeForPlayback(
   return outputPath
 }
 
+// Clip export (the canvas-recorded webm/mp4 coming out of the renderer's MediaRecorder, which is
+// how drawings/zoom/freeze-frames get burned into the pixels) needs to become a real, boring,
+// maximally-compatible MP4 afterwards — Chromium's own MediaRecorder MP4 muxer produces a
+// fragmented stream that Windows' native player and PowerPoint's video insert both reject
+// ("codec de 64 bits em falta" / 0xC00D36C4), even though Chrome/VLC play it fine. Re-encoding
+// through ffmpeg to H.264 (yuv420p) + AAC with a standard, non-fragmented (+faststart) container
+// sidesteps that entirely, regardless of which container MediaRecorder actually produced.
+export async function finalizeClipExport(
+  tempInputPath: string,
+  outputPath: string,
+  durationSec: number,
+  onProgress: (percent: number) => void
+): Promise<void> {
+  const tmpOutputPath = outputPath + '.tmp'
+  await runProcess(
+    ffmpegPath,
+    [
+      '-y',
+      '-i',
+      tempInputPath,
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '20',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '192k',
+      '-movflags',
+      '+faststart',
+      tmpOutputPath
+    ],
+    (line) => {
+      const t = parseFfmpegTimeSec(line)
+      if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
+    }
+  )
+  await rename(tmpOutputPath, outputPath)
+}
+
 export async function probeVideo(filePath: string): Promise<VideoProbeResult> {
   const out = await runProcess(ffprobePath.path, [
     '-v',

@@ -33,6 +33,21 @@ const api = {
     ipcRenderer.on('video:transcodeProgress', (_e, percent: number) => cb(percent))
   },
 
+  saveClipExport: (suggestedName: string): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:saveClipExport', suggestedName),
+  chooseExportFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:chooseExportFolder'),
+  finalizeClipExport: (args: {
+    arrayBuffer: ArrayBuffer
+    outputPath?: string
+    folderPath?: string
+    filename?: string
+    durationSec: number
+    sourceExt: string
+  }): Promise<string> => ipcRenderer.invoke('video:finalizeClipExport', args),
+  onExportProgress: (cb: (percent: number) => void): void => {
+    ipcRenderer.on('video:exportProgress', (_e, percent: number) => cb(percent))
+  },
+
   createTeam: (name: string): Promise<Team> => ipcRenderer.invoke('db:createTeam', name),
   listTeams: (): Promise<Team[]> => ipcRenderer.invoke('db:listTeams'),
   createPlayer: (args: { teamId: number; name: string; number: number | null; position: string | null }): Promise<Player> =>
