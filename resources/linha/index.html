@@ -820,7 +820,7 @@
         <div class="cat-tree" id="catTree"></div>
         <div class="clip-sidebar-actions">
           <button class="btn" id="btnPlayReel" title="Reproduzir sequência dos clipes filtrados">▶ Sequência</button>
-          <button class="btn primary" id="btnExportAll" title="Exportar todos os clipes filtrados (um ficheiro .webm por clipe)">⬇ Exportar tudo</button>
+          <button class="btn primary" id="btnExportAll" title="Exportar todos os clipes filtrados (um ficheiro de vídeo por clipe)">⬇ Exportar tudo</button>
         </div>
       </aside>
 
@@ -2190,6 +2190,9 @@ function renderQuickTagLabels(){
 =================================================================== */
 function selectClipForEdit(tagId){
   selectedClipId = tagId;
+  // Re-arm this clip's freeze points for the playback session that's about to start.
+  freezeTrackedClipId = null;
+  if(freezeHoldTimeout){ clearTimeout(freezeHoldTimeout); freezeHoldTimeout = null; }
   const clip = state.tags.find(t => t.id === tagId);
   if(clip && videoEl.duration) videoEl.currentTime = clip.inSec;
   if(clip && clip.zoom) currentZoom = {...clip.zoom}; else currentZoom = {scale:1, panX:0, panY:0};
@@ -2203,6 +2206,8 @@ function selectClipForEdit(tagId){
 function exitClipEdit(){
   if(trimWindow && trimWindow.clipId===selectedClipId) exitTrimMode();
   selectedClipId = null;
+  freezeTrackedClipId = null;
+  if(freezeHoldTimeout){ clearTimeout(freezeHoldTimeout); freezeHoldTimeout = null; }
   currentZoom = {scale:1, panX:0, panY:0};
   document.getElementById('zoomSlider').value = 1;
   applyZoom();
@@ -2227,41 +2232,20 @@ function renderClipEditBanner(){
   el.querySelector('#btnReviewClip').addEventListener('click', () => reviewClip(clip));
   el.querySelector('#btnExitClipEdit').addEventListener('click', exitClipEdit);
 }
-// Tracks the in-flight review playback (if any) so a second "Rever" click cleanly tears down
-// the previous one instead of leaving a stray timeupdate listener / pending freeze timeout
-// racing against the new playback.
-let activeReview = null;
+// "Rever" just needs this clip to be the one governing playback — the shared timeupdate
+// handler further down (bounds clamping, freeze points, shape rendering) already does the
+// rest for whichever clip is selected, the same way it does for plain manual play/pause.
 function reviewClip(clip){
   if(!videoEl.duration) return;
-  if(activeReview){
-    videoEl.removeEventListener('timeupdate', activeReview.handler);
-    if(activeReview.timeoutId) clearTimeout(activeReview.timeoutId);
-    activeReview = null;
+  if(selectedClipId === clip.id){
+    // Already the active clip — still re-arm its freezes so replaying fires them again.
+    freezeTrackedClipId = null;
+    if(freezeHoldTimeout){ clearTimeout(freezeHoldTimeout); freezeHoldTimeout = null; }
+  } else {
+    selectClipForEdit(clip.id);
   }
-  const pendingFreezes = (clip.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
   videoEl.currentTime = clip.inSec;
   videoEl.play();
-  const rv = {handler:null, timeoutId:null};
-  rv.handler = () => {
-    // Hold the current (paused) frame in place for holdSec real seconds — the drawings stay
-    // put because nothing about the image is changing, then playback resumes from here.
-    if(pendingFreezes.length && videoEl.currentTime >= pendingFreezes[0].atSec){
-      const f = pendingFreezes.shift();
-      videoEl.pause();
-      rv.timeoutId = setTimeout(() => {
-        rv.timeoutId = null;
-        if(activeReview===rv && videoEl.currentTime < clip.outSec) videoEl.play();
-      }, Math.max(0, f.holdSec)*1000);
-      return;
-    }
-    if(videoEl.currentTime >= clip.outSec){
-      videoEl.pause();
-      videoEl.removeEventListener('timeupdate', rv.handler);
-      if(activeReview===rv) activeReview = null;
-    }
-  };
-  videoEl.addEventListener('timeupdate', rv.handler);
-  activeReview = rv;
 }
 
 /* ---------- Per-drawing mini timeline: each shape on a clip gets its own
@@ -2755,13 +2739,38 @@ videoEl.addEventListener('pause', ()=>{ document.getElementById('btnPlayPause').
 // those call sites individually (easy to miss one), this single check runs on every timeupdate
 // (which fires both during playback and right after any programmatic seek) and snaps back
 // in-bounds, pausing if forward playback would otherwise cross the clip's out point.
+//
+// Freeze points live here too, for the same reason: they need to fire no matter how playback
+// was started (the ▶ button, spacebar, scrubbing, "Rever"...), not just through one dedicated
+// review function — otherwise a freeze added while drawing only ever worked from one specific
+// button, and manually pressing play skipped it entirely.
+let freezeTrackedClipId = null;
+let freezeTriggered = new Set();
+let freezeHoldTimeout = null;
 videoEl.addEventListener('timeupdate', ()=>{
   if(selectedClipId){
     const clip = state.tags.find(t=>t.id===selectedClipId);
     if(clip){
-      if(videoEl.currentTime > clip.outSec){ videoEl.currentTime = clip.outSec; videoEl.pause(); }
-      else if(videoEl.currentTime < clip.inSec){ videoEl.currentTime = clip.inSec; }
+      if(freezeTrackedClipId !== clip.id){ freezeTrackedClipId = clip.id; freezeTriggered = new Set(); }
+      if(!freezeHoldTimeout){
+        const due = (clip.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec)
+          .find(f => !freezeTriggered.has(f.id) && videoEl.currentTime >= f.atSec);
+        if(due){
+          freezeTriggered.add(due.id);
+          videoEl.pause();
+          freezeHoldTimeout = setTimeout(() => {
+            freezeHoldTimeout = null;
+            if(selectedClipId===clip.id && videoEl.currentTime < clip.outSec) videoEl.play();
+          }, Math.max(0, due.holdSec)*1000);
+        } else {
+          if(videoEl.currentTime > clip.outSec){ videoEl.currentTime = clip.outSec; videoEl.pause(); }
+          else if(videoEl.currentTime < clip.inSec){ videoEl.currentTime = clip.inSec; }
+        }
+      }
     }
+  } else if(freezeTrackedClipId){
+    if(freezeHoldTimeout){ clearTimeout(freezeHoldTimeout); freezeHoldTimeout = null; }
+    freezeTrackedClipId = null;
   }
   updateTimeReadout(); updatePlayhead(); redrawShapes();
 });
@@ -4137,26 +4146,40 @@ function playNextInReel(){
 =================================================================== */
 let exportBusy = false;
 
+// MP4 is what people actually want to share/open elsewhere, so it's tried first — Electron's
+// bundled Chromium (43+) records H.264/AAC MP4 natively via MediaRecorder. WebM is kept as a
+// fallback only for older runtimes that don't support it.
 function pickSupportedMime(){
-  const options = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+  const options = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4;codecs=avc1,mp4a.40.2',
+    'video/mp4;codecs=h264,aac',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+  ];
   return options.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || 'video/webm';
 }
+function extForMime(mime){ return mime.startsWith('video/mp4') ? 'mp4' : 'webm'; }
+let mp4UnsupportedWarned = false;
 
 // Lets the user pick exactly where a clip is saved. If `dirHandle` is given
 // (batch export), the file goes straight into that folder with no extra
 // prompt. Otherwise, for a single clip, this opens a native "save as" dialog
 // so the destination is chosen up front — before the (real-time) recording
 // even starts, so cancelling costs nothing.
-async function resolveExportTarget(filename, dirHandle){
+async function resolveExportTarget(filename, dirHandle, mime){
   if(dirHandle){
     try{ return await dirHandle.getFileHandle(filename, {create:true}); }
     catch(err){ toast('Não foi possível criar o ficheiro na pasta escolhida.'); return undefined; }
   }
   if(window.showSaveFilePicker){
+    const ext = extForMime(mime || 'video/webm');
     try{
       return await window.showSaveFilePicker({
         suggestedName: filename,
-        types: [{ description:'Vídeo WebM', accept:{ 'video/webm':['.webm'] } }]
+        types: [{ description: ext==='mp4' ? 'Vídeo MP4' : 'Vídeo WebM', accept:{ [ext==='mp4'?'video/mp4':'video/webm']:['.'+ext] } }]
       });
     }catch(err){
       if(err && err.name==='AbortError') return undefined; // user cancelled
@@ -4175,9 +4198,15 @@ async function exportClip(tag, dirHandle){
   }
   const cat = catById(tag.categoryId);
   const safeLabel = (cat ? cat.label : 'clip').replace(/[^\w\-]+/g,'_');
-  const filename = `${safeLabel}_${fmtTime(tag.inSec).replace(':','m')}s.webm`;
+  const mime = pickSupportedMime();
+  const ext = extForMime(mime);
+  if(ext !== 'mp4' && !mp4UnsupportedWarned){
+    mp4UnsupportedWarned = true;
+    toast('Este PC não suporta gravação MP4 nativa — a exportar em WebM.');
+  }
+  const filename = `${safeLabel}_${fmtTime(tag.inSec).replace(':','m')}s.${ext}`;
 
-  const fileHandle = await resolveExportTarget(filename, dirHandle);
+  const fileHandle = await resolveExportTarget(filename, dirHandle, mime);
   if(fileHandle === undefined) return; // user cancelled the location picker
 
   return new Promise((resolve) => {
@@ -4198,7 +4227,7 @@ async function exportClip(tag, dirHandle){
       if(src) audioTracks = src.getAudioTracks();
     }catch(err){ /* audio capture not available — export continues silently */ }
     const outStream = new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks]);
-    const recorder = new MediaRecorder(outStream, {mimeType: pickSupportedMime()});
+    const recorder = new MediaRecorder(outStream, {mimeType: mime});
     const chunks = [];
     recorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
 
@@ -4259,7 +4288,7 @@ async function exportClip(tag, dirHandle){
 
     recorder.onstop = async () => {
       finish();
-      const blob = new Blob(chunks, {type: pickSupportedMime()});
+      const blob = new Blob(chunks, {type: mime});
       try{
         if(fileHandle){
           const writable = await fileHandle.createWritable();
@@ -4296,7 +4325,8 @@ async function exportAllClips(){
     try{ dirHandle = await window.showDirectoryPicker(); }
     catch(err){ if(err && err.name==='AbortError') return; }
   }
-  const destNote = dirHandle ? 'na pasta que escolheres' : ('vai descarregar '+list.length+' ficheiro(s) .webm para a pasta de transferências');
+  const destExt = extForMime(pickSupportedMime());
+  const destNote = dirHandle ? 'na pasta que escolheres' : ('vai descarregar '+list.length+' ficheiro(s) .'+destExt+' para a pasta de transferências');
   if(!confirm('Vais exportar '+list.length+' clipe(s), '+destNote+'. Cada um demora o tempo real da sua duração — isto pode levar vários minutos. Continuar?')) return;
   for(let i=0;i<list.length;i++){
     toast('Exportando clipe '+(i+1)+'/'+list.length+'…');
