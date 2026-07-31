@@ -852,6 +852,11 @@
               </div>
               <input type="file" id="fileVideoImage" accept="image/*" style="display:none">
               <div id="colorSwatches" class="tool-group" style="gap:6px;"></div>
+              <div id="lineStyleGroup" class="tool-group" title="Estilo da linha/seta/régua">
+                <button class="tool-btn active" data-lstyle="solid" title="Linha contínua">▬</button>
+                <button class="tool-btn" data-lstyle="dashed" title="Linha tracejada">┅</button>
+                <button class="tool-btn" data-lstyle="dotted" title="Linha pontilhada">┈</button>
+              </div>
               <div class="tool-group">
                 <button class="btn icon plain" id="btnUndoDraw" title="Desfazer último desenho">↶</button>
                 <button class="btn icon plain" id="btnClearDraw" title="Limpar desenhos">✕</button>
@@ -1023,6 +1028,12 @@
         <button class="tool-btn" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (o botão direito também apaga, com qualquer ferramenta)">🧹</button>
         <div class="toolbar-sep"></div>
         <div id="tacticColorSwatches" style="display:flex; gap:6px;"></div>
+        <div class="toolbar-sep"></div>
+        <div id="tacticLineStyleGroup" class="tool-group" title="Estilo da linha/seta">
+          <button class="tool-btn active" data-lstyle="solid" title="Linha contínua">▬</button>
+          <button class="tool-btn" data-lstyle="dashed" title="Linha tracejada">┅</button>
+          <button class="tool-btn" data-lstyle="dotted" title="Linha pontilhada">┈</button>
+        </div>
         <div class="toolbar-sep"></div>
         <button class="btn icon" id="btnTacticUndo" title="Desfazer">↶</button>
         <button class="btn icon" id="btnTacticClear" title="Limpar desenhos">✕</button>
@@ -1312,6 +1323,7 @@ let pendingLoc = null; // {x,y} 0-100 relative, set from mini pitch click
 
 let currentTool = 'none';
 let currentColor = state.drawColors[0];
+let currentLineStyle = 'solid'; // 'solid' | 'dashed' | 'dotted' — applies to line/arrow/ruler
 let videoShapes = []; // freeform annotations not tied to any specific clip
 let selectedClipId = null; // when set, new shapes are saved onto that clip instead of the freeform layer
 
@@ -3229,6 +3241,18 @@ function buildColorSwatches(containerId, applyFn){
 }
 buildColorSwatches('colorSwatches', c=>currentColor=c);
 
+function wireLineStyleGroup(containerId, applyFn){
+  const el = document.getElementById(containerId);
+  el.querySelectorAll('.tool-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      el.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      applyFn(btn.dataset.lstyle);
+    });
+  });
+}
+wireLineStyleGroup('lineStyleGroup', v=>currentLineStyle=v);
+
 function setVideoTool(tool){
   const b = document.querySelector(`#videoToolbar .tool-btn[data-tool="${tool}"]`);
   if(!b) return;
@@ -3611,14 +3635,14 @@ window.addEventListener('mouseup', e=>{
   // 'spot' (holofote) is a single-point placement — requiring a minimum drag distance to
   // register meant a plain, precise click (barely any pointer movement) was silently ignored.
   if(currentTool!=='spot' && Math.hypot(dx,dy) < 0.005){ redrawShapes(); return; }
-  if(currentTool==='line'){ pushShape({type:'line', p1:startPt, p2:p, color:currentColor}); }
-  else if(currentTool==='arrow'){ pushShape({type:'arrow', p1:startPt, p2:p, color:currentColor}); }
+  if(currentTool==='line'){ pushShape({type:'line', p1:startPt, p2:p, color:currentColor, lineStyle:currentLineStyle}); }
+  else if(currentTool==='arrow'){ pushShape({type:'arrow', p1:startPt, p2:p, color:currentColor, lineStyle:currentLineStyle}); }
   else if(currentTool==='spot'){ pushShape({type:'spot', center:p, color:currentColor}); }
   else if(currentTool==='vignette'){
     const radiusPx = Math.hypot(dx*drawCanvas.width, dy*drawCanvas.height);
     pushShape({type:'vignette', center:startPt, radius:Math.max(0.03, radiusPx/drawCanvas.width), opacity:0.75});
   }
-  else if(currentTool==='ruler'){ pushShape({type:'ruler', p1:startPt, p2:p, color:currentColor}); }
+  else if(currentTool==='ruler'){ pushShape({type:'ruler', p1:startPt, p2:p, color:currentColor, lineStyle:currentLineStyle}); }
   else if(currentTool==='calib'){ showCalibForm(startPt, p); }
   if(currentTool!=='calib'){ saveState(); renderShapeTimeline(); }
   redrawShapes();
@@ -3631,7 +3655,7 @@ function drawPreviewShape(p1,p2){
     drawShape({type:'vignette', center:p1, radius:Math.max(0.03, radiusPx/drawCanvas.width), opacity:0.75});
     return;
   }
-  drawShape({type: currentTool==='calib' ? 'line':currentTool, p1, p2, color: currentTool==='calib'?'#E2A63B':currentColor});
+  drawShape({type: currentTool==='calib' ? 'line':currentTool, p1, p2, color: currentTool==='calib'?'#E2A63B':currentColor, lineStyle:currentLineStyle});
 }
 function drawZonePreview(hoverPt){
   const pts = hoverPt ? zonePts.concat([hoverPt]) : zonePts;
@@ -3680,6 +3704,9 @@ function drawShapeToCanvas(ctx, canvas, s){
   ctx.save();
   ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth=2.5; ctx.lineCap='round';
   if(s.dashed) ctx.setLineDash([6,5]);
+  if((s.type==='line' || s.type==='arrow' || s.type==='ruler') && s.lineStyle && s.lineStyle!=='solid'){
+    ctx.setLineDash(s.lineStyle==='dotted' ? [2,6] : [10,7]);
+  }
   if(s.type==='line' || s.type==='ruler'){
     const a=toP(s.p1), b=toP(s.p2);
     ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
@@ -4389,6 +4416,7 @@ let tokens = {}; // id -> {x,y (0-100), teamId|'ball', num,label,color}
 let tacticShapes = [];
 let tTool = 'move';
 let tColor = state.drawColors[1];
+let tLineStyle = 'solid'; // 'solid' | 'dashed' | 'dotted' — applies to line/arrow
 let tDragId = null;
 let tacticShapeDragSession = null; // {shape, startX, startY, orig} — dragging a canvas text shape
 
@@ -4654,7 +4682,7 @@ tacticPitch.addEventListener('mousemove', e=>{
   if(tDrawing){
     const p = tRelPt(e);
     redrawTactic();
-    drawShapeOnCtx(tctx, tacticCanvas, {type:tTool, p1:tStart, p2:p, color:tColor});
+    drawShapeOnCtx(tctx, tacticCanvas, {type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
   } else if(tZonePts.length){
     redrawTactic();
     const pts = tZonePts.concat([tRelPt(e)]);
@@ -4685,6 +4713,7 @@ document.querySelectorAll('[data-ttool]').forEach(b=>{
 });
 document.querySelector('[data-ttool="move"]').classList.add('active');
 buildColorSwatches('tacticColorSwatches', c=>tColor=c);
+wireLineStyleGroup('tacticLineStyleGroup', v=>tLineStyle=v);
 
 let tDrawing=false, tStart=null, tZonePts=[];
 function tRelPt(e){ const r=tacticPitch.getBoundingClientRect(); return {x:(e.clientX-r.left)/r.width, y:(e.clientY-r.top)/r.height}; }
@@ -4788,7 +4817,7 @@ window.addEventListener('mouseup', e=>{
   const p = tRelPt(e);
   const dx=p.x-tStart.x, dy=p.y-tStart.y;
   if(Math.hypot(dx,dy)>0.005){
-    tacticShapes.push({type:tTool, p1:tStart, p2:p, color:tColor});
+    tacticShapes.push({type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
   }
   redrawTactic();
 });
@@ -4800,6 +4829,9 @@ function drawShapeOnCtx(ctx, canvas, s){
   ctx.save();
   ctx.strokeStyle=s.color; ctx.fillStyle=s.color; ctx.lineWidth=2.5; ctx.lineCap='round';
   if(s.dashed) ctx.setLineDash([6,5]);
+  if((s.type==='line' || s.type==='arrow') && s.lineStyle && s.lineStyle!=='solid'){
+    ctx.setLineDash(s.lineStyle==='dotted' ? [2,6] : [10,7]);
+  }
   const toP = p=>({x:p.x*canvas.width, y:p.y*canvas.height});
   if(s.type==='line'){
     const a=toP(s.p1), b=toP(s.p2);
