@@ -490,7 +490,7 @@
   .tactic-pitch-wrap{flex:1; position:relative; padding:14px; display:flex; align-items:center; justify-content:center; overflow:hidden;}
   .tactic-pitch{position:relative; width:100%; max-width:900px; aspect-ratio:105/68;}
   .tactic-pitch.box-mode{max-width:640px; aspect-ratio:680/375;}
-  .tactic-pitch.depth-mode{max-width:520px; max-height:74vh; aspect-ratio:700/920;}
+  .tactic-pitch.depth-mode{max-width:900px; aspect-ratio:1050/640;}
   .tactic-pitch svg{width:100%; height:100%; display:block; border-radius:8px;}
   .tactic-pitch #tacticCanvas{position:absolute; top:0; left:0; width:100%; height:100%;}
   .token{
@@ -693,6 +693,8 @@
   .info-list{font-size:13px; line-height:1.6; color:var(--muted);}
   .info-list b{color:var(--chalk);}
   .info-list li{margin-bottom:8px;}
+  .tut-h{font-size:13px; color:var(--amber); text-transform:uppercase; letter-spacing:.4px; margin:18px 0 8px;}
+  .tut-h:first-child{margin-top:0;}
 
   @media (max-width:1100px){
     .video-body{grid-template-columns:1fr;}
@@ -811,7 +813,7 @@
   </nav>
   <div class="header-actions">
     <button class="btn" id="btnBackToProjects" title="Voltar à lista de projetos">← Projetos</button>
-    <button class="btn" id="btnInfo" title="Sobre este protótipo">ⓘ Sobre</button>
+    <button class="btn" id="btnInfo" title="Tutorial — como usar a app">📖 Tutorial</button>
     <button class="btn" id="btnRoster">⚙ Times &amp; categorias</button>
     <button class="btn danger" id="btnReset">Reiniciar dados</button>
   </div>
@@ -1197,29 +1199,71 @@
   </div>
 </div>
 
-<!-- ===================== INFO MODAL ===================== -->
+<!-- ===================== TUTORIAL MODAL ===================== -->
 <div class="modal-overlay" id="infoModal">
-  <div class="modal">
+  <div class="modal" style="width:640px;">
     <div class="modal-head">
-      <h3>Sobre este protótipo</h3>
+      <h3>Tutorial</h3>
       <button class="modal-close" data-close="infoModal">✕</button>
     </div>
     <div class="modal-body">
-      <p style="margin-bottom:12px; color:var(--chalk);">Este protótipo roda inteiramente no navegador e cobre o fluxo completo — importar, marcar, desenhar, editar e extrair estatísticas. Algumas partes profissionais dependem de infraestrutura dedicada (servidor, GPU) e aqui estão representadas de forma simplificada e honesta:</p>
+      <h4 class="tut-h">Marcar cortes</h4>
       <ul class="info-list">
-        <li><b>Rastreamento por IA de jogadores/bola</b> — não incluído aqui; exigiria um modelo de visão computacional rodando em GPU dedicada. A ferramenta <b>"Seguir jogador" (🎯)</b> faz um rastreamento manual: pausa o vídeo automaticamente, marcas a posição do alvo, avanças um pouco (pausado) e marcas outra vez — o desenho interpola entre os pontos. Podes seguir vários alvos ao mesmo tempo (incluindo a bola), rever/apagar pontos individuais na lista, e ver a distância entre alvos ativos.</li>
-        <li><b>Apagar desenhos</b> — botão direito em qualquer desenho remove-o; a ferramenta 🧹 apaga por clique/arrasto.</li>
-        <li><b>Captura via câmeras físicas/RTSP em tempo real</b> — não é possível num app de navegador; o modo "Sem vídeo" simula a codificação ao vivo na beira do campo com cronômetro.</li>
-        <li><b>Exportação de clips</b> — usa a API nativa de gravação do navegador (MediaRecorder), gerando ficheiros <b>.webm</b> reais (vídeo + desenhos + zoom, se aplicado) — não .mp4, porque gerar MP4 verdadeiro dentro de um navegador exige uma biblioteca pesada (ffmpeg compilado para WebAssembly) que este protótipo não inclui. A exportação corre em tempo real: um clip de 10s demora ~10s a exportar. Se precisares de .mp4, converte o .webm depois (ex.: HandBrake). Em Chrome/Edge escolhes onde guardar — um clip individual abre "Guardar como", e "Exportar tudo" pede uma pasta uma única vez e guarda todos os clipes lá dentro; noutros browsers cai para a transferência automática de cada ficheiro.</li>
-        <li><b>Modelagem 3D de estádio e câmera virtual</b> — o quadro tático aqui é 2D, com objetos (bola/cone/baliza) e cenas salvas que são reproduzidas em sequência com transição animada entre posições.</li>
-        <li><b>Zoom no vídeo</b> — desliza o controlo 🔍 na barra de ferramentas; com a ferramenta ✋ ativa, arrasta para escolher a zona ampliada (com outra ferramenta ativa, mantém Shift para arrastar). Com um clip selecionado para edição, o zoom aplicado fica gravado nesse clip e é usado na exportação.</li>
-        <li><b>Régua de distância</b> — funciona de verdade após calibrar a escala (desenhe uma linha de referência e informe o comprimento real).</li>
-        <li><b>Arquivos grandes</b> — o carregamento usa referência direta ao arquivo (sem copiar tudo para a memória), então arquivos de vários GB são suportados em teoria. Na prática, o limite real é o que o navegador consegue decodificar, não o tamanho do arquivo. Se travar, o app avisa depois de alguns segundos em vez de ficar com tela preta indefinidamente.</li>
-        <li><b>Formatos de vídeo</b> — navegadores só decodificam os codecs/contêineres que trazem embutidos. MP4 (H.264 + AAC) é o mais compatível universalmente; .mov com HEVC/ProRes, .mkv, .avi e .wmv costumam falhar no Chrome/Firefox mesmo sendo arquivos válidos — não há solução via código para isso dentro de um app de navegador, é preciso converter o arquivo antes (ex.: HandBrake, ffmpeg) para MP4/WebM.</li>
-        <li><b>Atalhos de teclado</b> — teclas já mapeadas marcam o evento na hora; qualquer tecla de letra/número ainda sem categoria abre um criador rápido para você inventar novos tipos de corte sem abrir o menu de configurações.</li>
-        <li><b>Esc</b> cancela um rastreamento ou zona em desenho.</li>
+        <li><b>Marcação em dois toques</b> — prime a tecla de uma categoria (ou clica no botão dela no grelha) para <b>iniciar</b> o corte; o vídeo continua a correr; prime outra vez a mesma tecla/botão para <b>terminar</b> — o corte fica com o tempo real da jogada. O botão da categoria pisca a vermelho ("● a gravar…") enquanto está à espera do segundo toque; <b>Esc</b> cancela uma gravação em curso.</li>
+        <li><b>Categorias novas</b> — qualquer tecla de letra/número ainda sem categoria abre um criador rápido para inventares um novo tipo de corte sem abrir as definições.</li>
+        <li><b>Botões rápidos por equipa</b> — Passe certo/errado, Remate e Remate à baliza têm botões dedicados por equipa na barra do vídeo, para marcar sem tirar as mãos do rato. O Remate à baliza soma automaticamente ao total de Remates.</li>
+        <li><b>Posse de bola</b> — os botões "Posse" da equipa A/B começam/trocam o cronómetro de posse; a percentagem no relatório é o tempo de cada equipa a dividir pelo total acumulado das duas.</li>
+        <li><b>Local do evento</b> — clica no mini-campo da barra lateral para marcar onde a jogada aconteceu (opcional, aparece depois no mapa de calor).</li>
       </ul>
-      <p style="margin-top:12px; color:var(--muted); font-size:12px;">Cada projeto (times, marcações, cenas) fica guardado separadamente no navegador. Usa "← Projetos" no topo para voltar à lista e abrir/criar outro — abre em duas abas do browser para trabalhar em dois projetos ao mesmo tempo.</p>
+
+      <h4 class="tut-h">Desenhar (vídeo e quadro tático)</h4>
+      <ul class="info-list">
+        <li><b>Ferramentas</b> — ✋ mover, ╱ linha, ➔ seta, ▱ zona, 🔤 texto, 🧹 borracha; no vídeo há ainda ◎ holofote, ◐ vinheta, 📏 régua e ⌖ calibrar escala.</li>
+        <li><b>Estilo de linha</b> — junto à paleta de cores, escolhe contínua/tracejada/pontilhada antes de desenhar uma linha, seta ou régua.</li>
+        <li><b>Redimensionar</b> — com a ferramenta ✋, passa o rato por cima de um texto/imagem e usa a roda do rato para aumentar/diminuir.</li>
+        <li><b>Apagar</b> — botão direito em qualquer desenho remove-o; a ferramenta 🧹 apaga por clique/arrasto.</li>
+        <li><b>Copiar/colar</b> — <b>Ctrl+C</b> copia o desenho por baixo do rato, <b>Ctrl+V</b> cola-o ligeiramente deslocado — funciona tanto no vídeo como no quadro tático.</li>
+        <li><b>Zoom (vídeo)</b> — desliza o controlo 🔍 na barra de ferramentas; com ✋ ativa, arrasta para escolher a zona ampliada (com outra ferramenta ativa, mantém Shift). Fica gravado no corte selecionado e é usado na exportação.</li>
+        <li><b>Régua de distância</b> — funciona depois de calibrar a escala (desenha uma linha de referência e indica o comprimento real).</li>
+        <li><b>Timeline de cada desenho</b> — com um corte selecionado para edição, a barra por baixo mostra quando cada desenho aparece dentro do corte (mesmo estilo de "pegas" da barra De/Até do corte); ajusta-se ao vivo se mudares o De/Até.</li>
+        <li><b>Pausas de imagem (freeze-frame)</b> — no corte, "⏸ Parar imagem no tempo atual" cria uma pausa: ao rever ou exportar, o vídeo para nesse instante durante os segundos escolhidos, para os desenhos ficarem alinhados com os jogadores em vez de "andarem" enquanto o vídeo corre.</li>
+      </ul>
+
+      <h4 class="tut-h">Editar e exportar cortes</h4>
+      <ul class="info-list">
+        <li><b>Editar um corte</b> — clica na linha do corte para expandir (De/Até, jogador, Positiva/Negativa, pausas de imagem); duplo-clique no cabeçalho entra no modo de recorte visual (barra arrastável na timeline). <b>Botão direito</b> na linha abre um menu rápido com "Editar" e "Remover".</li>
+        <li><b>Positiva/Negativa</b> — marca o resultado do lance; aparece como detalhe (👍/👎) junto ao número na respetiva linha do relatório de estatísticas.</li>
+        <li><b>Rever</b> — reproduz só o intervalo do corte (com as suas pausas de imagem, se tiver).</li>
+        <li><b>Exportar</b> — grava um ficheiro <b>.mp4</b> real (vídeo + desenhos + zoom + pausas) através do ffmpeg incluído na app; "Exportar tudo" pede uma pasta uma única vez. O nome do ficheiro é <b>Categoria_N</b>, em que N é a posição temporal desse corte dentro da categoria (o 1º "Remate" do jogo é Remate_1, o 2º é Remate_2, etc.). A exportação corre em tempo real: um corte de 10s demora ~10s a preparar, mais alguns segundos a converter para MP4.</li>
+      </ul>
+
+      <h4 class="tut-h">Quadro tático</h4>
+      <ul class="info-list">
+        <li><b>4 modos de quadro</b> — Campo Inteiro e Campo p/ Zonas começam com uma formação 4-4-2 automática; Área (grande área) e Na Profundidade (campo em perspetiva, visto de trás de uma baliza) começam vazios. Cada modo tem cenas próprias e independentes.</li>
+        <li><b>Adicionar</b> — "+ Jogador" coloca jogadores um a um (com a cor e a marcação de guarda-redes definidas na escalação); "+ Objeto" traz bola, balizas, cones, marcadores, postes, barreira e escada de agilidade; "+ Imagem" traz uma imagem do computador.</li>
+        <li><b>Mover/rodar/redimensionar</b> — arrasta para mover; arrasta a pega ⚪ acima de cada objeto para rodar; roda do rato sobre um objeto para aumentar/diminuir.</li>
+        <li><b>Cenas</b> — guarda posições como "cenas" para montar uma sequência animada de um lance (bola parada, exercício de treino); reproduz com transição animada entre cenas, ou descarrega a sequência como vídeo/GIF.</li>
+      </ul>
+
+      <h4 class="tut-h">Estatísticas e relatório</h4>
+      <ul class="info-list">
+        <li><b>Estatísticas</b> — tabela em formato de comparação: número da Equipa A à esquerda, nome da estatística ao centro, número da Equipa B à direita (posse de bola, passes certos/errados, remates, remates à baliza, cantos), com o detalhe positiva/negativa quando aplicável.</li>
+        <li><b>Fases de equipa</b> — organização ofensiva/defensiva e transições mostram ocorrências, tempo médio e tempo total por equipa.</li>
+        <li><b>Outros eventos</b> — contagem simples para qualquer outra categoria tagueada (faltas, cartões, substituições, etc.).</li>
+        <li><b>Mapa de calor</b> — filtra por categoria/equipa/jogador para ver onde os eventos aconteceram no campo (precisa de teres marcado o local ao criar o evento).</li>
+        <li><b>Placar</b> — atualiza-se automaticamente sempre que marcas a categoria "Golo" com uma equipa associada; também editável à mão.</li>
+      </ul>
+
+      <h4 class="tut-h">Atalhos de teclado</h4>
+      <ul class="info-list">
+        <li>Tecla da categoria — inicia/termina a marcação em dois toques.</li>
+        <li>Espaço — play/pause do vídeo.</li>
+        <li>← / → — recua/avança 5s.</li>
+        <li>Ctrl+C / Ctrl+V — copiar/colar o desenho por baixo do rato.</li>
+        <li>Esc — cancela uma gravação de corte em curso, uma zona a meio de ser desenhada, ou fecha o menu de contexto de um corte.</li>
+      </ul>
+
+      <p style="margin-top:12px; color:var(--muted); font-size:12px;">Cada projeto (equipas, marcações, cenas) fica guardado separadamente. Usa "← Projetos" no topo para voltar à lista e abrir/criar outro.</p>
     </div>
   </div>
 </div>
@@ -1883,9 +1927,11 @@ function halfPitchSVGMarkup(){
 // near end) with every marking's width interpolated the same way, which reads as convincing
 // perspective at this scale without needing an actual projection matrix.
 function depthPitchSVGMarkup(){
-  const W=700, H=920;
-  const topY=68, bottomY=850, centerX=350;
-  const topHalfW=118, bottomHalfW=312;
+  // Landscape, not portrait — a moderate elevated angle from just behind one goal, wide enough to
+  // read the whole pitch at a glance (like a broadcast lineup-card graphic), not a steep funnel.
+  const W=1050, H=640;
+  const topY=40, bottomY=600, centerX=525;
+  const topHalfW=316, bottomHalfW=490;
   const t = y => (y-topY)/(bottomY-topY);
   const halfW = y => topHalfW + t(y)*(bottomHalfW-topHalfW);
   const leftX = y => centerX-halfW(y);
@@ -1899,14 +1945,16 @@ function depthPitchSVGMarkup(){
     return `<polygon points="${trapPts(y0,y1)}" fill="${i%2===0?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)'}"/>`;
   }).join('');
 
-  const halfY = topY + (bottomY-topY)*0.52;
-  const circleRX = halfW(halfY)*0.4, circleRY = circleRX*0.4;
+  // Halfway line sits a little ABOVE the geometric middle (t<0.5) — the near half is closer to
+  // camera, so it should visually claim more of the frame than the far half, not less.
+  const halfY = topY + (bottomY-topY)*0.43;
+  const circleRX = halfW(halfY)*0.26, circleRY = circleRX*0.52;
 
-  const farBoxDepth=68, farAreaDepth=24, farGoalRise=20;
-  const nearBoxDepth=168, nearAreaDepth=58, nearGoalRise=46;
+  const farBoxDepth=44, farAreaDepth=15, farGoalRise=16;
+  const nearBoxDepth=95, nearAreaDepth=34, nearGoalRise=30;
   const farBoxY1 = topY+farBoxDepth, farAreaY1 = topY+farAreaDepth;
   const nearBoxY1 = bottomY-nearBoxDepth, nearAreaY1 = bottomY-nearAreaDepth;
-  const boxFrac=0.62, areaFrac=0.28;
+  const boxFrac=0.56, areaFrac=0.25;
   const boxPts = (yGoal,yInner,frac) => `${centerX-halfW(yGoal)*frac},${yGoal} ${centerX+halfW(yGoal)*frac},${yGoal} ${centerX+halfW(yInner)*frac},${yInner} ${centerX-halfW(yInner)*frac},${yInner}`;
   const farGoalHalfW = halfW(topY)*areaFrac*0.62;
   const nearGoalHalfW = halfW(bottomY)*areaFrac*0.62;
@@ -5331,7 +5379,7 @@ async function exportTacticVideo(format){
       if(img.complete) res(); else img.addEventListener('load', res, {once:true});
     })));
     const bgImg = await getPitchBackgroundImage(boardMode);
-    const size = boardMode==='box' ? {w:1360,h:750} : boardMode==='depth' ? {w:1050,h:1380} : {w:1050,h:680};
+    const size = boardMode==='box' ? {w:1360,h:750} : boardMode==='depth' ? {w:1050,h:640} : {w:1050,h:680};
     const off = document.createElement('canvas');
     off.width = size.w; off.height = size.h;
     const octx = off.getContext('2d');

@@ -1,6 +1,6 @@
 {
   "name": "football-analysis-app",
-  "version": "0.8.11",
+  "version": "0.8.12",
   "description": "App de análise de vídeo de futebol (MVP)",
   "main": "./out/main/index.js",
   "author": "",
