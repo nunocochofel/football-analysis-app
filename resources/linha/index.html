@@ -441,6 +441,9 @@
   }
   .cat-btn:hover{background:#26303a;}
   .cat-btn{transition:background .12s ease;}
+  .cat-btn.recording{background:#3a1f1f; border-color:var(--crimson); box-shadow:0 0 0 1px var(--crimson); animation:catRecordPulse 1.1s ease-in-out infinite;}
+  .cat-btn.recording::after{content:'● a gravar…'; position:absolute; top:6px; right:9px; font-size:9px; color:var(--crimson); font-weight:600;}
+  @keyframes catRecordPulse{0%,100%{box-shadow:0 0 0 1px var(--crimson);} 50%{box-shadow:0 0 0 3px var(--crimson);}}
   .chip{transition:background .12s ease, color .12s ease;}
   .chip:hover{color:var(--chalk);}
   .row-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;}
@@ -675,6 +678,17 @@
     opacity:0; transition:opacity .25s; pointer-events:none;
   }
   .toast.show{opacity:1;}
+
+  .context-menu{
+    position:fixed; z-index:250; background:var(--panel-alt); border:1px solid var(--line); border-radius:var(--radius-sm);
+    box-shadow:var(--shadow); padding:4px; display:flex; flex-direction:column; gap:2px; min-width:140px;
+  }
+  .context-menu button{
+    background:transparent; border:none; color:var(--chalk); font-size:12.5px; text-align:left;
+    padding:7px 10px; border-radius:4px; cursor:pointer;
+  }
+  .context-menu button:hover{background:#26303a;}
+  .context-menu button.danger:hover{background:rgba(209,73,91,.18); color:var(--crimson);}
 
   .info-list{font-size:13px; line-height:1.6; color:var(--muted);}
   .info-list b{color:var(--chalk);}
@@ -1211,6 +1225,11 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="context-menu" id="clipContextMenu" style="display:none;">
+  <button data-cmact="edit">🖊 Editar</button>
+  <button data-cmact="delete" class="danger">✕ Remover</button>
+</div>
 
 <!-- Shared rich text-editor panel — opened by double-clicking a text shape, on the video canvas
      or either tactic board. One instance, reused by whichever surface opened it (see openTextEditPanel). -->
@@ -2162,7 +2181,8 @@ function renderCatGrid(){
       <span>${escapeHtml(c.label)}</span>
       <span class="key">tecla ${escapeHtml(c.key||'—')}</span>
     </button>`).join('');
-  el.querySelectorAll('.cat-btn').forEach(b=>b.addEventListener('click', ()=>createTag(b.dataset.cid)));
+  el.querySelectorAll('.cat-btn').forEach(b=>b.addEventListener('click', ()=>handleCategoryTrigger(b.dataset.cid)));
+  updateKeyRecordingIndicators();
 }
 
 // Mini pitch for location picking
@@ -2206,17 +2226,19 @@ const DEFAULT_POST_ROLL = 15;
 // regardless of whichever team/player happens to be selected in the sidebar. Since that team was
 // chosen explicitly (not implied by a selected player), playerId is left unset rather than
 // possibly carrying over a stale/mismatched player from the sidebar's current selection.
-function createTag(catId, forceTeamId){
+// overrideRange: used by the two-tap category-trigger flow (handleCategoryTrigger) to set the
+// clip's real in/out/time directly instead of the default pre/post-roll window around one instant.
+function createTag(catId, forceTeamId, overrideRange){
   const cat = catById(catId); if(!cat) return;
-  const t = currentTimeValue();
+  const t = overrideRange ? overrideRange.time : currentTimeValue();
   const teamId = forceTeamId!=null
     ? forceTeamId
     : (activePlayerId ? activeTeam : (state.roster[activeTeam].players.length ? activeTeam : null));
   const tag = {
     id:uid(),
     time: t,
-    inSec: Math.max(0, t - DEFAULT_PRE_ROLL),
-    outSec: t + DEFAULT_POST_ROLL,
+    inSec: overrideRange ? overrideRange.inSec : Math.max(0, t - DEFAULT_PRE_ROLL),
+    outSec: overrideRange ? overrideRange.outSec : t + DEFAULT_POST_ROLL,
     half: activeHalf,
     categoryId: catId,
     teamId,
@@ -2243,6 +2265,39 @@ function createTag(catId, forceTeamId){
   }
   saveState();
   toast('Marcado: '+cat.label+' — '+fmtTime(tag.time));
+}
+
+// Two-tap clip recording: the first trigger (key press or clicking the category button) marks
+// the moment the play actually started; the game keeps rolling; the second trigger on the SAME
+// category marks the end and creates the clip with that real in/out range — instead of a fixed
+// pre/post-roll window guessed around a single instant. Any manual adjustment still happens
+// afterwards in the clip row, same as before.
+let pendingKeyClips = {}; // catId -> {inSec}
+function handleCategoryTrigger(catId){
+  const cat = catById(catId); if(!cat) return;
+  const pending = pendingKeyClips[catId];
+  if(pending){
+    delete pendingKeyClips[catId];
+    const endSec = currentTimeValue();
+    const startSec = Math.min(pending.inSec, endSec);
+    const outSec = Math.max(pending.inSec, endSec);
+    createTag(catId, undefined, {inSec:startSec, outSec:Math.max(outSec, startSec+0.2), time:startSec});
+  } else {
+    pendingKeyClips[catId] = {inSec: currentTimeValue()};
+    toast('A gravar corte de "'+cat.label+'"… prime outra vez para terminar.');
+  }
+  updateKeyRecordingIndicators();
+}
+function cancelPendingKeyClips(){
+  if(!Object.keys(pendingKeyClips).length) return;
+  pendingKeyClips = {};
+  updateKeyRecordingIndicators();
+  toast('Gravação de corte cancelada.');
+}
+function updateKeyRecordingIndicators(){
+  document.querySelectorAll('#catGrid .cat-btn').forEach(b=>{
+    b.classList.toggle('recording', !!pendingKeyClips[b.dataset.cid]);
+  });
 }
 
 // Finds a category by label (case-insensitive) or creates it — used by the toolbar's quick-tag
@@ -3978,10 +4033,12 @@ document.addEventListener('keydown', e=>{
   if(e.key==='Escape'){
     if(currentTool==='zone' && zonePts.length){ zonePts=[]; redrawShapes(); }
     closeQuickCreateCategory();
+    cancelPendingKeyClips();
+    closeClipContextMenu();
     return;
   }
   const cat = state.categories.find(c=>c.key && c.key.toLowerCase()===e.key.toLowerCase());
-  if(cat){ createTag(cat.id); return; }
+  if(cat){ handleCategoryTrigger(cat.id); return; }
   if(/^[a-z0-9]$/i.test(e.key)){ openQuickCreateCategory(e.key); }
 });
 
@@ -4182,6 +4239,46 @@ function renderClipRow(t, cat){
   </div>`;
 }
 
+// Right-click on a clip row header — a faster path to "Editar"/"Remover" than expanding the row
+// first. A single persistent menu element (not re-created per render), tracking which clip it's
+// currently pointed at.
+let contextMenuClipId = null;
+function openClipContextMenu(e, clipId){
+  e.preventDefault();
+  contextMenuClipId = clipId;
+  const menu = document.getElementById('clipContextMenu');
+  menu.style.display = 'flex';
+  const maxLeft = window.innerWidth - 160, maxTop = window.innerHeight - 90;
+  menu.style.left = Math.min(e.clientX, Math.max(0, maxLeft)) + 'px';
+  menu.style.top = Math.min(e.clientY, Math.max(0, maxTop)) + 'px';
+}
+function closeClipContextMenu(){
+  contextMenuClipId = null;
+  document.getElementById('clipContextMenu').style.display = 'none';
+}
+document.getElementById('clipContextMenu').addEventListener('click', e=>{
+  const btn = e.target.closest('[data-cmact]'); if(!btn) return;
+  const id = contextMenuClipId;
+  const t = state.tags.find(x=>x.id===id);
+  closeClipContextMenu();
+  if(!t) return;
+  if(btn.dataset.cmact==='edit'){
+    expandedClipIds.add(t.id);
+    selectClipForEdit(t.id);
+    enterTrimMode(t);
+    renderClipTable();
+  } else if(btn.dataset.cmact==='delete'){
+    if(!confirm('Remover este corte?')) return;
+    state.tags = state.tags.filter(x=>x.id!==id);
+    if(selectedClipId===id) selectedClipId = null;
+    renderClipTable(); renderTouchlineFlags(); saveState();
+  }
+});
+document.addEventListener('click', e=>{
+  if(!e.target.closest('#clipContextMenu')) closeClipContextMenu();
+});
+document.addEventListener('scroll', closeClipContextMenu, true);
+
 function wireClipRows(container){
   container.querySelectorAll('.clip-row-head').forEach(head => {
     head.addEventListener('click', () => {
@@ -4199,6 +4296,7 @@ function wireClipRows(container){
       enterTrimMode(t);
       renderClipTable();
     });
+    head.addEventListener('contextmenu', e => openClipContextMenu(e, head.dataset.id));
   });
   container.querySelectorAll('.clip-in').forEach(inp => {
     inp.addEventListener('change', e => {
