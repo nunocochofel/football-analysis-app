@@ -487,6 +487,7 @@
   .tactic-pitch-wrap{flex:1; position:relative; padding:14px; display:flex; align-items:center; justify-content:center; overflow:hidden;}
   .tactic-pitch{position:relative; width:100%; max-width:900px; aspect-ratio:105/68;}
   .tactic-pitch.box-mode{max-width:640px; aspect-ratio:680/375;}
+  .tactic-pitch.depth-mode{max-width:520px; max-height:74vh; aspect-ratio:700/900;}
   .tactic-pitch svg{width:100%; height:100%; display:block; border-radius:8px;}
   .tactic-pitch #tacticCanvas{position:absolute; top:0; left:0; width:100%; height:100%;}
   .token{
@@ -1017,6 +1018,7 @@
             <button class="btn" data-boardmode="full" title="Campo inteiro, com formações">Campo Inteiro</button>
             <button class="btn" data-boardmode="zones" title="Campo inteiro com grelha de zonas tracejada, para análise posicional">Campo p/ Zonas</button>
             <button class="btn" data-boardmode="box" title="Só a grande área, começa vazio — ideal para bolas paradas">Área</button>
+            <button class="btn" data-boardmode="depth" title="Campo visto de trás de uma baliza, em perspetiva — começa vazio, ideal para cartões de alinhamento (onze inicial)">Na Profundidade</button>
           </div>
         </div>
         <div class="toolbar-sep"></div>
@@ -1307,6 +1309,7 @@ function defaultState(){
     scenes: [],
     boxScenes: [], // same shape as `scenes`, but for the independent "Área" board
     zoneScenes: [], // same shape as `scenes`, but for the independent "Campo p/ Zonas" board
+    depthScenes: [], // same shape as `scenes`, but for the independent "Na Profundidade" board
     report:{matchName:'', date:''},
     drawColors: ['#ECEFF2','#E2A63B','#C1533D','#3F9142','#4F8FC9'],
     videoPath: null, // absolute filesystem path, only ever set inside the Electron app
@@ -1693,8 +1696,8 @@ async function saveState(){
   try{
     localStorage.setItem('linha:project:' + currentProjectId, JSON.stringify({
       roster:state.roster, categories:state.categories, tags:state.tags, possession:state.possession,
-      scenes:state.scenes, boxScenes:state.boxScenes, zoneScenes:state.zoneScenes, report:state.report,
-      videoPath:state.videoPath
+      scenes:state.scenes, boxScenes:state.boxScenes, zoneScenes:state.zoneScenes, depthScenes:state.depthScenes,
+      report:state.report, videoPath:state.videoPath
     }));
     touchProject(currentProjectId);
   }catch(e){ /* best-effort */ }
@@ -1720,6 +1723,7 @@ async function loadState(){
       state.scenes = parsed.scenes || [];
       state.boxScenes = parsed.boxScenes || [];
       state.zoneScenes = parsed.zoneScenes || [];
+      state.depthScenes = parsed.depthScenes || [];
       state.report = parsed.report || state.report;
       state.videoPath = parsed.videoPath || null;
     }
@@ -1778,6 +1782,7 @@ function allPlayersFlat(){
 =================================================================== */
 function pitchSVGMarkup(variant){
   if(variant==='box') return halfPitchSVGMarkup();
+  if(variant==='depth') return depthPitchSVGMarkup();
   // 'zones': the same full pitch, with a 6×3 dashed positional grid (thirds of length × thirds of
   // width) automatically overlaid — a common coaching aid for zonal/positional analysis.
   const zoneGrid = variant==='zones' ? `
@@ -1851,6 +1856,70 @@ function halfPitchSVGMarkup(){
       <rect x="304" y="525" width="72" height="32"/>
       ${[1,2,3].map(i=>`<line x1="${304+i*18}" y1="525" x2="${304+i*18}" y2="557" stroke-width="1.5"/>`).join('')}
       ${[1,2].map(i=>`<line x1="304" y1="${525+i*10.7}" x2="376" y2="${525+i*10.7}" stroke-width="1.5"/>`).join('')}
+    </g>
+  </svg>`;
+}
+// "Na Profundidade" board: the whole pitch viewed from behind one goal, standing just outside it —
+// the classic lineup-card angle. Not a true 3D projection, just a trapezoid (narrow far end, wide
+// near end) with every marking's width interpolated the same way, which reads as convincing
+// perspective at this scale without needing an actual projection matrix.
+function depthPitchSVGMarkup(){
+  const W=700, H=900;
+  const topY=68, bottomY=858, centerX=350;
+  const topHalfW=118, bottomHalfW=312;
+  const t = y => (y-topY)/(bottomY-topY);
+  const halfW = y => topHalfW + t(y)*(bottomHalfW-topHalfW);
+  const leftX = y => centerX-halfW(y);
+  const rightX = y => centerX+halfW(y);
+  const trapPts = (y0,y1) => `${leftX(y0)},${y0} ${rightX(y0)},${y0} ${rightX(y1)},${y1} ${leftX(y1)},${y1}`;
+
+  const stripeCount = 9;
+  const stripeH = (bottomY-topY)/stripeCount;
+  const stripes = Array.from({length:stripeCount}, (_,i)=>{
+    const y0 = topY+i*stripeH, y1 = y0+stripeH;
+    return `<polygon points="${trapPts(y0,y1)}" fill="${i%2===0?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)'}"/>`;
+  }).join('');
+
+  const halfY = topY + (bottomY-topY)*0.52;
+  const circleRX = halfW(halfY)*0.4, circleRY = circleRX*0.4;
+
+  const farBoxDepth=68, farAreaDepth=24, farGoalRise=20;
+  const nearBoxDepth=168, nearAreaDepth=58;
+  const farBoxY1 = topY+farBoxDepth, farAreaY1 = topY+farAreaDepth;
+  const nearBoxY1 = bottomY-nearBoxDepth, nearAreaY1 = bottomY-nearAreaDepth;
+  const boxFrac=0.62, areaFrac=0.28;
+  const boxPts = (yGoal,yInner,frac) => `${centerX-halfW(yGoal)*frac},${yGoal} ${centerX+halfW(yGoal)*frac},${yGoal} ${centerX+halfW(yInner)*frac},${yInner} ${centerX-halfW(yInner)*frac},${yInner}`;
+  const farGoalHalfW = halfW(topY)*areaFrac*0.62;
+
+  return `
+  <svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="grassDepth" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#28642c"/>
+        <stop offset="1" stop-color="#3a9640"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="0" width="${W}" height="${H}" fill="url(#grassDepth)"/>
+    <g>${stripes}</g>
+    <g fill="none" stroke="rgba(236,239,242,0.85)" stroke-width="3" stroke-linejoin="round">
+      <polygon points="${trapPts(topY,bottomY)}"/>
+      <line x1="${leftX(halfY)}" y1="${halfY}" x2="${rightX(halfY)}" y2="${halfY}"/>
+      <ellipse cx="${centerX}" cy="${halfY}" rx="${circleRX}" ry="${circleRY}"/>
+      <circle cx="${centerX}" cy="${halfY}" r="2.5" fill="rgba(236,239,242,0.85)"/>
+      <polygon points="${boxPts(topY, farBoxY1, boxFrac)}"/>
+      <polygon points="${boxPts(topY, farAreaY1, areaFrac)}"/>
+      <circle cx="${centerX}" cy="${topY+farBoxDepth*0.62}" r="2.5" fill="rgba(236,239,242,0.85)"/>
+      <polygon points="${boxPts(bottomY, nearBoxY1, boxFrac)}"/>
+      <polygon points="${boxPts(bottomY, nearAreaY1, areaFrac)}"/>
+      <circle cx="${centerX}" cy="${bottomY-nearBoxDepth*0.62}" r="2.5" fill="rgba(236,239,242,0.85)"/>
+      <path d="M ${leftX(topY)+10} ${topY} A 10 10 0 0 0 ${leftX(topY)} ${topY+10}"/>
+      <path d="M ${rightX(topY)} ${topY+10} A 10 10 0 0 0 ${rightX(topY)-10} ${topY}"/>
+    </g>
+    <g fill="none" stroke="rgba(236,239,242,0.7)" stroke-width="2.5">
+      <line x1="${centerX-farGoalHalfW}" y1="${topY}" x2="${centerX-farGoalHalfW}" y2="${topY-farGoalRise}"/>
+      <line x1="${centerX+farGoalHalfW}" y1="${topY}" x2="${centerX+farGoalHalfW}" y2="${topY-farGoalRise}"/>
+      <line x1="${centerX-farGoalHalfW}" y1="${topY-farGoalRise}" x2="${centerX+farGoalHalfW}" y2="${topY-farGoalRise}"/>
+      ${[1,2,3,4].map(i=>`<line x1="${centerX-farGoalHalfW+i*(farGoalHalfW*2/5)}" y1="${topY}" x2="${centerX-farGoalHalfW+i*(farGoalHalfW*2/5)}" y2="${topY-farGoalRise}" stroke-width="1"/>`).join('')}
     </g>
   </svg>`;
 }
@@ -4186,11 +4255,20 @@ function playNextInReel(){
    EXPORT — records a clip (video frame + its drawings, cropped to its
    zoom if one was set) to a real video file using the browser's native
    MediaRecorder. This is a real-time capture: a 10s clip takes ~10s to
-   export. There is no way around that without a much heavier toolchain
-   (ffmpeg compiled to WebAssembly), which is why this app renders to
-   WebM instead of MP4 — see the "Sobre" panel for the full trade-off.
+   record. Inside Electron, the recording is then re-encoded through the
+   bundled ffmpeg into a real MP4 (see finalizeClipExport in ffmpeg.ts);
+   outside Electron there's no ffmpeg available, so it stays WebM.
 =================================================================== */
 let exportBusy = false;
+
+// A clip's rank (1-based) among every other tag of the same category, ordered by when it
+// happened — used to name exported files "Categoria_1", "Categoria_2"... instead of a timestamp,
+// so a folder of exports reads as a numbered sequence per event type.
+function categoryOccurrenceIndex(tag){
+  const cohort = state.tags.filter(t=>t.categoryId===tag.categoryId && t.mode!=='stopwatch').sort((a,b)=>a.time-b.time);
+  const idx = cohort.findIndex(t=>t.id===tag.id);
+  return idx>=0 ? idx+1 : 1;
+}
 
 // WebM is what MediaRecorder is actually reliable at — a native MP4 mimeType is technically
 // accepted by Chromium's MediaRecorder, but the file it produces is a fragmented stream that
@@ -4240,7 +4318,7 @@ async function exportClip(tag, exportFolder){
   const cat = catById(tag.categoryId);
   const safeLabel = (cat ? cat.label : 'clip').replace(/[^\w\-]+/g,'_');
   const mime = pickSupportedMime();
-  const baseName = `${safeLabel}_${fmtTime(tag.inSec).replace(':','m')}s`;
+  const baseName = `${safeLabel}_${categoryOccurrenceIndex(tag)}`;
   // Inside Electron, output is always a real MP4 (ffmpeg re-encode after recording — see below).
   // Outside Electron (plain browser fallback, no ffmpeg available) it stays WebM, same as before.
   const electron = isElectron();
@@ -4420,20 +4498,23 @@ let tLineStyle = 'solid'; // 'solid' | 'dashed' | 'dotted' — applies to line/a
 let tDragId = null;
 let tacticShapeDragSession = null; // {shape, startX, startY, orig} — dragging a canvas text shape
 
-// "Campo Inteiro", "Campo p/ Zonas" and "Área" are independent boards sharing one DOM/canvas — switching
-// mode snapshots the outgoing board's live tokens/shapes into an in-memory buffer and loads the
-// incoming board's buffer (starts empty for 'box', consistent with it having no default formation).
+// "Campo Inteiro", "Campo p/ Zonas", "Área" and "Na Profundidade" are independent boards sharing
+// one DOM/canvas — switching mode snapshots the outgoing board's live tokens/shapes into an
+// in-memory buffer and loads the incoming board's buffer (starts empty for 'box'/'depth',
+// consistent with neither having a default formation — a flat-pitch formation wouldn't make sense
+// projected onto the perspective board anyway).
 // Saved scenes are kept fully separate per mode (state.scenes vs state.boxScenes) via activeScenesArray().
 let boardMode = 'full';
-// 'box' starts pre-initialized (always empty, never auto-formatted — see defaultTokens() below);
-// 'zones' starts as null so its first visit falls through to defaultTokens() and gets the same
-// starting formation as 'full', since it's meant to behave like Campo Inteiro plus a grid, not
-// like the deliberately-blank Área board.
-const boardBuffers = { full: null, box: {tokens:{}, shapes:[]}, zones: null };
-const BOARD_MODE_LABELS = { full:'Campo Inteiro', zones:'Campo p/ Zonas', box:'Área' };
+// 'box'/'depth' start pre-initialized (always empty, never auto-formatted — see defaultTokens()
+// below); 'zones' starts as null so its first visit falls through to defaultTokens() and gets the
+// same starting formation as 'full', since it's meant to behave like Campo Inteiro plus a grid,
+// not like the deliberately-blank Área/Profundidade boards.
+const boardBuffers = { full: null, box: {tokens:{}, shapes:[]}, zones: null, depth: {tokens:{}, shapes:[]} };
+const BOARD_MODE_LABELS = { full:'Campo Inteiro', zones:'Campo p/ Zonas', box:'Área', depth:'Na Profundidade' };
 function activeScenesArray(){
   if(boardMode==='box') return state.boxScenes;
   if(boardMode==='zones') return state.zoneScenes;
+  if(boardMode==='depth') return state.depthScenes;
   return state.scenes;
 }
 
@@ -4450,9 +4531,10 @@ function sizeTacticCanvas(){
 }
 
 function defaultTokens(){
-  // The box (Área) board never gets an auto-populated formation — it starts empty and players are
-  // added one at a time via addPlayer(), regardless of how many times refreshAllUI() re-runs this.
-  if(boardMode==='box'){ tokens = {}; return; }
+  // The box (Área) and depth (Na Profundidade) boards never get an auto-populated formation —
+  // they start empty and players are added one at a time via addPlayer(), regardless of how many
+  // times refreshAllUI() re-runs this.
+  if(boardMode==='box' || boardMode==='depth'){ tokens = {}; return; }
   tokens = {};
   const formA = formationCoords('4-4-2','A');
   const formB = formationCoords('4-4-2','B');
@@ -4470,8 +4552,10 @@ function setBoardMode(mode){
   activeSceneIndex = null; // each board mode has its own separate scene list
   initPitchSVG();
   tacticPitch.classList.toggle('box-mode', boardMode==='box');
-  document.getElementById('formationSections').style.display = boardMode==='box' ? 'none' : '';
-  document.getElementById('boxModeHint').style.display = boardMode==='box' ? '' : 'none';
+  tacticPitch.classList.toggle('depth-mode', boardMode==='depth');
+  const startsEmpty = boardMode==='box' || boardMode==='depth';
+  document.getElementById('formationSections').style.display = startsEmpty ? 'none' : '';
+  document.getElementById('boxModeHint').style.display = startsEmpty ? '' : 'none';
   document.getElementById('boardModeBtn').textContent = BOARD_MODE_LABELS[boardMode] + ' ▾';
   requestAnimationFrame(sizeTacticCanvas);
   renderTokens();
@@ -4996,7 +5080,7 @@ document.getElementById('btnPlayScenes').addEventListener('click', async ()=>{
 // CSS .token look closely enough to read at a glance) + tacticShapes via the existing drawShapeOnCtx.
 const pitchBgCache = {};
 function getPitchBackgroundImage(mode){
-  const key = (mode==='box' || mode==='zones') ? mode : 'full';
+  const key = (mode==='box' || mode==='zones' || mode==='depth') ? mode : 'full';
   if(!pitchBgCache[key]){
     const svg = pitchSVGMarkup(key==='full' ? undefined : key);
     const img = new Image();
@@ -5084,7 +5168,7 @@ async function exportTacticVideo(format){
       if(img.complete) res(); else img.addEventListener('load', res, {once:true});
     })));
     const bgImg = await getPitchBackgroundImage(boardMode);
-    const size = boardMode==='box' ? {w:1360,h:750} : {w:1050,h:680};
+    const size = boardMode==='box' ? {w:1360,h:750} : boardMode==='depth' ? {w:1050,h:1350} : {w:1050,h:680};
     const off = document.createElement('canvas');
     off.width = size.w; off.height = size.h;
     const octx = off.getContext('2d');
