@@ -487,7 +487,7 @@
   .tactic-pitch-wrap{flex:1; position:relative; padding:14px; display:flex; align-items:center; justify-content:center; overflow:hidden;}
   .tactic-pitch{position:relative; width:100%; max-width:900px; aspect-ratio:105/68;}
   .tactic-pitch.box-mode{max-width:640px; aspect-ratio:680/375;}
-  .tactic-pitch.depth-mode{max-width:520px; max-height:74vh; aspect-ratio:700/900;}
+  .tactic-pitch.depth-mode{max-width:520px; max-height:74vh; aspect-ratio:700/920;}
   .tactic-pitch svg{width:100%; height:100%; display:block; border-radius:8px;}
   .tactic-pitch #tacticCanvas{position:absolute; top:0; left:0; width:100%; height:100%;}
   .token{
@@ -1864,8 +1864,8 @@ function halfPitchSVGMarkup(){
 // near end) with every marking's width interpolated the same way, which reads as convincing
 // perspective at this scale without needing an actual projection matrix.
 function depthPitchSVGMarkup(){
-  const W=700, H=900;
-  const topY=68, bottomY=858, centerX=350;
+  const W=700, H=920;
+  const topY=68, bottomY=850, centerX=350;
   const topHalfW=118, bottomHalfW=312;
   const t = y => (y-topY)/(bottomY-topY);
   const halfW = y => topHalfW + t(y)*(bottomHalfW-topHalfW);
@@ -1884,12 +1884,22 @@ function depthPitchSVGMarkup(){
   const circleRX = halfW(halfY)*0.4, circleRY = circleRX*0.4;
 
   const farBoxDepth=68, farAreaDepth=24, farGoalRise=20;
-  const nearBoxDepth=168, nearAreaDepth=58;
+  const nearBoxDepth=168, nearAreaDepth=58, nearGoalRise=46;
   const farBoxY1 = topY+farBoxDepth, farAreaY1 = topY+farAreaDepth;
   const nearBoxY1 = bottomY-nearBoxDepth, nearAreaY1 = bottomY-nearAreaDepth;
   const boxFrac=0.62, areaFrac=0.28;
   const boxPts = (yGoal,yInner,frac) => `${centerX-halfW(yGoal)*frac},${yGoal} ${centerX+halfW(yGoal)*frac},${yGoal} ${centerX+halfW(yInner)*frac},${yInner} ${centerX-halfW(yInner)*frac},${yInner}`;
   const farGoalHalfW = halfW(topY)*areaFrac*0.62;
+  const nearGoalHalfW = halfW(bottomY)*areaFrac*0.62;
+  const goalFrame = (y,goalHalfW,rise,dir) => `
+    <line x1="${centerX-goalHalfW}" y1="${y}" x2="${centerX-goalHalfW}" y2="${y+rise*dir}"/>
+    <line x1="${centerX+goalHalfW}" y1="${y}" x2="${centerX+goalHalfW}" y2="${y+rise*dir}"/>
+    <line x1="${centerX-goalHalfW}" y1="${y+rise*dir}" x2="${centerX+goalHalfW}" y2="${y+rise*dir}"/>
+    ${[1,2,3,4].map(i=>`<line x1="${centerX-goalHalfW+i*(goalHalfW*2/5)}" y1="${y}" x2="${centerX-goalHalfW+i*(goalHalfW*2/5)}" y2="${y+rise*dir}" stroke-width="1"/>`).join('')}`;
+  // The "D": an arc bulging off the box's back edge, away from its own goal — flattened into an
+  // ellipse the same way the centre circle is, so it reads as perspective rather than a flat oval.
+  const farBackHalfW = halfW(farBoxY1)*boxFrac;
+  const nearBackHalfW = halfW(nearBoxY1)*boxFrac;
 
   return `
   <svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
@@ -1909,17 +1919,19 @@ function depthPitchSVGMarkup(){
       <polygon points="${boxPts(topY, farBoxY1, boxFrac)}"/>
       <polygon points="${boxPts(topY, farAreaY1, areaFrac)}"/>
       <circle cx="${centerX}" cy="${topY+farBoxDepth*0.62}" r="2.5" fill="rgba(236,239,242,0.85)"/>
+      <path d="M ${centerX-farBackHalfW} ${farBoxY1} A ${farBackHalfW} ${farBackHalfW*0.5} 0 0 0 ${centerX+farBackHalfW} ${farBoxY1}"/>
       <polygon points="${boxPts(bottomY, nearBoxY1, boxFrac)}"/>
       <polygon points="${boxPts(bottomY, nearAreaY1, areaFrac)}"/>
       <circle cx="${centerX}" cy="${bottomY-nearBoxDepth*0.62}" r="2.5" fill="rgba(236,239,242,0.85)"/>
+      <path d="M ${centerX-nearBackHalfW} ${nearBoxY1} A ${nearBackHalfW} ${nearBackHalfW*0.5} 0 0 1 ${centerX+nearBackHalfW} ${nearBoxY1}"/>
       <path d="M ${leftX(topY)+10} ${topY} A 10 10 0 0 0 ${leftX(topY)} ${topY+10}"/>
       <path d="M ${rightX(topY)} ${topY+10} A 10 10 0 0 0 ${rightX(topY)-10} ${topY}"/>
+      <path d="M ${leftX(bottomY)+10} ${bottomY} A 10 10 0 0 1 ${leftX(bottomY)} ${bottomY-10}"/>
+      <path d="M ${rightX(bottomY)} ${bottomY-10} A 10 10 0 0 1 ${rightX(bottomY)-10} ${bottomY}"/>
     </g>
     <g fill="none" stroke="rgba(236,239,242,0.7)" stroke-width="2.5">
-      <line x1="${centerX-farGoalHalfW}" y1="${topY}" x2="${centerX-farGoalHalfW}" y2="${topY-farGoalRise}"/>
-      <line x1="${centerX+farGoalHalfW}" y1="${topY}" x2="${centerX+farGoalHalfW}" y2="${topY-farGoalRise}"/>
-      <line x1="${centerX-farGoalHalfW}" y1="${topY-farGoalRise}" x2="${centerX+farGoalHalfW}" y2="${topY-farGoalRise}"/>
-      ${[1,2,3,4].map(i=>`<line x1="${centerX-farGoalHalfW+i*(farGoalHalfW*2/5)}" y1="${topY}" x2="${centerX-farGoalHalfW+i*(farGoalHalfW*2/5)}" y2="${topY-farGoalRise}" stroke-width="1"/>`).join('')}
+      ${goalFrame(topY, farGoalHalfW, farGoalRise, -1)}
+      ${goalFrame(bottomY, nearGoalHalfW, nearGoalRise, 1)}
     </g>
   </svg>`;
 }
@@ -3685,7 +3697,9 @@ drawCanvas.addEventListener('wheel', e=>{
   else hit.scale = clamp((hit.scale||1) + (e.deltaY<0?0.1:-0.1), 0.3, 5);
   saveState(); redrawShapes();
 }, {passive:false});
+let lastVideoHoverEvent = null;
 drawCanvas.addEventListener('mousemove', e=>{
+  lastVideoHoverEvent = e;
   if(erasing){ if(eraseShapeAt(e)) redrawShapes(); return; }
   if(currentTool==='zone'){ if(zonePts.length) { redrawShapes(); drawZonePreview(relPt(e)); } return; }
   if(!drawing) return;
@@ -3956,6 +3970,7 @@ document.getElementById('btnClearDraw').addEventListener('click', ()=>{
 document.addEventListener('keydown', e=>{
   const tag = document.activeElement.tagName;
   if(tag==='INPUT' || tag==='SELECT' || tag==='TEXTAREA') return;
+  if(e.ctrlKey || e.metaKey || e.altKey) return; // leave Ctrl/Cmd/Alt-modified keys to other shortcuts (copy/paste, browser, OS)
   if(!document.getElementById('tab-video').classList.contains('active')) return;
   if(e.code==='Space'){ e.preventDefault(); if(mode==='video') document.getElementById('btnPlayPause').click(); return; }
   if(e.key==='ArrowRight'){ if(mode==='video') videoEl.currentTime += 5; return; }
@@ -3968,6 +3983,44 @@ document.addEventListener('keydown', e=>{
   const cat = state.categories.find(c=>c.key && c.key.toLowerCase()===e.key.toLowerCase());
   if(cat){ createTag(cat.id); return; }
   if(/^[a-z0-9]$/i.test(e.key)){ openQuickCreateCategory(e.key); }
+});
+
+// Copy/paste a drawing (Ctrl/Cmd+C, Ctrl/Cmd+V) — works on whichever canvas (video or tactic
+// board) the mouse was last hovering over, since neither has an explicit "selected shape"
+// concept, only hover-driven interaction (same as the wheel-resize shortcut). A pasted shape
+// lands slightly offset from the original so it doesn't sit invisibly on top of it.
+let shapeClipboard = null;
+document.addEventListener('keydown', e=>{
+  if(!(e.ctrlKey || e.metaKey)) return;
+  const key = e.key.toLowerCase();
+  if(key!=='c' && key!=='v') return;
+  const activeEl = document.activeElement;
+  const activeTag = activeEl ? activeEl.tagName : '';
+  if(activeTag==='INPUT' || activeTag==='SELECT' || activeTag==='TEXTAREA' || (activeEl && activeEl.isContentEditable)) return;
+  const onVideoTab = document.getElementById('tab-video').classList.contains('active');
+  const onTacticTab = document.getElementById('tab-tactic').classList.contains('active');
+  if(!onVideoTab && !onTacticTab) return;
+
+  if(key==='c'){
+    let hit = null;
+    if(onVideoTab && lastVideoHoverEvent) hit = findVisibleShapeAt(lastVideoHoverEvent);
+    else if(onTacticTab && lastTacticHoverEvent) hit = findVisibleTacticShapeAt(lastTacticHoverEvent);
+    if(hit){ shapeClipboard = JSON.parse(JSON.stringify(hit)); toast('Desenho copiado — Ctrl+V para colar.'); }
+  } else if(key==='v'){
+    if(!shapeClipboard) return;
+    e.preventDefault();
+    const clone = JSON.parse(JSON.stringify(shapeClipboard));
+    const orig = cloneShapeGeometry(clone);
+    applyShapeGeometry(clone, orig, 0.03, 0.03);
+    if(onVideoTab){
+      pushShape(clone);
+      saveState(); renderShapeTimeline(); redrawShapes();
+    } else {
+      tacticShapes.push(clone);
+      redrawTactic();
+    }
+    toast('Desenho colado.');
+  }
 });
 
 /* ---------- Quick-create a new tag category straight from an unmapped key ---------- */
@@ -4717,7 +4770,9 @@ function addImageToken(dataUrl){
   renderTokens();
 }
 // Downscales to a max side of 800px before storing, so a full-resolution phone photo doesn't
-// bloat the saved project (tokens are cloned wholesale into every scene as JSON).
+// bloat the saved project (tokens are cloned wholesale into every scene as JSON). Re-encoded as
+// PNG, not JPEG — JPEG has no alpha channel, so a transparent PNG (a badge, a cone icon, a
+// diagram cutout) would come out with its transparent areas baked in as solid black.
 function readImageFileDownscaled(file, maxSide, cb){
   const reader = new FileReader();
   reader.onload = ()=>{
@@ -4728,7 +4783,7 @@ function readImageFileDownscaled(file, maxSide, cb){
       const c = document.createElement('canvas');
       c.width = w; c.height = h;
       c.getContext('2d').drawImage(img, 0, 0, w, h);
-      cb(c.toDataURL('image/jpeg', 0.86));
+      cb(c.toDataURL('image/png'));
     };
     img.src = reader.result;
   };
@@ -4874,9 +4929,19 @@ tacticCanvas.addEventListener('wheel', e=>{
   hit.fontScale = clamp((hit.fontScale||1) + (e.deltaY<0?0.1:-0.1), 0.4, 4);
   redrawTactic();
 }, {passive:false});
+let lastTacticHoverEvent = null;
 tacticCanvas.addEventListener('mousemove', e=>{
+  lastTacticHoverEvent = e;
   if(tErasing){ if(eraseTacticShapeAt(e)) redrawTactic(); }
 });
+function findVisibleTacticShapeAt(e){
+  const p = tRelPt(e);
+  const px = p.x*tacticCanvas.width, py = p.y*tacticCanvas.height;
+  for(let i=tacticShapes.length-1;i>=0;i--){
+    if(shapeHitTest(tacticShapes[i], px, py, tacticCanvas)) return tacticShapes[i];
+  }
+  return null;
+}
 tacticCanvas.addEventListener('dblclick', e=>{
   if(tTool==='zone' && tZonePts.length>=3){
     tacticShapes.push({type:'zone', points:tZonePts.slice(), color:tColor});
@@ -5168,7 +5233,7 @@ async function exportTacticVideo(format){
       if(img.complete) res(); else img.addEventListener('load', res, {once:true});
     })));
     const bgImg = await getPitchBackgroundImage(boardMode);
-    const size = boardMode==='box' ? {w:1360,h:750} : boardMode==='depth' ? {w:1050,h:1350} : {w:1050,h:680};
+    const size = boardMode==='box' ? {w:1360,h:750} : boardMode==='depth' ? {w:1050,h:1380} : {w:1050,h:680};
     const off = document.createElement('canvas');
     off.width = size.w; off.height = size.h;
     const octx = off.getContext('2d');
