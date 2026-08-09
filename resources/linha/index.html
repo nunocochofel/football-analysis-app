@@ -1963,10 +1963,37 @@ function depthPitchSVGMarkup(){
     <line x1="${centerX+goalHalfW}" y1="${y}" x2="${centerX+goalHalfW}" y2="${y+rise*dir}"/>
     <line x1="${centerX-goalHalfW}" y1="${y+rise*dir}" x2="${centerX+goalHalfW}" y2="${y+rise*dir}"/>
     ${[1,2,3,4].map(i=>`<line x1="${centerX-goalHalfW+i*(goalHalfW*2/5)}" y1="${y}" x2="${centerX-goalHalfW+i*(goalHalfW*2/5)}" y2="${y+rise*dir}" stroke-width="1"/>`).join('')}`;
-  // The "D": an arc bulging off the box's back edge, away from its own goal — flattened into an
-  // ellipse the same way the centre circle is, so it reads as perspective rather than a flat oval.
+  // The "D": a real penalty arc is MUCH smaller than the box itself — on a real pitch the circle
+  // (9.15m radius, centred on the penalty spot, 11m from goal) only clips the box's back edge by
+  // a modest amount, not the box's full width. Chord/sagitta here are scaled off the box's own
+  // half-width and depth using that real-world ratio (~36% chord, ~22% sagitta), not the box size.
+  const dArc = (backHalfW, boxDepth, y0, sweep) => {
+    const chordHalfW = backHalfW*0.36, sagitta = boxDepth*0.22;
+    return `<path d="M ${centerX-chordHalfW} ${y0} A ${chordHalfW} ${sagitta} 0 0 ${sweep} ${centerX+chordHalfW} ${y0}"/>`;
+  };
   const farBackHalfW = halfW(farBoxY1)*boxFrac;
   const nearBackHalfW = halfW(nearBoxY1)*boxFrac;
+
+  // Corner arcs: a real corner arc is centred ON the corner itself and stays tiny, tucked into the
+  // angle between the goal line and the touchline — not bulging out toward the pitch centre. Since
+  // the touchline here is a diagonal (not vertical), its tangent direction is computed for real
+  // instead of assumed, so the arc sits flush against both edges at the corner.
+  const cornerR = 16;
+  const touchDir = (fromY, towardY) => {
+    const dx = leftX(towardY)-leftX(fromY), dy = towardY-fromY, len = Math.hypot(dx,dy);
+    return {x:dx/len, y:dy/len};
+  };
+  function cornerArc(corner, dir1, dir2, r){
+    const p1 = {x:corner.x+dir1.x*r, y:corner.y+dir1.y*r};
+    const p2 = {x:corner.x+dir2.x*r, y:corner.y+dir2.y*r};
+    const sweep = (dir1.x*dir2.y - dir1.y*dir2.x) > 0 ? 1 : 0;
+    return `<path d="M ${p1.x} ${p1.y} A ${r} ${r} 0 0 ${sweep} ${p2.x} ${p2.y}"/>`;
+  }
+  const downTouch = touchDir(topY, bottomY);   // left touchline, pointing down toward the near end
+  const upTouch = {x:-downTouch.x, y:-downTouch.y}; // same line, pointing up toward the far end
+  // The right touchline is the mirror image (equal and opposite x-lean) of the left one.
+  const downTouchR = {x:-downTouch.x, y:downTouch.y};
+  const upTouchR = {x:-upTouch.x, y:upTouch.y};
 
   return `
   <svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
@@ -1986,15 +2013,15 @@ function depthPitchSVGMarkup(){
       <polygon points="${boxPts(topY, farBoxY1, boxFrac)}"/>
       <polygon points="${boxPts(topY, farAreaY1, areaFrac)}"/>
       <circle cx="${centerX}" cy="${topY+farBoxDepth*0.62}" r="2.5" fill="rgba(236,239,242,0.85)"/>
-      <path d="M ${centerX-farBackHalfW} ${farBoxY1} A ${farBackHalfW} ${farBackHalfW*0.5} 0 0 0 ${centerX+farBackHalfW} ${farBoxY1}"/>
+      ${dArc(farBackHalfW, farBoxDepth, farBoxY1, 0)}
       <polygon points="${boxPts(bottomY, nearBoxY1, boxFrac)}"/>
       <polygon points="${boxPts(bottomY, nearAreaY1, areaFrac)}"/>
       <circle cx="${centerX}" cy="${bottomY-nearBoxDepth*0.62}" r="2.5" fill="rgba(236,239,242,0.85)"/>
-      <path d="M ${centerX-nearBackHalfW} ${nearBoxY1} A ${nearBackHalfW} ${nearBackHalfW*0.5} 0 0 1 ${centerX+nearBackHalfW} ${nearBoxY1}"/>
-      <path d="M ${leftX(topY)+10} ${topY} A 10 10 0 0 0 ${leftX(topY)} ${topY+10}"/>
-      <path d="M ${rightX(topY)} ${topY+10} A 10 10 0 0 0 ${rightX(topY)-10} ${topY}"/>
-      <path d="M ${leftX(bottomY)+10} ${bottomY} A 10 10 0 0 1 ${leftX(bottomY)} ${bottomY-10}"/>
-      <path d="M ${rightX(bottomY)} ${bottomY-10} A 10 10 0 0 1 ${rightX(bottomY)-10} ${bottomY}"/>
+      ${dArc(nearBackHalfW, nearBoxDepth, nearBoxY1, 1)}
+      ${cornerArc({x:leftX(topY),y:topY}, {x:1,y:0}, downTouch, cornerR)}
+      ${cornerArc({x:rightX(topY),y:topY}, {x:-1,y:0}, downTouchR, cornerR)}
+      ${cornerArc({x:leftX(bottomY),y:bottomY}, {x:1,y:0}, upTouch, cornerR)}
+      ${cornerArc({x:rightX(bottomY),y:bottomY}, {x:-1,y:0}, upTouchR, cornerR)}
     </g>
     <g fill="none" stroke="rgba(236,239,242,0.7)" stroke-width="2.5">
       ${goalFrame(topY, farGoalHalfW, farGoalRise, -1)}
