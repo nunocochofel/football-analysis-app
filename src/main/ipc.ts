@@ -1,6 +1,6 @@
-import { dialog, ipcMain, BrowserWindow } from 'electron'
+import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
-import { readFile, unlink, writeFile } from 'fs/promises'
+import { mkdir, readdir, readFile, unlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import * as XLSX from 'xlsx'
@@ -154,6 +154,40 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       return outputPath
     }
   )
+
+  // Automatic project backups: a periodic, on-disk safety net independent of the browser's own
+  // Local Storage (leveldb) — that engine keeps writes buffered and only durable after its own
+  // internal flush, so an unclean shutdown (crash, BSOD, power loss) can lose whatever hadn't been
+  // flushed yet, with no way to recover it from inside the browser storage itself afterwards.
+  // Plain JSON files written straight to disk on every backup tick don't have that failure mode.
+  // Uses the exact same {linhaProjectExport, name, exportedAt, state} shape as the manual "Exportar
+  // projeto" download, so a backup file can be dragged straight into "Importar projeto" to restore.
+  function backupsDir(): string {
+    return join(app.getPath('userData'), 'project-backups')
+  }
+  const MAX_BACKUPS_PER_PROJECT = 8
+  ipcMain.handle(
+    'project:writeBackup',
+    async (_e, args: { projectId: string; projectName: string; payload: unknown }) => {
+      const dir = join(backupsDir(), args.projectId)
+      await mkdir(dir, { recursive: true })
+      const safeName = (args.projectName || 'projeto').replace(/[^\w-]+/g, '_')
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const filePath = join(dir, `${safeName}_${stamp}.linha.json`)
+      await writeFile(filePath, JSON.stringify(args.payload, null, 2), 'utf-8')
+      const files = (await readdir(dir)).filter((f) => f.endsWith('.linha.json')).sort()
+      if (files.length > MAX_BACKUPS_PER_PROJECT) {
+        const toDelete = files.slice(0, files.length - MAX_BACKUPS_PER_PROJECT)
+        await Promise.all(toDelete.map((f) => unlink(join(dir, f)).catch(() => {})))
+      }
+      return filePath
+    }
+  )
+  ipcMain.handle('project:openBackupsFolder', async () => {
+    const dir = backupsDir()
+    await mkdir(dir, { recursive: true })
+    await shell.openPath(dir)
+  })
 
   // Teams / players
   ipcMain.handle('db:createTeam', (_e, name: string) => q.createTeam(name))

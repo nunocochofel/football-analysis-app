@@ -792,6 +792,7 @@
     <div class="row-header">
       <h4 style="color:var(--muted); text-transform:uppercase; font-size:11px; letter-spacing:.5px; margin-bottom:10px;">Os teus projetos</h4>
       <button class="edit-link" id="btnImportProject">⬆ Importar projeto (.json)</button>
+      <button class="edit-link" id="btnOpenBackups" title="Abre a pasta com os backups automáticos guardados a cada poucos minutos">🗄 Backups</button>
       <input type="file" id="fileImportProject" accept=".json,application/json" style="display:none;">
     </div>
     <div class="project-list" id="projectList"></div>
@@ -1263,7 +1264,7 @@
         <li>Esc — cancela uma gravação de corte em curso, uma zona a meio de ser desenhada, ou fecha o menu de contexto de um corte.</li>
       </ul>
 
-      <p style="margin-top:12px; color:var(--muted); font-size:12px;">Cada projeto (equipas, marcações, cenas) fica guardado separadamente. Usa "← Projetos" no topo para voltar à lista e abrir/criar outro.</p>
+      <p style="margin-top:12px; color:var(--muted); font-size:12px;">Cada projeto (equipas, marcações, cenas) fica guardado separadamente. Usa "← Projetos" no topo para voltar à lista e abrir/criar outro. A app guarda também um <b>backup automático em disco</b> a cada poucos minutos (independente do armazenamento do navegador) — vê "🗄 Backups" na lista de projetos para abrir a pasta; um ficheiro de backup pode ser recuperado a qualquer momento com "⬆ Importar projeto".</p>
     </div>
   </div>
 </div>
@@ -1681,6 +1682,32 @@ function renderProjectPicker(){
 // Export/import a whole project as a .json file — mainly so a project already saved in a
 // regular browser (this same file, opened as a normal web page) can be carried over into the
 // desktop app, whose Chromium profile/localStorage is separate from any browser's.
+// Automatic on-disk backup — same payload shape as exportProjectFile below, so a backup file
+// restores the exact same way (drag it into "Importar projeto"). Runs on a timer plus a couple of
+// natural checkpoints (opening a project, closing the window) rather than on every single
+// saveState() call, which fires far too often (every drag, every tag) to write to disk each time.
+// The point isn't to catch every last edit — it's to bound how much can be lost if the browser's
+// own storage never gets a chance to durably flush (e.g. the machine crashes or loses power).
+async function backupActiveProject(){
+  if(!isElectron() || !currentProjectId) return;
+  try{
+    const meta = listProjects().find(p => p.id === currentProjectId);
+    const raw = localStorage.getItem('linha:project:' + currentProjectId);
+    if(!meta || !raw) return;
+    const payload = { linhaProjectExport: 1, name: meta.name, exportedAt: Date.now(), state: JSON.parse(raw) };
+    await window.api.writeProjectBackup({ projectId: currentProjectId, projectName: meta.name, payload });
+  }catch(err){ console.error('backup failed', err); }
+}
+if(isElectron()){
+  setInterval(backupActiveProject, 3*60*1000);
+  window.addEventListener('beforeunload', () => { backupActiveProject(); });
+}
+document.getElementById('btnOpenBackups')?.addEventListener('click', async () => {
+  if(!isElectron()) return;
+  try{ await window.api.openBackupsFolder(); }
+  catch(err){ toast('Não foi possível abrir a pasta de backups.'); }
+});
+
 function exportProjectFile(id){
   const meta = listProjects().find(p => p.id === id);
   const raw = localStorage.getItem('linha:project:' + id);
@@ -1749,6 +1776,7 @@ async function openProject(id){
   setMode('video');
   sizeDrawCanvas();
   tryRestoreVideo();
+  backupActiveProject();
 }
 
 /* ===================================================================

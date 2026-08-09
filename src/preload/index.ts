@@ -48,6 +48,10 @@ const api = {
     ipcRenderer.on('video:exportProgress', (_e, percent: number) => cb(percent))
   },
 
+  writeProjectBackup: (args: { projectId: string; projectName: string; payload: unknown }): Promise<string> =>
+    ipcRenderer.invoke('project:writeBackup', args),
+  openBackupsFolder: (): Promise<void> => ipcRenderer.invoke('project:openBackupsFolder'),
+
   createTeam: (name: string): Promise<Team> => ipcRenderer.invoke('db:createTeam', name),
   listTeams: (): Promise<Team[]> => ipcRenderer.invoke('db:listTeams'),
   createPlayer: (args: { teamId: number; name: string; number: number | null; position: string | null }): Promise<Player> =>
