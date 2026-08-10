@@ -4961,9 +4961,10 @@ async function captureClipFramesViaPlayback(tag, fps, onProgress){
       // codec and the machine's decode throughput — when it can't keep up, playback stalls
       // periodically to let decode catch up, which shows up as progress "sticking" for a few
       // seconds at a time and ends up slower overall than a rate it can actually sustain
-      // continuously. 8x is comfortably within what typical hardware decodes smoothly for
-      // broadcast-resolution footage, while still being far faster than the old per-frame seek.
-      videoEl.playbackRate = 8;
+      // continuously. 8x still stalled on real match footage (confirmed by user testing on
+      // v0.8.19-0.8.23) — dropped further to 4x, half the decode throughput demand, still well
+      // above the old per-frame seek method's effective speed.
+      videoEl.playbackRate = 4;
       videoEl.play().then(() => { videoEl.requestVideoFrameCallback(onFrame); }).catch(reject);
     });
     // Playback may end a hair before outSec (rounding) — make sure the final sampled instant,
