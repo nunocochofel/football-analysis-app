@@ -4516,7 +4516,7 @@ function playNextInReel(){
    in a plain browser tab, so export there just explains that plainly.
 =================================================================== */
 let exportBusy = false;
-const CLIP_EXPORT_FPS = 24;
+const CLIP_EXPORT_FPS = 20;
 
 // A clip's rank (1-based) among every other tag of the same category, ordered by when it
 // happened — used to name exported files "Categoria_1", "Categoria_2"... instead of a timestamp,
@@ -4535,10 +4535,15 @@ function seekVideoTo(t){
   });
 }
 
-// Captures a clip as a PNG-per-frame sequence, sampled at CLIP_EXPORT_FPS by seeking (not
-// playing) through it — the cost is "however long N seeks+draws take", not the clip's own
-// duration. A freeze point is simulated by repeating the already-drawn frame instead of literally
-// pausing the video, which is both simpler and free (no extra seeking needed for the hold itself).
+// Captures a clip as a JPEG-per-frame sequence, sampled at CLIP_EXPORT_FPS by seeking (not
+// playing) through it — the cost is "however long N seeks+draws+encodes take", not the clip's own
+// duration. JPEG, not PNG: these are throwaway intermediates that ffmpeg re-encodes to H.264
+// (itself lossy) a moment later, so PNG's lossless compression buys nothing here — it's also
+// dramatically slower to encode busy, photographic video content than JPEG is (PNG is deflate,
+// tuned for flat/synthetic graphics), and produces bigger base64 payloads to ship over IPC and
+// write to disk. JPEG at 0.88 quality is visually indistinguishable at this stage and meaningfully
+// faster end to end. A freeze point is simulated by repeating the already-drawn frame instead of
+// literally pausing the video, which is both simpler and free (no extra seeking for the hold).
 async function captureClipFrames(tag, fps, onProgress){
   const exportCanvas = document.createElement('canvas');
   exportCanvas.width = videoEl.videoWidth || 1280;
@@ -4561,7 +4566,7 @@ async function captureClipFrames(tag, fps, onProgress){
       const end = s.endSec!=null ? s.endSec : tag.outSec;
       if(videoEl.currentTime>=start && videoEl.currentTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
     });
-    return exportCanvas.toDataURL('image/png').split(',')[1];
+    return exportCanvas.toDataURL('image/jpeg', 0.88).split(',')[1];
   }
 
   const frames = [];

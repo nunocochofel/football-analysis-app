@@ -144,12 +144,13 @@ export async function cutClip(
 // Fast clip export: the renderer seeks the video frame-by-frame (not real-time playback) and
 // draws each one onto an offscreen canvas — video frame + zoom crop + whatever drawings/freezes
 // are active at that instant — so a 10-minute clip with 40 drawings takes as long as it takes to
-// seek+draw ~240 frames, not 10 real minutes of MediaRecorder capture. This takes that PNG
-// sequence and encodes it into the video track, then muxes in the ORIGINAL audio for the same
-// [audioInSec, audioOutSec] window (audio doesn't need per-frame JS rendering, so cutting it
-// straight from the source file is both fast and lossless). If a clip has freeze points the video
-// track ends up slightly longer than the audio; -shortest just lets it run out near the end rather
-// than trying to stretch/loop it back into sync.
+// seek+draw ~240 frames, not 10 real minutes of MediaRecorder capture. This takes that JPEG
+// sequence (JPEG, not PNG — these are throwaway intermediates re-encoded to H.264 a moment later,
+// so lossless compression buys nothing and only costs encode/decode/transfer time) and encodes it
+// into the video track, then muxes in the ORIGINAL audio for the same [audioInSec, audioOutSec]
+// window (audio doesn't need per-frame JS rendering, so cutting it straight from the source file
+// is both fast and lossless). If a clip has freeze points the video track ends up slightly longer
+// than the audio; -shortest just lets it run out near the end rather than stretching to fit.
 export async function exportClipFramesWithAudio(
   frames: string[],
   fps: number,
@@ -162,10 +163,10 @@ export async function exportClipFramesWithAudio(
   const workDir = await mkdtemp(join(tmpdir(), 'football-clip-frames-'))
   try {
     for (let i = 0; i < frames.length; i++) {
-      const framePath = join(workDir, `frame_${String(i).padStart(5, '0')}.png`)
+      const framePath = join(workDir, `frame_${String(i).padStart(5, '0')}.jpg`)
       await writeFile(framePath, Buffer.from(frames[i], 'base64'))
     }
-    const pattern = join(workDir, 'frame_%05d.png')
+    const pattern = join(workDir, 'frame_%05d.jpg')
     const durationSec = frames.length / fps
     const tmpOutputPath = outputPath + '.tmp'
     const hasAudio = !!sourceVideoPath && audioOutSec > audioInSec
