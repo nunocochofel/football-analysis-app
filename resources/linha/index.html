@@ -4835,7 +4835,27 @@ async function decodeClipViaWebCodecs(demux, tag, fps, onProgress){
 // export canvas and returns it as a base64 JPEG — shared by both capture methods below, which
 // differ only in WHERE `source` comes from (the live <video> element vs. a WebCodecs VideoFrame).
 // `ctx.drawImage()` accepts either as a CanvasImageSource, so this needs no branching on its own.
-function drawExportFrame(ectx, exportCanvas, tag, atTime, source){
+// canvas.toBlob() encodes without blocking the main thread's synchronous execution — unlike
+// toDataURL(), which does the JPEG encode + base64 conversion as one long blocking call. For a
+// small canvas the difference is invisible, but for a full-HD+ source frame (a real match
+// recording, not the small synthetic clips this was tested against) that single blocking call can
+// itself take a very noticeable stretch — long enough that no amount of yielding *between* frames
+// helps, since the block is *inside* one encode call, not in the gaps around it. This was the
+// actual cause of export still feeling "stuck" even at 1x with an explicit per-frame yield: the
+// bottleneck was never how fast frames arrived, it was how long each one took to encode.
+function canvasToBase64Jpeg(canvas, quality){
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if(!blob){ reject(new Error('Falha ao codificar o frame.')); return; }
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    }, 'image/jpeg', quality);
+  });
+}
+
+async function drawExportFrame(ectx, exportCanvas, tag, atTime, source){
   const zoom = tag.zoom;
   if(zoom && zoom.scale > 1){
     const sw = exportCanvas.width/zoom.scale, sh = exportCanvas.height/zoom.scale;
@@ -4850,7 +4870,7 @@ function drawExportFrame(ectx, exportCanvas, tag, atTime, source){
     const end = s.endSec!=null ? s.endSec : tag.outSec;
     if(atTime>=start && atTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
   });
-  return exportCanvas.toDataURL('image/jpeg', 0.88).split(',')[1];
+  return canvasToBase64Jpeg(exportCanvas, 0.88);
 }
 
 // Captures a clip as a JPEG-per-frame sequence. Tries decodeClipViaWebCodecs first (see the
@@ -4867,6 +4887,10 @@ async function captureClipFrames(tag, fps, onProgress){
   // hardwareAcceleration, separar os limites de tempo) não foram suficientes sem conseguir testar
   // contra um vídeo do tamanho real de um jogo completo. O código fica todo aqui, intacto, para
   // retomar este trabalho mais tarde com melhor forma de testar — não apagar.
+  // NOTA (v0.8.27): drawExportFrame passou a ser assíncrona (canvas.toBlob() em vez de
+  // toDataURL()) — decodeClipViaWebCodecs's captureUpTo ainda chama-a de forma síncrona a partir
+  // do callback output() do VideoDecoder; antes de reativar isto é preciso adaptar esse callback
+  // para lidar com a Promise (ex.: enfileirar os frames descodificados e processá-los um a um).
   if(FAST_CAPTURE_VIA_WEBCODECS_ENABLED && isElectron() && typeof VideoDecoder !== 'undefined'){
     try{
       // Preparar a fonte (sondar/remuxar — custo único por vídeo, pode ser lento para uma
@@ -4931,9 +4955,15 @@ async function captureClipFramesViaPlayback(tag, fps, onProgress){
       let nextSampleTime = tag.inSec;
       let freezeIdx = 0;
 
-      function captureUpTo(t){
+      async function captureUpTo(t){
         while(nextSampleTime <= t && nextSampleTime <= tag.outSec + 1e-6){
-          const frame = drawFrame(nextSampleTime);
+          // drawFrame (drawExportFrame) encodes via canvas.toBlob(), not the synchronous
+          // toDataURL() — the encode itself no longer blocks the main thread, which matters a
+          // lot for a full-HD+ source frame (a real match recording), where that single encode
+          // call could otherwise take a very noticeable stretch on its own regardless of how
+          // fast frames were arriving — the actual reason every capture-speed experiment (16x
+          // down to 1x, even with an explicit per-frame yield) still felt "stuck".
+          const frame = await drawFrame(nextSampleTime);
           frames.push(frame);
           onProgress(Math.min(99, Math.round((nextSampleTime-tag.inSec)/totalSec*100)));
           while(freezeIdx < freezes.length && freezes[freezeIdx].atSec <= nextSampleTime){
@@ -4947,22 +4977,17 @@ async function captureClipFramesViaPlayback(tag, fps, onProgress){
 
       async function onFrame(now, metadata){
         try{
-          captureUpTo(metadata.mediaTime);
+          await captureUpTo(metadata.mediaTime);
           if(metadata.mediaTime >= tag.outSec || videoEl.ended){
             videoEl.pause();
             resolve();
             return;
           }
         }catch(err){ videoEl.pause(); reject(err); return; }
-        // requestVideoFrameCallback already yields between calls, but drawing the frame + any
-        // active shapes + JPEG-encoding it (drawFrame, inside captureUpTo above) is real
-        // synchronous CPU work — on a slow enough machine or a heavy enough frame (several
-        // shapes, a large canvas), a run of these back-to-back can eat into the browser's own
-        // time budget for painting/handling input, which is what actually makes a tab feel
-        // "frozen" even though work is genuinely progressing. This explicit macrotask yield
-        // (not just the microtask queue) guarantees the browser gets a real turn — to paint the
-        // toast update, respond to window controls, etc. — after every single captured frame,
-        // regardless of how expensive that frame was to encode.
+        // requestVideoFrameCallback already yields between calls, and awaiting the (now
+        // non-blocking) encode above yields too — this extra explicit macrotask yield just
+        // guarantees the browser gets a real turn to paint (the toast update, window controls,
+        // etc.) after every captured frame, on top of that.
         await new Promise(r => setTimeout(r, 0));
         videoEl.requestVideoFrameCallback(onFrame);
       }
@@ -4980,7 +5005,7 @@ async function captureClipFramesViaPlayback(tag, fps, onProgress){
     // Playback may end a hair before outSec (rounding) — make sure the final sampled instant,
     // and anything a trailing freeze still owes, actually gets emitted.
     if(!frames.length || (tag.outSec - tag.inSec) > (frames.length/fps) + frameInterval){
-      const frame = drawFrame(tag.outSec);
+      const frame = await drawFrame(tag.outSec);
       frames.push(frame);
     }
   } finally {
@@ -5002,7 +5027,7 @@ async function captureClipFramesBySeeking(tag, fps, drawFrame, onProgress){
   videoEl.pause();
   await seekVideoTo(t);
   for(let i=0; i<totalFrames; i++){
-    const frame = drawFrame(t);
+    const frame = await drawFrame(t);
     frames.push(frame);
     if(freezeIdx < freezes.length && t >= freezes[freezeIdx].atSec){
       const holdFrames = Math.max(1, Math.round(freezes[freezeIdx].holdSec * fps));
