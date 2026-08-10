@@ -35,15 +35,23 @@ const api = {
 
   saveClipExport: (suggestedName: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:saveClipExport', suggestedName),
-  chooseExportFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:chooseExportFolder'),
-  finalizeClipExport: (args: {
-    arrayBuffer: ArrayBuffer
+  saveClipZip: (): Promise<string | null> => ipcRenderer.invoke('dialog:saveClipZip'),
+  exportClipFrames: (args: {
+    frames: string[]
+    fps: number
+    sourceVideoPath: string | null
+    audioInSec: number
+    audioOutSec: number
     outputPath?: string
     folderPath?: string
     filename?: string
-    durationSec: number
-    sourceExt: string
-  }): Promise<string> => ipcRenderer.invoke('video:finalizeClipExport', args),
+  }): Promise<string> => ipcRenderer.invoke('video:exportClipFrames', args),
+  beginBatchExport: (): Promise<string> => ipcRenderer.invoke('video:beginBatchExport'),
+  finishBatchExportZip: (args: {
+    tempDir: string
+    entries: { tempPath: string; categoryLabel: string; filename: string }[]
+    outputZipPath: string
+  }): Promise<string> => ipcRenderer.invoke('video:finishBatchExportZip', args),
   onExportProgress: (cb: (percent: number) => void): void => {
     ipcRenderer.on('video:exportProgress', (_e, percent: number) => cb(percent))
   },

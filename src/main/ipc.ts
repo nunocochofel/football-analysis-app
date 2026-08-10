@@ -1,6 +1,5 @@
 import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron'
-import { randomUUID } from 'crypto'
-import { mkdir, readdir, readFile, unlink, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import * as XLSX from 'xlsx'
@@ -8,13 +7,14 @@ import Papa from 'papaparse'
 import {
   probeVideo,
   cutClip,
+  exportClipFramesWithAudio,
   exportSequence,
   exportImageSequence,
-  finalizeClipExport,
   hasTranscodedCache,
   transcodedCachePath,
   transcodeForPlayback
 } from './ffmpeg'
+import { zipClipsByCategory } from './archive'
 import * as q from './db/queries'
 import type { ExportClipRequest, ExportTacticFramesRequest } from '../shared/types'
 
@@ -91,12 +91,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return result.filePath
   })
 
-  ipcMain.handle('dialog:chooseExportFolder', async () => {
+  ipcMain.handle('dialog:saveClipZip', async () => {
     const win = getWindow()
     if (!win) return null
-    const result = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
+    const result = await dialog.showSaveDialog(win, {
+      defaultPath: 'clipes.zip',
+      filters: [{ name: 'Arquivo ZIP', extensions: ['zip'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    return result.filePath
   })
 
   // Video processing
@@ -124,34 +127,63 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     })
   )
 
-  // Clip export finalize: the renderer hands over the raw bytes it just recorded (canvas +
-  // MediaRecorder, so drawings/zoom/freeze are already burned into the pixels) — this writes
-  // them to a scratch file and re-encodes into a real MP4 at the chosen destination. See the
-  // big comment above finalizeClipExport() in ffmpeg.ts for why the re-encode is necessary.
+  // Fast clip export: the renderer already did the slow part (seeking frame-by-frame and drawing
+  // video+shapes+zoom onto a canvas) and just hands over the resulting PNG sequence — this turns
+  // that into a real MP4 with the original audio muxed back in. See the big comment above
+  // exportClipFramesWithAudio() in ffmpeg.ts. Used for both a single clip (outputPath given
+  // directly) and one clip within a batch export (folderPath+filename, written into the batch's
+  // temp directory — see beginBatchExport/finishBatchExportZip below).
   ipcMain.handle(
-    'video:finalizeClipExport',
+    'video:exportClipFrames',
     async (
       e,
       args: {
-        arrayBuffer: ArrayBuffer
+        frames: string[]
+        fps: number
+        sourceVideoPath: string | null
+        audioInSec: number
+        audioOutSec: number
         outputPath?: string
         folderPath?: string
         filename?: string
-        durationSec: number
-        sourceExt: string
       }
     ) => {
       const outputPath = args.outputPath ?? join(args.folderPath as string, args.filename as string)
-      const tempPath = join(tmpdir(), `linha-export-${randomUUID()}.${args.sourceExt}`)
-      await writeFile(tempPath, Buffer.from(args.arrayBuffer))
-      try {
-        await finalizeClipExport(tempPath, outputPath, args.durationSec, (percent) => {
+      await exportClipFramesWithAudio(
+        args.frames,
+        args.fps,
+        args.sourceVideoPath,
+        args.audioInSec,
+        args.audioOutSec,
+        outputPath,
+        (percent) => {
           e.sender.send('video:exportProgress', percent)
-        })
-      } finally {
-        await unlink(tempPath).catch(() => {})
-      }
+        }
+      )
       return outputPath
+    }
+  )
+
+  // Batch export ("Exportar tudo"): each clip gets rendered into this shared scratch directory via
+  // the same video:exportClipFrames handler above, then everything gets zipped up — one folder per
+  // category — and the scratch directory is removed.
+  ipcMain.handle('video:beginBatchExport', async () => mkdtemp(join(tmpdir(), 'football-batch-')))
+  ipcMain.handle(
+    'video:finishBatchExportZip',
+    async (
+      _e,
+      args: {
+        tempDir: string
+        entries: { tempPath: string; categoryLabel: string; filename: string }[]
+        outputZipPath: string
+      }
+    ) => {
+      try {
+        await zipClipsByCategory(args.entries, args.outputZipPath)
+      } finally {
+        await rm(args.tempDir, { recursive: true, force: true })
+      }
+      return args.outputZipPath
     }
   )
 

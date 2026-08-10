@@ -90,50 +90,6 @@ export async function transcodeForPlayback(
   return outputPath
 }
 
-// Clip export (the canvas-recorded webm/mp4 coming out of the renderer's MediaRecorder, which is
-// how drawings/zoom/freeze-frames get burned into the pixels) needs to become a real, boring,
-// maximally-compatible MP4 afterwards — Chromium's own MediaRecorder MP4 muxer produces a
-// fragmented stream that Windows' native player and PowerPoint's video insert both reject
-// ("codec de 64 bits em falta" / 0xC00D36C4), even though Chrome/VLC play it fine. Re-encoding
-// through ffmpeg to H.264 (yuv420p) + AAC with a standard, non-fragmented (+faststart) container
-// sidesteps that entirely, regardless of which container MediaRecorder actually produced.
-export async function finalizeClipExport(
-  tempInputPath: string,
-  outputPath: string,
-  durationSec: number,
-  onProgress: (percent: number) => void
-): Promise<void> {
-  const tmpOutputPath = outputPath + '.tmp'
-  await runProcess(
-    ffmpegPath,
-    [
-      '-y',
-      '-i',
-      tempInputPath,
-      '-c:v',
-      'libx264',
-      '-preset',
-      'veryfast',
-      '-crf',
-      '20',
-      '-pix_fmt',
-      'yuv420p',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '192k',
-      '-movflags',
-      '+faststart',
-      tmpOutputPath
-    ],
-    (line) => {
-      const t = parseFfmpegTimeSec(line)
-      if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
-    }
-  )
-  await rename(tmpOutputPath, outputPath)
-}
-
 export async function probeVideo(filePath: string): Promise<VideoProbeResult> {
   const out = await runProcess(ffprobePath.path, [
     '-v',
@@ -183,6 +139,55 @@ export async function cutClip(
     'aac',
     outputPath
   ])
+}
+
+// Fast clip export: the renderer seeks the video frame-by-frame (not real-time playback) and
+// draws each one onto an offscreen canvas — video frame + zoom crop + whatever drawings/freezes
+// are active at that instant — so a 10-minute clip with 40 drawings takes as long as it takes to
+// seek+draw ~240 frames, not 10 real minutes of MediaRecorder capture. This takes that PNG
+// sequence and encodes it into the video track, then muxes in the ORIGINAL audio for the same
+// [audioInSec, audioOutSec] window (audio doesn't need per-frame JS rendering, so cutting it
+// straight from the source file is both fast and lossless). If a clip has freeze points the video
+// track ends up slightly longer than the audio; -shortest just lets it run out near the end rather
+// than trying to stretch/loop it back into sync.
+export async function exportClipFramesWithAudio(
+  frames: string[],
+  fps: number,
+  sourceVideoPath: string | null,
+  audioInSec: number,
+  audioOutSec: number,
+  outputPath: string,
+  onProgress: (percent: number) => void
+): Promise<void> {
+  const workDir = await mkdtemp(join(tmpdir(), 'football-clip-frames-'))
+  try {
+    for (let i = 0; i < frames.length; i++) {
+      const framePath = join(workDir, `frame_${String(i).padStart(5, '0')}.png`)
+      await writeFile(framePath, Buffer.from(frames[i], 'base64'))
+    }
+    const pattern = join(workDir, 'frame_%05d.png')
+    const durationSec = frames.length / fps
+    const tmpOutputPath = outputPath + '.tmp'
+    const hasAudio = !!sourceVideoPath && audioOutSec > audioInSec
+
+    const args = ['-y', '-framerate', String(fps), '-i', pattern]
+    if (hasAudio) {
+      args.push('-ss', String(audioInSec), '-to', String(audioOutSec), '-i', sourceVideoPath as string)
+    }
+    args.push('-map', '0:v')
+    if (hasAudio) args.push('-map', '1:a?')
+    args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p')
+    if (hasAudio) args.push('-c:a', 'aac', '-b:a', '192k', '-shortest')
+    args.push('-movflags', '+faststart', tmpOutputPath)
+
+    await runProcess(ffmpegPath, args, (line) => {
+      const t = parseFfmpegTimeSec(line)
+      if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
+    })
+    await rename(tmpOutputPath, outputPath)
+  } finally {
+    await rm(workDir, { recursive: true, force: true })
+  }
 }
 
 export async function exportImageSequence(

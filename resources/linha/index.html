@@ -840,7 +840,7 @@
         <div class="cat-tree" id="catTree"></div>
         <div class="clip-sidebar-actions">
           <button class="btn" id="btnPlayReel" title="Reproduzir sequência dos clipes filtrados">▶ Sequência</button>
-          <button class="btn primary" id="btnExportAll" title="Exportar todos os clipes filtrados (um ficheiro de vídeo por clipe)">⬇ Exportar tudo</button>
+          <button class="btn primary" id="btnExportAll" title="Exporta todos os clipes filtrados num único .zip, organizado numa pasta por categoria">⬇ Exportar tudo</button>
         </div>
       </aside>
 
@@ -1235,7 +1235,7 @@
         <li><b>Editar um corte</b> — clica na linha do corte para expandir (De/Até, jogador, Positiva/Negativa, pausas de imagem); duplo-clique no cabeçalho entra no modo de recorte visual (barra arrastável na timeline). <b>Botão direito</b> na linha abre um menu rápido com "Editar" e "Remover".</li>
         <li><b>Positiva/Negativa</b> — marca o resultado do lance; aparece como detalhe (👍/👎) junto ao número na respetiva linha do relatório de estatísticas.</li>
         <li><b>Rever</b> — reproduz só o intervalo do corte (com as suas pausas de imagem, se tiver).</li>
-        <li><b>Exportar</b> — grava um ficheiro <b>.mp4</b> real (vídeo + desenhos + zoom + pausas) através do ffmpeg incluído na app; "Exportar tudo" pede uma pasta uma única vez. O nome do ficheiro é <b>Categoria_N</b>, em que N é a posição temporal desse corte dentro da categoria (o 1º "Remate" do jogo é Remate_1, o 2º é Remate_2, etc.). A exportação corre em tempo real: um corte de 10s demora ~10s a preparar, mais alguns segundos a converter para MP4.</li>
+        <li><b>Exportar</b> — grava um ficheiro <b>.mp4</b> real (vídeo + desenhos + zoom + pausas, com o áudio original) através do ffmpeg incluído na app. É rápida — a app não reproduz o corte em tempo real, salta diretamente entre os fotogramas que precisa, por isso demora só alguns minutos mesmo para cortes longos. O nome do ficheiro é <b>Categoria_N</b>, em que N é a posição temporal desse corte dentro da categoria (o 1º "Remate" do jogo é Remate_1, o 2º é Remate_2, etc.). "Exportar tudo" pede onde guardar um único ficheiro <b>.zip</b> com todos os clipes filtrados, organizados numa pasta por categoria.</li>
       </ul>
 
       <h4 class="tut-h">Quadro tático</h4>
@@ -4506,14 +4506,17 @@ function playNextInReel(){
 }
 
 /* ===================================================================
-   EXPORT — records a clip (video frame + its drawings, cropped to its
-   zoom if one was set) to a real video file using the browser's native
-   MediaRecorder. This is a real-time capture: a 10s clip takes ~10s to
-   record. Inside Electron, the recording is then re-encoded through the
-   bundled ffmpeg into a real MP4 (see finalizeClipExport in ffmpeg.ts);
-   outside Electron there's no ffmpeg available, so it stays WebM.
+   EXPORT — fast, frame-sampled export instead of real-time capture: the
+   video is seeked to each sample point and drawn (frame + drawings +
+   zoom) rather than played back at 1x while a recorder listens along,
+   so a clip's export time depends on how fast seeking+drawing goes, not
+   on the clip's own duration. Audio is cut straight from the original
+   source file by ffmpeg (no per-frame JS rendering needed for that),
+   then muxed with the drawn frames. Electron-only — there's no ffmpeg
+   in a plain browser tab, so export there just explains that plainly.
 =================================================================== */
 let exportBusy = false;
+const CLIP_EXPORT_FPS = 24;
 
 // A clip's rank (1-based) among every other tag of the same category, ordered by when it
 // happened — used to name exported files "Categoria_1", "Categoria_2"... instead of a timestamp,
@@ -4524,216 +4527,137 @@ function categoryOccurrenceIndex(tag){
   return idx>=0 ? idx+1 : 1;
 }
 
-// WebM is what MediaRecorder is actually reliable at — a native MP4 mimeType is technically
-// accepted by Chromium's MediaRecorder, but the file it produces is a fragmented stream that
-// Windows' own player and PowerPoint both reject ("codec de 64 bits em falta" / 0xC00D36C4),
-// even though Chrome/VLC play it fine. Recording stays WebM regardless of final output format —
-// inside Electron the real, standards-compliant MP4 comes from re-encoding through ffmpeg after
-// the fact (see finalizeClipExport in exportClip below), not from MediaRecorder directly.
-function pickSupportedMime(){
-  const options = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
-  return options.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || 'video/webm';
-}
-
-// Browser fallback only (no Electron ffmpeg pipeline available): lets the user pick exactly
-// where a clip is saved. If `dirHandle` is given (batch export), the file goes straight into
-// that folder with no extra prompt. Otherwise, for a single clip, this opens a native "save as"
-// dialog so the destination is chosen up front — before the (real-time) recording even starts,
-// so cancelling costs nothing.
-async function resolveExportTarget(filename, dirHandle){
-  if(dirHandle){
-    try{ return await dirHandle.getFileHandle(filename, {create:true}); }
-    catch(err){ toast('Não foi possível criar o ficheiro na pasta escolhida.'); return undefined; }
-  }
-  if(window.showSaveFilePicker){
-    try{
-      return await window.showSaveFilePicker({
-        suggestedName: filename,
-        types: [{ description:'Vídeo WebM', accept:{ 'video/webm':['.webm'] } }]
-      });
-    }catch(err){
-      if(err && err.name==='AbortError') return undefined; // user cancelled
-      return null; // unsupported/unexpected — fall back to auto-download
-    }
-  }
-  return null; // no File System Access API — fall back to auto-download
-}
-
-// `exportFolder` is a real OS folder path (Electron batch export) or a File System Access
-// FileSystemDirectoryHandle (browser fallback batch export) depending on isElectron() — never
-// mixed, since each branch below only ever touches the kind it produced itself.
-async function exportClip(tag, exportFolder){
-  if(exportBusy){ toast('Já há uma exportação em curso — aguarda terminar.'); return; }
-  if(!videoEl.duration){ toast('Carrega um vídeo primeiro.'); return; }
-  if(typeof MediaRecorder === 'undefined' || !drawCanvas.captureStream){
-    toast('Este navegador não suporta gravação de vídeo (MediaRecorder). Tenta Chrome ou Edge atualizados.');
-    return;
-  }
-  const cat = catById(tag.categoryId);
-  const safeLabel = (cat ? cat.label : 'clip').replace(/[^\w\-]+/g,'_');
-  const mime = pickSupportedMime();
-  const baseName = `${safeLabel}_${categoryOccurrenceIndex(tag)}`;
-  // Inside Electron, output is always a real MP4 (ffmpeg re-encode after recording — see below).
-  // Outside Electron (plain browser fallback, no ffmpeg available) it stays WebM, same as before.
-  const electron = isElectron();
-  const filename = electron ? `${baseName}.mp4` : `${baseName}.webm`;
-
-  let outputPath = null; // Electron: real filesystem path from the native save dialog
-  let fileHandle;        // browser fallback: File System Access API handle
-  if(electron){
-    if(!exportFolder){
-      outputPath = await window.api.saveClipExport(filename);
-      if(!outputPath) return; // user cancelled the save dialog
-    }
-  } else {
-    fileHandle = await resolveExportTarget(filename, exportFolder);
-    if(fileHandle === undefined) return; // user cancelled the location picker
-  }
-
-  return new Promise((resolve) => {
-    exportBusy = true;
-    const freezeTotal = (tag.freezes||[]).reduce((sum,f)=>sum+Math.max(0,f.holdSec), 0);
-    const expectedSec = Math.max(0,(tag.outSec-tag.inSec)) + freezeTotal;
-    toast('A exportar "'+(cat?cat.label:'clip')+'"… ('+expectedSec.toFixed(1)+'s em tempo real'+(freezeTotal>0?', incl. pausas':'')+')');
-
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = videoEl.videoWidth || 1280;
-    exportCanvas.height = videoEl.videoHeight || 720;
-    const ectx = exportCanvas.getContext('2d');
-
-    const canvasStream = exportCanvas.captureStream(30);
-    let audioTracks = [];
-    try{
-      const src = videoEl.captureStream ? videoEl.captureStream() : (videoEl.mozCaptureStream ? videoEl.mozCaptureStream() : null);
-      if(src) audioTracks = src.getAudioTracks();
-    }catch(err){ /* audio capture not available — export continues silently */ }
-    const outStream = new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks]);
-    const recorder = new MediaRecorder(outStream, {mimeType: mime});
-    const chunks = [];
-    recorder.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
-
-    let rafId = null;
-    function drawFrame(){
-      const zoom = tag.zoom;
-      if(zoom && zoom.scale > 1){
-        const sw = exportCanvas.width/zoom.scale, sh = exportCanvas.height/zoom.scale;
-        const sx = clamp((exportCanvas.width-sw)/2 - zoom.panX*exportCanvas.width, 0, exportCanvas.width-sw);
-        const sy = clamp((exportCanvas.height-sh)/2 - zoom.panY*exportCanvas.height, 0, exportCanvas.height-sh);
-        ectx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, exportCanvas.width, exportCanvas.height);
-      } else {
-        ectx.drawImage(videoEl, 0, 0, exportCanvas.width, exportCanvas.height);
-      }
-      (tag.shapes||[]).forEach(s => {
-        const start = s.startSec!=null ? s.startSec : tag.inSec;
-        const end = s.endSec!=null ? s.endSec : tag.outSec;
-        if(videoEl.currentTime>=start && videoEl.currentTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
-      });
-      rafId = requestAnimationFrame(drawFrame);
-    }
-
-    function finish(){
-      cancelAnimationFrame(rafId);
-      videoEl.removeEventListener('seeked', onSeeked);
-      exportBusy = false;
-    }
-
-    function onSeeked(){
-      videoEl.removeEventListener('seeked', onSeeked);
-      recorder.start();
-      videoEl.play();
-      drawFrame();
-      // Freeze points bake into the export the same way they play back in "Rever": pause the
-      // source video (drawFrame keeps re-capturing that same still frame at a fixed 30fps, so
-      // the recording gains holdSec of real duration) then resume from where it stopped.
-      const pendingFreezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
-      let freezeTimeoutId = null;
-      const watchdog = setInterval(() => {
-        if(freezeTimeoutId) return;
-        if(pendingFreezes.length && videoEl.currentTime >= pendingFreezes[0].atSec){
-          const f = pendingFreezes.shift();
-          videoEl.pause();
-          freezeTimeoutId = setTimeout(() => {
-            freezeTimeoutId = null;
-            if(videoEl.currentTime < tag.outSec) videoEl.play();
-          }, Math.max(0, f.holdSec)*1000);
-          return;
-        }
-        if(videoEl.currentTime >= tag.outSec){
-          clearInterval(watchdog);
-          if(freezeTimeoutId) clearTimeout(freezeTimeoutId);
-          videoEl.pause();
-          recorder.stop();
-        }
-      }, 80);
-    }
-
-    recorder.onstop = async () => {
-      finish();
-      const blob = new Blob(chunks, {type: mime});
-      try{
-        if(electron){
-          // The WebM MediaRecorder just produced is only an intermediate — ffmpeg re-encodes it
-          // into a real, non-fragmented MP4 (H.264/AAC) at the chosen destination, which is what
-          // actually opens in Windows' player / PowerPoint. See finalizeClipExport in ffmpeg.ts.
-          toast('A finalizar em MP4…');
-          const arrayBuffer = await blob.arrayBuffer();
-          const finalPath = await window.api.finalizeClipExport({
-            arrayBuffer,
-            outputPath: outputPath || undefined,
-            folderPath: exportFolder || undefined,
-            filename: exportFolder ? filename : undefined,
-            durationSec: expectedSec,
-            sourceExt: 'webm'
-          });
-          toast('Exportado: '+finalPath);
-        } else if(fileHandle){
-          const writable = await fileHandle.createWritable();
-          await writable.write(blob);
-          await writable.close();
-          toast('Exportado: '+filename);
-        } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url; a.download = filename;
-          document.body.appendChild(a); a.click(); a.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 5000);
-          toast('Exportado: '+filename);
-        }
-      }catch(err){
-        console.error(err);
-        toast('Não foi possível guardar o ficheiro exportado.');
-      }
-      resolve();
-    };
-
+function seekVideoTo(t){
+  return new Promise(resolve => {
+    const onSeeked = () => { videoEl.removeEventListener('seeked', onSeeked); resolve(); };
     videoEl.addEventListener('seeked', onSeeked);
-    videoEl.currentTime = tag.inSec;
+    videoEl.currentTime = t;
   });
 }
 
+// Captures a clip as a PNG-per-frame sequence, sampled at CLIP_EXPORT_FPS by seeking (not
+// playing) through it — the cost is "however long N seeks+draws take", not the clip's own
+// duration. A freeze point is simulated by repeating the already-drawn frame instead of literally
+// pausing the video, which is both simpler and free (no extra seeking needed for the hold itself).
+async function captureClipFrames(tag, fps, onProgress){
+  const exportCanvas = document.createElement('canvas');
+  exportCanvas.width = videoEl.videoWidth || 1280;
+  exportCanvas.height = videoEl.videoHeight || 720;
+  const ectx = exportCanvas.getContext('2d');
+  const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
+
+  function drawFrame(){
+    const zoom = tag.zoom;
+    if(zoom && zoom.scale > 1){
+      const sw = exportCanvas.width/zoom.scale, sh = exportCanvas.height/zoom.scale;
+      const sx = clamp((exportCanvas.width-sw)/2 - zoom.panX*exportCanvas.width, 0, exportCanvas.width-sw);
+      const sy = clamp((exportCanvas.height-sh)/2 - zoom.panY*exportCanvas.height, 0, exportCanvas.height-sh);
+      ectx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, exportCanvas.width, exportCanvas.height);
+    } else {
+      ectx.drawImage(videoEl, 0, 0, exportCanvas.width, exportCanvas.height);
+    }
+    (tag.shapes||[]).forEach(s => {
+      const start = s.startSec!=null ? s.startSec : tag.inSec;
+      const end = s.endSec!=null ? s.endSec : tag.outSec;
+      if(videoEl.currentTime>=start && videoEl.currentTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
+    });
+    return exportCanvas.toDataURL('image/png').split(',')[1];
+  }
+
+  const frames = [];
+  const frameDur = 1/fps;
+  const totalFrames = Math.max(1, Math.round((tag.outSec - tag.inSec) * fps));
+  let freezeIdx = 0;
+  let t = tag.inSec;
+  videoEl.pause();
+  await seekVideoTo(t);
+  for(let i=0; i<totalFrames; i++){
+    const png = drawFrame();
+    frames.push(png);
+    if(freezeIdx < freezes.length && t >= freezes[freezeIdx].atSec){
+      const holdFrames = Math.max(1, Math.round(freezes[freezeIdx].holdSec * fps));
+      for(let h=0; h<holdFrames; h++) frames.push(png);
+      freezeIdx++;
+    }
+    t = Math.min(tag.outSec, t+frameDur);
+    if(i < totalFrames-1) await seekVideoTo(t);
+    if(onProgress && i%8===0) onProgress(Math.round((i/totalFrames)*100));
+  }
+  return frames;
+}
+
+async function exportClip(tag){
+  if(exportBusy){ toast('Já há uma exportação em curso — aguarda terminar.'); return; }
+  if(!videoEl.duration){ toast('Carrega um vídeo primeiro.'); return; }
+  if(!isElectron()){ toast('A exportação de vídeo requer a aplicação instalada (não funciona num browser comum).'); return; }
+  const cat = catById(tag.categoryId);
+  const label = cat ? cat.label : 'clip';
+  const filename = `${label.replace(/[^\w\-]+/g,'_')}_${categoryOccurrenceIndex(tag)}.mp4`;
+  const outputPath = await window.api.saveClipExport(filename);
+  if(!outputPath) return;
+
+  exportBusy = true;
+  const originalTime = videoEl.currentTime;
+  try{
+    toast('A preparar "'+label+'"…');
+    const frames = await captureClipFrames(tag, CLIP_EXPORT_FPS, pct => toast('A preparar "'+label+'"… '+pct+'%'));
+    toast('A codificar vídeo…');
+    await window.api.exportClipFrames({
+      frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
+      audioInSec: tag.inSec, audioOutSec: tag.outSec, outputPath
+    });
+    toast('Exportado: '+outputPath);
+  }catch(err){
+    console.error(err);
+    toast('Não foi possível exportar este corte.');
+  }finally{
+    exportBusy = false;
+    if(videoEl.duration) videoEl.currentTime = originalTime;
+  }
+}
+
+// "Exportar tudo" bundles every filtered clip into a single .zip — one folder per category,
+// clips named "Categoria_N.mp4" inside it — instead of a folder full of loose files.
 async function exportAllClips(){
   const list = getFilteredTags().filter(t => t.mode !== 'stopwatch').sort((a,b) => a.inSec - b.inSec);
   if(!list.length){ toast('Sem clipes para exportar.'); return; }
+  if(!isElectron()){ toast('A exportação de vídeo requer a aplicação instalada (não funciona num browser comum).'); return; }
+  if(exportBusy){ toast('Já há uma exportação em curso — aguarda terminar.'); return; }
+  if(!videoEl.duration){ toast('Carrega um vídeo primeiro.'); return; }
 
-  // Pick the destination folder once, up front, so batch export doesn't
-  // pop a "save as" dialog for every single clip.
-  const electron = isElectron();
-  let exportFolder = null;
-  if(electron){
-    exportFolder = await window.api.chooseExportFolder();
-    if(!exportFolder) return; // user cancelled
-  } else if(window.showDirectoryPicker){
-    try{ exportFolder = await window.showDirectoryPicker(); }
-    catch(err){ if(err && err.name==='AbortError') return; }
+  const zipPath = await window.api.saveClipZip();
+  if(!zipPath) return;
+  if(!confirm('Vais exportar '+list.length+' clipe(s) para um único ficheiro .zip, organizados por categoria. Continuar?')) return;
+
+  exportBusy = true;
+  const originalTime = videoEl.currentTime;
+  try{
+    const tempDir = await window.api.beginBatchExport();
+    const entries = [];
+    for(let i=0;i<list.length;i++){
+      const tag = list[i];
+      const cat = catById(tag.categoryId);
+      const label = cat ? cat.label : 'clip';
+      const filename = `${label.replace(/[^\w\-]+/g,'_')}_${categoryOccurrenceIndex(tag)}.mp4`;
+      toast('A exportar '+(i+1)+'/'+list.length+': '+label+'…');
+      const frames = await captureClipFrames(tag, CLIP_EXPORT_FPS, pct => toast('A exportar '+(i+1)+'/'+list.length+': '+label+'… '+pct+'%'));
+      const tempPath = await window.api.exportClipFrames({
+        frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
+        audioInSec: tag.inSec, audioOutSec: tag.outSec,
+        folderPath: tempDir, filename
+      });
+      entries.push({ tempPath, categoryLabel: label, filename });
+    }
+    toast('A compactar tudo num .zip…');
+    await window.api.finishBatchExportZip({ tempDir, entries, outputZipPath: zipPath });
+    toast('Exportação concluída: '+zipPath);
+  }catch(err){
+    console.error(err);
+    toast('Não foi possível concluir a exportação.');
+  }finally{
+    exportBusy = false;
+    if(videoEl.duration) videoEl.currentTime = originalTime;
   }
-  const destExt = electron ? 'mp4' : 'webm';
-  const destNote = exportFolder ? 'na pasta que escolheres' : ('vai descarregar '+list.length+' ficheiro(s) .'+destExt+' para a pasta de transferências');
-  if(!confirm('Vais exportar '+list.length+' clipe(s), '+destNote+'. Cada um demora o tempo real da sua duração — isto pode levar vários minutos. Continuar?')) return;
-  for(let i=0;i<list.length;i++){
-    toast('Exportando clipe '+(i+1)+'/'+list.length+'…');
-    await exportClip(list[i], exportFolder);
-  }
-  toast('Exportação de todos os clipes concluída.');
 }
 
 document.getElementById('btnExportAll').addEventListener('click', exportAllClips);
