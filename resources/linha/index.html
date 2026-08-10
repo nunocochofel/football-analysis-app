@@ -4945,7 +4945,7 @@ async function captureClipFramesViaPlayback(tag, fps, onProgress){
         }
       }
 
-      function onFrame(now, metadata){
+      async function onFrame(now, metadata){
         try{
           captureUpTo(metadata.mediaTime);
           if(metadata.mediaTime >= tag.outSec || videoEl.ended){
@@ -4954,6 +4954,16 @@ async function captureClipFramesViaPlayback(tag, fps, onProgress){
             return;
           }
         }catch(err){ videoEl.pause(); reject(err); return; }
+        // requestVideoFrameCallback already yields between calls, but drawing the frame + any
+        // active shapes + JPEG-encoding it (drawFrame, inside captureUpTo above) is real
+        // synchronous CPU work — on a slow enough machine or a heavy enough frame (several
+        // shapes, a large canvas), a run of these back-to-back can eat into the browser's own
+        // time budget for painting/handling input, which is what actually makes a tab feel
+        // "frozen" even though work is genuinely progressing. This explicit macrotask yield
+        // (not just the microtask queue) guarantees the browser gets a real turn — to paint the
+        // toast update, respond to window controls, etc. — after every single captured frame,
+        // regardless of how expensive that frame was to encode.
+        await new Promise(r => setTimeout(r, 0));
         videoEl.requestVideoFrameCallback(onFrame);
       }
 
