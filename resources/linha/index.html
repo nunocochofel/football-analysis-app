@@ -4535,23 +4535,28 @@ function seekVideoTo(t){
   });
 }
 
-// Captures a clip as a JPEG-per-frame sequence, sampled at CLIP_EXPORT_FPS by seeking (not
-// playing) through it — the cost is "however long N seeks+draws+encodes take", not the clip's own
-// duration. JPEG, not PNG: these are throwaway intermediates that ffmpeg re-encodes to H.264
-// (itself lossy) a moment later, so PNG's lossless compression buys nothing here — it's also
-// dramatically slower to encode busy, photographic video content than JPEG is (PNG is deflate,
-// tuned for flat/synthetic graphics), and produces bigger base64 payloads to ship over IPC and
-// write to disk. JPEG at 0.88 quality is visually indistinguishable at this stage and meaningfully
-// faster end to end. A freeze point is simulated by repeating the already-drawn frame instead of
-// literally pausing the video, which is both simpler and free (no extra seeking for the hold).
+// Captures a clip as a JPEG-per-frame sequence. Plays the clip forward for real (muted, at a high
+// playbackRate) and grabs each decoded frame via requestVideoFrameCallback, using its exact
+// mediaTime — not the previous approach of seeking to each 1/fps instant one at a time. A seek
+// pays a real cost every time (locate the nearest keyframe, decode forward to the exact target),
+// and paying that ~N times per clip was the actual reason export felt endless. Sequential decode
+// during playback is what the video pipeline is built for and avoids that cost almost entirely;
+// requestVideoFrameCallback's own delivery rate — not a fixed timer — paces how fast frames come
+// in, and a frame is captured for every fps-aligned instant that's now behind the playhead,
+// backfilling with the just-decoded frame if the pipeline delivered several at once (normal at
+// high playbackRate — the picture just doesn't change between those samples, same as a freeze
+// hold). JPEG, not PNG: these are throwaway intermediates that ffmpeg re-encodes to H.264 (itself
+// lossy) a moment later, so PNG's lossless compression buys nothing here.
 async function captureClipFrames(tag, fps, onProgress){
   const exportCanvas = document.createElement('canvas');
   exportCanvas.width = videoEl.videoWidth || 1280;
   exportCanvas.height = videoEl.videoHeight || 720;
   const ectx = exportCanvas.getContext('2d');
   const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
+  const frameInterval = 1/fps;
+  const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
 
-  function drawFrame(){
+  function drawFrame(atTime){
     const zoom = tag.zoom;
     if(zoom && zoom.scale > 1){
       const sw = exportCanvas.width/zoom.scale, sh = exportCanvas.height/zoom.scale;
@@ -4564,11 +4569,76 @@ async function captureClipFrames(tag, fps, onProgress){
     (tag.shapes||[]).forEach(s => {
       const start = s.startSec!=null ? s.startSec : tag.inSec;
       const end = s.endSec!=null ? s.endSec : tag.outSec;
-      if(videoEl.currentTime>=start && videoEl.currentTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
+      if(atTime>=start && atTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
     });
     return exportCanvas.toDataURL('image/jpeg', 0.88).split(',')[1];
   }
 
+  // Older/unusual runtimes without requestVideoFrameCallback fall back to the slower but
+  // unconditionally-correct seek-per-frame method rather than not exporting at all.
+  if(typeof videoEl.requestVideoFrameCallback !== 'function'){
+    return captureClipFramesBySeeking(tag, fps, drawFrame, onProgress);
+  }
+
+  videoEl.pause();
+  await seekVideoTo(tag.inSec);
+
+  const frames = [];
+  const originalMuted = videoEl.muted;
+  const originalRate = videoEl.playbackRate;
+  videoEl.muted = true;
+
+  try{
+    await new Promise((resolve, reject) => {
+      let nextSampleTime = tag.inSec;
+      let freezeIdx = 0;
+
+      function captureUpTo(t){
+        while(nextSampleTime <= t && nextSampleTime <= tag.outSec + 1e-6){
+          const frame = drawFrame(nextSampleTime);
+          frames.push(frame);
+          onProgress(Math.min(99, Math.round((nextSampleTime-tag.inSec)/totalSec*100)));
+          while(freezeIdx < freezes.length && freezes[freezeIdx].atSec <= nextSampleTime){
+            const holdFrames = Math.max(1, Math.round(Math.max(0, freezes[freezeIdx].holdSec) * fps));
+            for(let h=0; h<holdFrames; h++) frames.push(frame);
+            freezeIdx++;
+          }
+          nextSampleTime += frameInterval;
+        }
+      }
+
+      function onFrame(now, metadata){
+        try{
+          captureUpTo(metadata.mediaTime);
+          if(metadata.mediaTime >= tag.outSec || videoEl.ended){
+            videoEl.pause();
+            resolve();
+            return;
+          }
+        }catch(err){ videoEl.pause(); reject(err); return; }
+        videoEl.requestVideoFrameCallback(onFrame);
+      }
+
+      videoEl.playbackRate = 16;
+      videoEl.play().then(() => { videoEl.requestVideoFrameCallback(onFrame); }).catch(reject);
+    });
+    // Playback may end a hair before outSec (rounding) — make sure the final sampled instant,
+    // and anything a trailing freeze still owes, actually gets emitted.
+    if(!frames.length || (tag.outSec - tag.inSec) > (frames.length/fps) + frameInterval){
+      const frame = drawFrame(tag.outSec);
+      frames.push(frame);
+    }
+  } finally {
+    videoEl.muted = originalMuted;
+    videoEl.playbackRate = originalRate;
+  }
+  onProgress(100);
+  return frames;
+}
+
+// Fallback path (no requestVideoFrameCallback support): the original seek-per-frame method.
+async function captureClipFramesBySeeking(tag, fps, drawFrame, onProgress){
+  const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
   const frames = [];
   const frameDur = 1/fps;
   const totalFrames = Math.max(1, Math.round((tag.outSec - tag.inSec) * fps));
@@ -4577,17 +4647,18 @@ async function captureClipFrames(tag, fps, onProgress){
   videoEl.pause();
   await seekVideoTo(t);
   for(let i=0; i<totalFrames; i++){
-    const png = drawFrame();
-    frames.push(png);
+    const frame = drawFrame(t);
+    frames.push(frame);
     if(freezeIdx < freezes.length && t >= freezes[freezeIdx].atSec){
       const holdFrames = Math.max(1, Math.round(freezes[freezeIdx].holdSec * fps));
-      for(let h=0; h<holdFrames; h++) frames.push(png);
+      for(let h=0; h<holdFrames; h++) frames.push(frame);
       freezeIdx++;
     }
     t = Math.min(tag.outSec, t+frameDur);
     if(i < totalFrames-1) await seekVideoTo(t);
     if(onProgress && i%8===0) onProgress(Math.round((i/totalFrames)*100));
   }
+  onProgress(100);
   return frames;
 }
 
