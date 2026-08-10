@@ -734,6 +734,16 @@
   .export-queue-item-actions{display:flex; gap:4px; margin-top:6px;}
   .export-queue-item-actions button{font-size:10.5px; padding:3px 7px;}
 
+  .export-mini-indicator{
+    position:fixed; right:16px; bottom:16px; z-index:260; display:flex; align-items:center; gap:8px;
+    background:var(--panel); border:1px solid var(--line); border-radius:999px; box-shadow:var(--shadow);
+    padding:9px 16px 9px 12px; font-size:12.5px; font-weight:600; cursor:pointer;
+  }
+  .export-mini-indicator:hover{background:var(--panel-alt);}
+  .export-mini-dot{width:8px; height:8px; border-radius:50%; background:#6db1ff; flex-shrink:0; animation:export-mini-pulse 1.6s ease-in-out infinite;}
+  .export-mini-indicator.done .export-mini-dot{background:#7fd68a; animation:none;}
+  @keyframes export-mini-pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+
   .info-list{font-size:13px; line-height:1.6; color:var(--muted);}
   .info-list b{color:var(--chalk);}
   .info-list li{margin-bottom:8px;}
@@ -1371,6 +1381,13 @@
     <span id="exportQueueGlobalLabel"></span>
   </div>
   <div class="export-queue-items" id="exportQueueItems"></div>
+</div>
+
+<!-- Stands in for the panel above once the user closes it with X while an export batch still
+     exists — clicking it reopens the full panel. Never shown at the same time as the panel. -->
+<div class="export-mini-indicator" id="exportMiniIndicator" style="display:none;" title="Ver exportação">
+  <span class="export-mini-dot"></span>
+  <span class="export-mini-label"></span>
 </div>
 
 <!-- Shared rich text-editor panel — opened by double-clicking a text shape, on the video canvas
@@ -4859,12 +4876,40 @@ async function captureClipFramesBySeeking(el, tag, fps, drawFrame, onProgress, i
    custou a corrigir na captura em si — a codificação (ffmpeg, processo à parte) já corre em
    paralelo com a captura do clip seguinte, já que é despachada assim que cada clip termina.
 =================================================================== */
+// This array of plain {id, status, progress, error, outputPath, ...} objects IS the export "job"
+// model — processExportQueue/processExportItem below never read or write anything about the
+// panel's visibility to decide what to do, so the queue already runs fully independently of
+// whether #exportQueuePanel is open, closed, or the app window isn't focused/visible at all. The
+// panel (further down) is purely a read-only view onto this array, re-rendered after every state
+// change — never the other way around.
 let exportQueue = [];
 let exportQueueRunning = false;
+// Whether the user explicitly closed the panel with the X — renderExportQueuePanel() respects
+// this instead of always forcing the panel open, and enqueueForExport() resets it so a genuinely
+// new export always shows itself. See exportMiniIndicator for what shows instead while this is
+// true and the queue still has active work.
+let exportPanelUserClosed = false;
 // Session-only (not persisted with the project): a cache hit is revalidated against disk anyway
 // (fs:fileExists), so nothing is lost by not remembering it across app restarts, and it keeps the
 // project file's schema untouched.
 let exportCache = {};
+
+// Electron throttles a renderer's timers/frame delivery once its window isn't visible/focused
+// (minimized, switched away from) — the actual cause of export feeling slower or stuck in the
+// background, since capture (the hidden <video> + requestVideoFrameCallback) runs entirely in
+// this renderer. Only disabled while genuinely exporting, restored the moment the queue is idle —
+// see the call sites in enqueueForExport/processExportItem's completion path below.
+let backgroundThrottlingDisabled = false;
+function syncExportBackgroundState(){
+  const hasActiveWork = exportQueue.some(i => i.status === 'waiting' || i.status === 'processing');
+  if(hasActiveWork !== backgroundThrottlingDisabled){
+    backgroundThrottlingDisabled = hasActiveWork;
+    if(isElectron()){
+      window.api.setBackgroundThrottling(hasActiveWork);
+      window.api.setExportsActive(hasActiveWork);
+    }
+  }
+}
 
 // Canonical export parameters — anything in here changing means the previous output no longer
 // matches, and anything NOT in here (categoryId, teamId, playerId, outcome...) has no effect on
@@ -4897,6 +4942,8 @@ function exportItemFilename(tag){
 // Adds one queue item per tag (already-cached ones are marked 'done' immediately, without
 // touching the capture/encode pipeline at all) and makes sure the processing loop is running.
 async function enqueueForExport(tags, options){
+  exportPanelUserClosed = false; // a freshly started export always shows itself, even if a
+  // previous batch's panel was closed by the user.
   for(const tag of tags){
     const spec = buildExportSpec(tag, options);
     const cacheKey = hashExportSpec(spec);
@@ -4970,7 +5017,9 @@ async function processExportItem(item){
   renderExportQueuePanel();
 }
 
-function cancelExportItem(id){
+// Does the actual cancellation, no confirmation — kept separate from cancelExportItem so
+// cancelAllExports can confirm ONCE for the whole batch instead of once per item.
+function cancelExportItemForced(id){
   const item = exportQueue.find(i => i.id === id);
   if(!item) return;
   if(item.status === 'waiting'){
@@ -4981,8 +5030,25 @@ function cancelExportItem(id){
   }
   renderExportQueuePanel();
 }
+// "Fechar painel" (the X) and "Cancelar" are deliberately two different actions reaching two
+// different functions — the X never calls either of these, only ever touches panel visibility.
+// Cancelling something already in progress is the one genuinely destructive action here, so it
+// asks first; a 'waiting' item that hasn't started yet still asks too, for a consistent, always-
+// predictable click (never a surprise either way).
+function cancelExportItem(id){
+  const item = exportQueue.find(i => i.id === id);
+  if(!item) return;
+  if((item.status === 'waiting' || item.status === 'processing') &&
+     !confirm('Cancelar a exportação de "'+item.filename+'"?')){
+    return;
+  }
+  cancelExportItemForced(id);
+}
 function cancelAllExports(){
-  exportQueue.forEach(item => { if(item.status === 'waiting' || item.status === 'processing') cancelExportItem(item.id); });
+  const active = exportQueue.filter(item => item.status === 'waiting' || item.status === 'processing');
+  if(!active.length) return;
+  if(!confirm('Cancelar '+active.length+' exportação(ões) em curso?')) return;
+  active.forEach(item => cancelExportItemForced(item.id));
 }
 function retryExportItem(id){
   const item = exportQueue.find(i => i.id === id);
@@ -5071,13 +5137,37 @@ function exportQueueBadgeLabel(status){
 }
 
 function renderExportQueuePanel(){
+  syncExportBackgroundState();
   const panel = document.getElementById('exportQueuePanel');
-  if(!exportQueue.length){ panel.style.display = 'none'; return; }
-  panel.style.display = 'flex';
+  const miniIndicator = document.getElementById('exportMiniIndicator');
+  if(!exportQueue.length){
+    panel.style.display = 'none';
+    miniIndicator.style.display = 'none';
+    exportPanelUserClosed = false; // clean slate for the next export
+    return;
+  }
   const total = exportQueue.length;
   const finished = exportQueue.filter(i => i.status!=='waiting' && i.status!=='processing').length;
   const currentIdx = Math.min(finished + (exportQueue.some(i=>i.status==='processing') ? 1 : 0), total);
   const globalPct = Math.round(exportQueue.reduce((sum,i) => sum + (i.status==='waiting'||i.status==='processing' ? i.progress : 100), 0) / total);
+
+  // The X only ever sets exportPanelUserClosed — it never touches exportQueue, so processing
+  // keeps running underneath either way. Once closed, it STAYS closed (mini indicator instead)
+  // even after the queue finishes — reopening is always an explicit click, never automatic,
+  // so the panel doesn't reappear on top of whatever the user is doing just because a background
+  // export happened to finish while they were elsewhere.
+  if(exportPanelUserClosed){
+    const hasActiveWork = exportQueue.some(i => i.status==='waiting' || i.status==='processing');
+    panel.style.display = 'none';
+    miniIndicator.style.display = 'flex';
+    miniIndicator.querySelector('.export-mini-label').textContent = hasActiveWork
+      ? `Exportação em segundo plano — ${globalPct}%`
+      : 'Exportação concluída — ver resultado';
+    miniIndicator.classList.toggle('done', !hasActiveWork);
+    return;
+  }
+  miniIndicator.style.display = 'none';
+  panel.style.display = 'flex';
   document.getElementById('exportQueueGlobalLabel').textContent = `Corte ${Math.max(currentIdx,1)} de ${total} — ${globalPct}%`;
   document.getElementById('exportQueueGlobalFill').style.width = globalPct+'%';
 
@@ -5112,11 +5202,19 @@ document.getElementById('btnCancelAllExports').addEventListener('click', cancelA
 document.getElementById('btnClearFinishedExports').addEventListener('click', clearFinishedExports);
 document.getElementById('btnCloseExportQueue').addEventListener('click', (e) => {
   e.stopPropagation();
-  document.getElementById('exportQueuePanel').style.display = 'none';
+  // Only ever hides the panel — never touches exportQueue, so whatever's processing keeps
+  // processing. renderExportQueuePanel() (not a direct style.display write) so the mini
+  // indicator's own visibility/text updates immediately to match.
+  exportPanelUserClosed = true;
+  renderExportQueuePanel();
 });
 document.getElementById('exportQueueHead').addEventListener('click', (e) => {
   if(e.target.closest('button')) return;
   document.getElementById('exportQueuePanel').classList.toggle('collapsed');
+});
+document.getElementById('exportMiniIndicator').addEventListener('click', () => {
+  exportPanelUserClosed = false;
+  renderExportQueuePanel();
 });
 
 document.getElementById('btnExportAll').addEventListener('click', () => {

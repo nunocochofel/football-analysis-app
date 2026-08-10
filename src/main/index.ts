@@ -5,6 +5,13 @@ import { registerIpcHandlers } from './ipc'
 import { initDatabase } from './db'
 
 let mainWindow: BrowserWindow | null = null
+// Mirrors the renderer's export queue (see project:setExportsActive in ipc.ts) purely so the
+// 'close' handler below knows whether to warn before letting the window go — a full quit
+// destroys the renderer, which is where clip capture happens (video decode only exists in a
+// Chromium page context, not in this headless process), so an in-progress export genuinely
+// cannot survive that. This never blocks minimizing, only an actual close/quit, and only warns
+// rather than silently losing work.
+let exportsActive = false
 
 // The LINHA web app (resources/linha/index.html) is the primary UI — it has no build step of
 // its own, so it's always loaded directly via loadFile, in dev and packaged builds alike. The
@@ -24,6 +31,31 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+  })
+
+  // Only intercepts an actual close (the window's own X, Alt+F4, app quit) — never fires for
+  // minimize, so minimizing is always instant and unaffected. dialog.showMessageBox blocks here
+  // (same pattern already used for the auto-update prompt below), which is exactly what's wanted:
+  // give the user a real choice instead of silently discarding an in-progress export.
+  mainWindow.on('close', (event) => {
+    if (!exportsActive) return
+    event.preventDefault()
+    dialog
+      .showMessageBox(mainWindow as BrowserWindow, {
+        type: 'warning',
+        title: 'Exportação em curso',
+        message: 'Há uma exportação em curso. Fechar a aplicação agora vai perdê-la.',
+        detail: 'Fechar na mesma?',
+        buttons: ['Fechar na mesma', 'Cancelar'],
+        defaultId: 1,
+        cancelId: 1
+      })
+      .then((result) => {
+        if (result.response === 0) {
+          exportsActive = false
+          mainWindow?.destroy()
+        }
+      })
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -100,7 +132,12 @@ function setupAutoUpdate(): void {
 app.whenReady().then(async () => {
   try {
     await initDatabase()
-    registerIpcHandlers(() => mainWindow)
+    registerIpcHandlers(
+      () => mainWindow,
+      (active) => {
+        exportsActive = active
+      }
+    )
     createWindow()
   } catch (err) {
     // A startup failure here used to just mean the app never opened, with nothing to go on —

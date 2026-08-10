@@ -53,6 +53,9 @@ const api = {
   },
   fileExists: (filePath: string): Promise<boolean> => ipcRenderer.invoke('fs:fileExists', filePath),
   showItemInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showItemInFolder', filePath),
+  setBackgroundThrottling: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke('video:setBackgroundThrottling', enabled),
+  setExportsActive: (active: boolean): Promise<void> => ipcRenderer.invoke('project:setExportsActive', active),
 
   writeProjectBackup: (args: { projectId: string; projectName: string; payload: unknown }): Promise<string> =>
     ipcRenderer.invoke('project:writeBackup', args),

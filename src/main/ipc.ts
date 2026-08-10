@@ -19,7 +19,10 @@ import {
 import * as q from './db/queries'
 import type { ExportTacticFramesRequest } from '../shared/types'
 
-export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void {
+export function registerIpcHandlers(
+  getWindow: () => BrowserWindow | null,
+  onExportsActiveChange: (active: boolean) => void
+): void {
   // File dialogs
   ipcMain.handle('dialog:openVideo', async () => {
     const win = getWindow()
@@ -153,6 +156,26 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     }
   )
   ipcMain.handle('video:cancelExport', (_e, jobId: string) => cancelExportJob(jobId))
+
+  // The export capture loop (a hidden <video> + requestVideoFrameCallback, in the renderer) is
+  // otherwise subject to Electron's default backgroundThrottling — Chromium slows down a
+  // renderer's timers/frame delivery once its window isn't visible or focused, which is exactly
+  // what made export feel slower or stuck when minimized or switched away from. Only disabled
+  // while an export is actually in flight (toggled by the renderer via video:setBackgroundThrottling
+  // as the queue goes active/idle), not left off permanently — there's no reason to pay whatever
+  // power-saving cost this optimization buys during ordinary use.
+  ipcMain.handle('video:setBackgroundThrottling', (_e, enabled: boolean) => {
+    getWindow()?.webContents.setBackgroundThrottling(enabled)
+  })
+
+  // Mirrors the same "exports in flight" transition so the main process can warn before letting
+  // the window actually close (see the 'close' handler in index.ts) — a full app quit destroys
+  // the renderer, which is where video decode happens, so an in-progress export cannot survive
+  // that regardless of this flag; this only lets the user choose to avoid losing it accidentally,
+  // it never blocks minimizing or otherwise interacting with the app.
+  ipcMain.handle('project:setExportsActive', (_e, active: boolean) => {
+    onExportsActiveChange(active)
+  })
 
   // Export queue panel actions: confirm a previously-exported file is still there before trusting
   // a cache hit (state.exportCache in the renderer only remembers a path, not whether the user
