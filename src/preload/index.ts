@@ -32,6 +32,15 @@ const api = {
   onTranscodeProgress: (cb: (percent: number) => void): void => {
     ipcRenderer.on('video:transcodeProgress', (_e, percent: number) => cb(percent))
   },
+  getFaststartCachePath: (sourcePath: string): Promise<string | null> =>
+    ipcRenderer.invoke('video:getFaststartCachePath', sourcePath),
+  remuxToFaststart: (args: { playablePath: string; cacheKeyPath: string }): Promise<string> =>
+    ipcRenderer.invoke('video:remuxToFaststart', args),
+  onRemuxProgress: (cb: (percent: number) => void): void => {
+    ipcRenderer.on('video:remuxProgress', (_e, percent: number) => cb(percent))
+  },
+  readFileRange: (args: { path: string; start: number; end: number }): Promise<Uint8Array> =>
+    ipcRenderer.invoke('video:readFileRange', args),
 
   saveClipExport: (suggestedName: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:saveClipExport', suggestedName),

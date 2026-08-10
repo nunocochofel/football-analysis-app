@@ -2677,9 +2677,15 @@ function isElectron(){ return !!window.api; }
 // the same, but can be a cached H.264 conversion of a source Chromium can't decode (see
 // convertVideoForPlayback below).
 let electronVideoSourcePath = null;
+// The literal path whose bytes are actually loaded into <video> right now — usually the same as
+// electronVideoSourcePath, but can be a transcoded playback-cache copy (see the comment above
+// loadVideoFromElectronPath's filePath/originalPath params). Fast clip capture (WebCodecs) needs
+// this, not the original, since it has to demux exactly what's already loaded.
+let currentPlaybackPath = null;
 function loadVideoFromElectronPath(filePath, originalPath){
   currentVideoFile = null;
   electronVideoSourcePath = originalPath || filePath;
+  currentPlaybackPath = filePath;
   hideVideoError();
   document.getElementById('videoEmptyState').style.display='none';
   clearTimeout(videoLoadTimeoutId);
@@ -2825,6 +2831,7 @@ function hideVideoError(){
 
 function loadVideoFile(file){
   currentVideoFile = file;
+  currentPlaybackPath = null;
   hideVideoError();
   document.getElementById('videoEmptyState').style.display='none';
   clearTimeout(videoLoadTimeoutId);
@@ -4535,19 +4542,302 @@ function seekVideoTo(t){
   });
 }
 
-// Captures a clip as a JPEG-per-frame sequence. Plays the clip forward for real (muted, at a high
-// playbackRate) and grabs each decoded frame via requestVideoFrameCallback, using its exact
-// mediaTime — not the previous approach of seeking to each 1/fps instant one at a time. A seek
-// pays a real cost every time (locate the nearest keyframe, decode forward to the exact target),
-// and paying that ~N times per clip was the actual reason export felt endless. Sequential decode
-// during playback is what the video pipeline is built for and avoids that cost almost entirely;
-// requestVideoFrameCallback's own delivery rate — not a fixed timer — paces how fast frames come
-// in, and a frame is captured for every fps-aligned instant that's now behind the playhead,
-// backfilling with the just-decoded frame if the pipeline delivered several at once (normal at
-// high playbackRate — the picture just doesn't change between those samples, same as a freeze
-// hold). JPEG, not PNG: these are throwaway intermediates that ffmpeg re-encodes to H.264 (itself
-// lossy) a moment later, so PNG's lossless compression buys nothing here.
+/* ===================================================================
+   CAPTURA RÁPIDA (WEBCODECS)
+   Demuxa o ficheiro que já está carregado no <video> diretamente com mp4box.js e descodifica só o
+   intervalo de amostras de que um clip precisa com VideoDecoder — sem pedir ao <video> para
+   "reproduzir" nada, por isso sem a sincronização/gestão de buffer em tempo real que causa as
+   paragens do método antigo (captureClipFramesViaPlayback, mantido abaixo como rede de segurança).
+=================================================================== */
+let mp4boxModulePromise = null;
+// A plain <script src> tag, not a dynamic import() of an ES module — file:// pages have origin
+// "null", and Chromium's module loader always fetches modules in CORS mode, which fails outright
+// for "null" origins ("Failed to fetch dynamically imported module"). Classic scripts don't have
+// that restriction, so mp4box.js ships pre-bundled as a dependency-free IIFE (resources/linha/
+// vendor/mp4box.bundle.js, built with esbuild from the upstream ESM package) exposing
+// window.MP4BoxLib, instead of its published .mjs form.
+function loadMp4Box(){
+  if(window.MP4BoxLib) return Promise.resolve(window.MP4BoxLib);
+  if(!mp4boxModulePromise){
+    mp4boxModulePromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'vendor/mp4box.bundle.js';
+      script.onload = () => resolve(window.MP4BoxLib);
+      script.onerror = () => reject(new Error('Não foi possível carregar mp4box.js'));
+      document.head.appendChild(script);
+    });
+  }
+  return mp4boxModulePromise;
+}
+// Lê exatamente [start, end] (inclusive) de `path` via IPC (fs no processo principal) e devolve
+// um ArrayBuffer com `.fileStart` já anotado, pronto a entregar a mp4boxfile.appendBuffer(). Não
+// se usa fetch() aqui: Chromium recusa-o liminarmente para o esquema file: ("URL scheme 'file' is
+// not supported") — não é uma questão de CORS/origem contornável, é mesmo não suportado.
+async function readFileRangeBuffer(path, start, end){
+  const bytes = await window.api.readFileRange({path, start, end});
+  const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  buf.fileStart = start;
+  return buf;
+}
+
+// Alimenta um prefixo crescente de `path` a uma instância descartável de MP4Box até `onReady`
+// disparar (encontrou a caixa moov) ou `maxBytes` ser excedido. Ficheiros "faststart" (moov no
+// início) resolvem-se logo na primeira leitura pequena; qualquer outro esgota o teto e quem chama
+// cai para um remux faststart.
+async function probeMp4Ready(path, mp4box, maxBytes){
+  let prefixSize = 4*1024*1024;
+  while(prefixSize <= maxBytes){
+    const buf = await readFileRangeBuffer(path, 0, prefixSize-1);
+    const mp4boxfile = mp4box.createFile();
+    const info = await new Promise((resolve) => {
+      mp4boxfile.onReady = (i) => resolve(i);
+      mp4boxfile.onError = () => resolve(null);
+      mp4boxfile.appendBuffer(buf);
+    });
+    if(info) return {mp4boxfile, info};
+    if(buf.byteLength < prefixSize) return null; // já chegámos ao fim do ficheiro sem achar moov
+    prefixSize *= 4;
+  }
+  return null;
+}
+
+// Uma preparação por vídeo-fonte, em cache — para que "Exportar tudo" sonde/remuxe uma vez só, não
+// uma vez por clip.
+let fastDemuxCache = null; // {forOriginalPath, path, mp4box, mp4boxfile, info}
+async function ensureFastDemuxSource(){
+  if(!isElectron() || !currentPlaybackPath || !electronVideoSourcePath) return null;
+  if(fastDemuxCache && fastDemuxCache.forOriginalPath === electronVideoSourcePath) return fastDemuxCache;
+
+  const mp4box = await loadMp4Box();
+  const PROBE_CEILING = 64*1024*1024;
+  let path = currentPlaybackPath;
+  let ready = await probeMp4Ready(path, mp4box, PROBE_CEILING);
+  if(!ready){
+    let faststartPath = await window.api.getFaststartCachePath(electronVideoSourcePath);
+    if(!faststartPath){
+      faststartPath = await window.api.remuxToFaststart({
+        playablePath: currentPlaybackPath, cacheKeyPath: electronVideoSourcePath
+      });
+    }
+    path = faststartPath;
+    ready = await probeMp4Ready(path, mp4box, PROBE_CEILING);
+    if(!ready) throw new Error('Não foi possível indexar este vídeo para captura rápida.');
+  }
+  fastDemuxCache = {forOriginalPath: electronVideoSourcePath, path, mp4box, mp4boxfile: ready.mp4boxfile, info: ready.info};
+  return fastDemuxCache;
+}
+
+// Bytes de descrição (avcC/hvcC) que o WebCodecs precisa a par da string de codec RFC6381 que o
+// mp4box já dá — padrão standard de extração para mp4box.js + WebCodecs: escreve a caixa completa
+// para um DataStream e descarta os 8 bytes do cabeçalho da própria caixa (tamanho+tipo).
+function getCodecDescription(mp4box, mp4boxfile, trackId){
+  const trak = mp4boxfile.getTrackById(trackId);
+  const entry = trak.mdia.minf.stbl.stsd.entries[0];
+  const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
+  if(!box) return undefined;
+  const stream = new mp4box.DataStream(undefined, 0, mp4box.Endianness.BIG_ENDIAN);
+  box.write(stream);
+  return new Uint8Array(stream.buffer, 8);
+}
+
+// Replica o algoritmo interno de seek do mp4box.js (procurar a amostra RAP/keyframe mais próxima
+// antes de `targetSec`) para decidirmos nós mesmos o índice de arranque — em vez de chamar
+// mp4boxfile.seek() (que mexe em TODAS as tracks, incluindo áudio, e cujo offset devolvido não é
+// especificamente o que precisamos), mantemos o controlo total do intervalo de bytes a pedir.
+function findRapSampleIndex(samples, timescale, targetSec){
+  let seekIdx = 0, rapIdx = 0;
+  for(let j=0;j<samples.length;j++){
+    const sample = samples[j];
+    if(j===0){ seekIdx = 0; }
+    else if(sample.cts > targetSec*timescale){ seekIdx = j-1; break; }
+    else { seekIdx = j; }
+    if(sample.is_sync) rapIdx = j;
+  }
+  return rapIdx;
+}
+function findEndSampleIndex(samples, timescale, targetSec){
+  let idx = 0;
+  for(let j=0;j<samples.length;j++){
+    if(samples[j].cts <= targetSec*timescale) idx = j; else break;
+  }
+  return Math.min(samples.length-1, idx+1); // +1: margem de segurança para arredondamentos
+}
+
+async function decodeClipViaWebCodecs(tag, fps, onProgress){
+  const demux = await ensureFastDemuxSource();
+  if(!demux) throw new Error('Sem fonte de vídeo elegível para captura rápida.');
+  const { mp4box, mp4boxfile, info } = demux;
+  const videoTrackInfo = info.videoTracks && info.videoTracks[0];
+  if(!videoTrackInfo) throw new Error('Sem track de vídeo.');
+  const trackId = videoTrackInfo.id;
+  const trak = mp4boxfile.getTrackById(trackId);
+  const samples = trak.samples;
+  if(!samples || !samples.length) throw new Error('Sem amostras de vídeo.');
+  const timescale = samples[0].timescale;
+
+  const description = getCodecDescription(mp4box, mp4boxfile, trackId);
+  // 'prefer-hardware' sounds like the obvious choice, but on a machine without a hardware decoder
+  // for this codec/profile some Chromium builds report isConfigSupported as UNSUPPORTED outright
+  // (confirmed empirically — Playwright's headless Chromium reports {supported:false} for
+  // 'prefer-hardware' on a plain H.264 stream, while 'no-preference' correctly reports
+  // {supported:true} for the exact same codec) rather than gracefully degrading to software. That
+  // would silently and permanently disable this whole path on such machines — always falling back
+  // to the old method with no visible error — for the exact opposite of what "prefer" suggests.
+  // 'no-preference' still uses hardware decode when it's actually available and beneficial.
+  const decoderConfig = { codec: videoTrackInfo.codec, description, hardwareAcceleration: 'no-preference' };
+  const support = await VideoDecoder.isConfigSupported(decoderConfig);
+  if(!support.supported) throw new Error('Codec não suportado pelo WebCodecs: '+videoTrackInfo.codec);
+
+  // Pequeno lookback antes de tag.inSec para garantir que há sempre uma keyframe anterior dentro
+  // do intervalo pedido — sem isto, um clip a começar mesmo em cima (ou perto) de uma keyframe
+  // podia ficar sem contexto de descodificação suficiente.
+  const lookbackSec = Math.max(0, tag.inSec - 2);
+  const startIdx = findRapSampleIndex(samples, timescale, lookbackSec);
+  const endIdx = findEndSampleIndex(samples, timescale, tag.outSec);
+  if(endIdx < startIdx) throw new Error('Intervalo de amostras inválido.');
+  const sampleCount = endIdx - startIdx + 1;
+
+  let minOffset = Infinity, maxEnd = 0;
+  for(let i=startIdx; i<=endIdx; i++){
+    minOffset = Math.min(minOffset, samples[i].offset);
+    maxEnd = Math.max(maxEnd, samples[i].offset + samples[i].size);
+  }
+
+  mp4boxfile.unsetExtractionOptions(trackId);
+  mp4boxfile.setExtractionOptions(trackId, null, {nbSamples: sampleCount});
+  trak.nextSample = startIdx; // setExtractionOptions acima repôs isto a 0 — reposicionar à keyframe
+  mp4boxfile.start();
+
+  const rangeBuf = await readFileRangeBuffer(demux.path, minOffset, maxEnd-1);
+
+  const decodedSamples = await new Promise((resolve, reject) => {
+    mp4boxfile.onError = (e) => reject(new Error('Erro mp4box: '+e));
+    mp4boxfile.onSamples = (id, user, decoded) => resolve(decoded);
+    try{ mp4boxfile.appendBuffer(rangeBuf, true); }
+    catch(err){ reject(err); }
+  });
+  if(!decodedSamples || decodedSamples.length !== sampleCount){
+    throw new Error('Amostras de vídeo incompletas para este intervalo.');
+  }
+
+  const exportCanvas = document.createElement('canvas');
+  exportCanvas.width = videoTrackInfo.track_width || videoEl.videoWidth || 1280;
+  exportCanvas.height = videoTrackInfo.track_height || videoEl.videoHeight || 720;
+  const ectx = exportCanvas.getContext('2d');
+  const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
+  const frameInterval = 1/fps;
+  const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
+  const frames = [];
+  let nextSampleTime = tag.inSec;
+  let freezeIdx = 0;
+  let decodeError = null;
+
+  let lastFrameJpeg = null;
+  function captureUpTo(atSec, source){
+    while(nextSampleTime <= atSec && nextSampleTime <= tag.outSec + 1e-6){
+      const frame = drawExportFrame(ectx, exportCanvas, tag, nextSampleTime, source);
+      lastFrameJpeg = frame;
+      frames.push(frame);
+      onProgress(Math.min(99, Math.round((nextSampleTime-tag.inSec)/totalSec*100)));
+      while(freezeIdx < freezes.length && freezes[freezeIdx].atSec <= nextSampleTime){
+        const holdFrames = Math.max(1, Math.round(Math.max(0, freezes[freezeIdx].holdSec) * fps));
+        for(let h=0; h<holdFrames; h++) frames.push(frame);
+        freezeIdx++;
+      }
+      nextSampleTime += frameInterval;
+    }
+  }
+
+  const decoder = new VideoDecoder({
+    output(frame){
+      try{
+        const atSec = frame.timestamp/1e6;
+        // Amostras antes de tag.inSec só existem para dar contexto de descodificação (lookback até
+        // à keyframe anterior) — nunca desenhadas, só avançam o descodificador.
+        if(atSec >= tag.inSec) captureUpTo(Math.min(atSec, tag.outSec), frame);
+      }catch(err){ decodeError = err; }
+      finally{ frame.close(); }
+    },
+    error(err){ decodeError = err; }
+  });
+  decoder.configure(decoderConfig);
+  for(const sample of decodedSamples){
+    decoder.decode(new EncodedVideoChunk({
+      type: sample.is_sync ? 'key' : 'delta',
+      timestamp: Math.round(sample.cts/timescale*1e6),
+      duration: Math.round(sample.duration/timescale*1e6),
+      data: sample.data
+    }));
+  }
+  await decoder.flush();
+  decoder.close();
+  if(decodeError) throw decodeError;
+
+  if(lastFrameJpeg && (!frames.length || (tag.outSec - tag.inSec) > (frames.length/fps) + frameInterval)){
+    // Repete o último frame já desenhado (equivalente ao "backfill" do método de reprodução) em
+    // vez de redesenhar — o canvas já foi fechado como VideoFrame, e redesenhar aplicaria as
+    // shapes ativas uma segunda vez por cima das já pintadas nesse frame.
+    frames.push(lastFrameJpeg);
+  }
+  onProgress(100);
+  return frames;
+}
+
+// Draws one export frame (video/decoded-frame + zoom crop + active shapes) onto the offscreen
+// export canvas and returns it as a base64 JPEG — shared by both capture methods below, which
+// differ only in WHERE `source` comes from (the live <video> element vs. a WebCodecs VideoFrame).
+// `ctx.drawImage()` accepts either as a CanvasImageSource, so this needs no branching on its own.
+function drawExportFrame(ectx, exportCanvas, tag, atTime, source){
+  const zoom = tag.zoom;
+  if(zoom && zoom.scale > 1){
+    const sw = exportCanvas.width/zoom.scale, sh = exportCanvas.height/zoom.scale;
+    const sx = clamp((exportCanvas.width-sw)/2 - zoom.panX*exportCanvas.width, 0, exportCanvas.width-sw);
+    const sy = clamp((exportCanvas.height-sh)/2 - zoom.panY*exportCanvas.height, 0, exportCanvas.height-sh);
+    ectx.drawImage(source, sx, sy, sw, sh, 0, 0, exportCanvas.width, exportCanvas.height);
+  } else {
+    ectx.drawImage(source, 0, 0, exportCanvas.width, exportCanvas.height);
+  }
+  (tag.shapes||[]).forEach(s => {
+    const start = s.startSec!=null ? s.startSec : tag.inSec;
+    const end = s.endSec!=null ? s.endSec : tag.outSec;
+    if(atTime>=start && atTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
+  });
+  return exportCanvas.toDataURL('image/jpeg', 0.88).split(',')[1];
+}
+
+// Captures a clip as a JPEG-per-frame sequence. Tries decodeClipViaWebCodecs first (see the
+// "CAPTURA RÁPIDA (WEBCODECS)" section above) — decoding directly instead of asking <video> to
+// "play" it, so there's no real-time playback pacing to stall on. Any failure there (unsupported
+// codec, WebCodecs unavailable, a demux/decode bug) transparently falls back to the proven
+// playback-based method below, so this can never behave worse than it already did.
 async function captureClipFrames(tag, fps, onProgress){
+  if(isElectron() && typeof VideoDecoder !== 'undefined'){
+    try{
+      // A generous but finite ceiling: if something in the new path hangs instead of erroring
+      // outright (e.g. a byte-range miscalculation leaving mp4box waiting for data that never
+      // arrives), this guarantees a fall back to the known-good method instead of a stuck export.
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Captura rápida excedeu o tempo limite')), 25000));
+      return await Promise.race([decodeClipViaWebCodecs(tag, fps, onProgress), timeout]);
+    }catch(err){
+      console.warn('LINHA: captura rápida via WebCodecs falhou, a usar o método de reprodução.', err);
+    }
+  }
+  return captureClipFramesViaPlayback(tag, fps, onProgress);
+}
+
+// Plays the clip forward for real (muted, at a high playbackRate) and grabs each decoded frame via
+// requestVideoFrameCallback, using its exact mediaTime — not the older approach of seeking to each
+// 1/fps instant one at a time. A seek pays a real cost every time (locate the nearest keyframe,
+// decode forward to the exact target), and paying that ~N times per clip was the actual reason
+// export felt endless. Sequential decode during playback is what the video pipeline is built for
+// and avoids that cost almost entirely; requestVideoFrameCallback's own delivery rate — not a
+// fixed timer — paces how fast frames come in, and a frame is captured for every fps-aligned
+// instant that's now behind the playhead, backfilling with the just-decoded frame if the pipeline
+// delivered several at once (normal at high playbackRate — the picture just doesn't change between
+// those samples, same as a freeze hold). JPEG, not PNG: these are throwaway intermediates that
+// ffmpeg re-encodes to H.264 (itself lossy) a moment later, so PNG's lossless compression buys
+// nothing here.
+async function captureClipFramesViaPlayback(tag, fps, onProgress){
   const exportCanvas = document.createElement('canvas');
   exportCanvas.width = videoEl.videoWidth || 1280;
   exportCanvas.height = videoEl.videoHeight || 720;
@@ -4557,21 +4847,7 @@ async function captureClipFrames(tag, fps, onProgress){
   const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
 
   function drawFrame(atTime){
-    const zoom = tag.zoom;
-    if(zoom && zoom.scale > 1){
-      const sw = exportCanvas.width/zoom.scale, sh = exportCanvas.height/zoom.scale;
-      const sx = clamp((exportCanvas.width-sw)/2 - zoom.panX*exportCanvas.width, 0, exportCanvas.width-sw);
-      const sy = clamp((exportCanvas.height-sh)/2 - zoom.panY*exportCanvas.height, 0, exportCanvas.height-sh);
-      ectx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, exportCanvas.width, exportCanvas.height);
-    } else {
-      ectx.drawImage(videoEl, 0, 0, exportCanvas.width, exportCanvas.height);
-    }
-    (tag.shapes||[]).forEach(s => {
-      const start = s.startSec!=null ? s.startSec : tag.inSec;
-      const end = s.endSec!=null ? s.endSec : tag.outSec;
-      if(atTime>=start && atTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
-    });
-    return exportCanvas.toDataURL('image/jpeg', 0.88).split(',')[1];
+    return drawExportFrame(ectx, exportCanvas, tag, atTime, videoEl);
   }
 
   // Older/unusual runtimes without requestVideoFrameCallback fall back to the slower but

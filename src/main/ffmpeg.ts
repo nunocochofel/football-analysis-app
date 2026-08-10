@@ -162,6 +162,52 @@ export async function transcodeForPlayback(
   return outputPath
 }
 
+// Fast clip capture (see captureClipFrames/decodeClipViaWebCodecs in the renderer) demuxes the
+// currently-playable file directly with mp4box.js instead of asking <video> to "play" it, so it
+// needs to find the `moov` box (the sample index) cheaply — only guaranteed if it's at the START
+// of the file ("faststart"). Camera/OBS recordings very often have it at the end instead. Rather
+// than always remuxing up front (wasted work for files that already happen to be faststart), the
+// renderer tries a small ranged read first and only asks for this remux if that comes up empty.
+// `-c copy` makes this a pure container rewrite (no re-encode), so it's fast even on a huge file —
+// it never reads/rewrites the actual video bitstream, just relocates+rewrites headers. Cached by a
+// hash of the ORIGINAL source path (same key `transcodedCachePath` uses) so it's discoverable
+// again next session regardless of whether `playablePath` was the original file or an already-
+// transcoded playback copy at remux time.
+export function faststartCachePath(sourcePath: string): string {
+  const hash = createHash('sha1').update(sourcePath).digest('hex').slice(0, 16)
+  return join(playbackCacheDir(), `${hash}.faststart.mp4`)
+}
+export function hasFaststartCache(sourcePath: string): boolean {
+  return existsSync(faststartCachePath(sourcePath))
+}
+export async function remuxToFaststart(
+  playablePath: string,
+  cacheKeyPath: string,
+  onProgress: (percent: number) => void
+): Promise<string> {
+  await mkdir(playbackCacheDir(), { recursive: true })
+  const outputPath = faststartCachePath(cacheKeyPath)
+  const tmpOutputPath = outputPath + '.tmp'
+  // A stream copy is fast enough (seconds, even on a huge file) that a real percentage isn't
+  // worth an extra ffprobe call just to get a duration to divide by — a single "started" tick
+  // is enough for the renderer to know this step is the one currently running.
+  onProgress(1)
+  await runProcess(ffmpegPath, [
+    '-y',
+    '-i',
+    playablePath,
+    '-c',
+    'copy',
+    '-movflags',
+    '+faststart',
+    '-f',
+    'mp4',
+    tmpOutputPath
+  ])
+  await rename(tmpOutputPath, outputPath)
+  return outputPath
+}
+
 export async function probeVideo(filePath: string): Promise<VideoProbeResult> {
   const out = await runProcess(ffprobePath.path, [
     '-v',

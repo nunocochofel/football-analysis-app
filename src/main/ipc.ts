@@ -1,4 +1,5 @@
 import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron'
+import { createReadStream } from 'fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -12,7 +13,10 @@ import {
   exportImageSequence,
   hasTranscodedCache,
   transcodedCachePath,
-  transcodeForPlayback
+  transcodeForPlayback,
+  hasFaststartCache,
+  faststartCachePath,
+  remuxToFaststart
 } from './ffmpeg'
 import { zipClipsByCategory } from './archive'
 import * as q from './db/queries'
@@ -126,6 +130,36 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       e.sender.send('video:transcodeProgress', percent)
     })
   )
+
+  // Fast clip capture (WebCodecs demux/decode in the renderer) needs the currently-playable file
+  // to have its `moov` box up front — see the big comment above remuxToFaststart() in ffmpeg.ts.
+  // Same check-then-create split as the playback cache pair above.
+  ipcMain.handle('video:getFaststartCachePath', (_e, sourcePath: string) =>
+    hasFaststartCache(sourcePath) ? faststartCachePath(sourcePath) : null
+  )
+  ipcMain.handle(
+    'video:remuxToFaststart',
+    (e, args: { playablePath: string; cacheKeyPath: string }) =>
+      remuxToFaststart(args.playablePath, args.cacheKeyPath, (percent) => {
+        e.sender.send('video:remuxProgress', percent)
+      })
+  )
+
+  // Chromium's fetch() hard-refuses the file: scheme outright ("URL scheme 'file' is not
+  // supported") — not a CORS/origin restriction that could be worked around, just unsupported —
+  // so the renderer can't Range-fetch the local video file itself for WebCodecs demuxing. Reading
+  // the exact byte range here via Node's fs sidesteps that entirely, and is the only real change
+  // this forces: everything else about the fast-capture design (probe a small prefix, read exactly
+  // the mdat range a clip's samples need) stays the same either way.
+  ipcMain.handle('video:readFileRange', (_e, args: { path: string; start: number; end: number }) => {
+    return new Promise<Uint8Array>((resolve, reject) => {
+      const chunks: Buffer[] = []
+      const stream = createReadStream(args.path, { start: args.start, end: args.end })
+      stream.on('data', (chunk) => chunks.push(chunk as Buffer))
+      stream.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
+      stream.on('error', reject)
+    })
+  })
 
   // Fast clip export: the renderer already did the slow part (seeking frame-by-frame and drawing
   // video+shapes+zoom onto a canvas) and just hands over the resulting PNG sequence — this turns
