@@ -1,7 +1,7 @@
 import { spawn } from 'child_process'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { existsSync } from 'fs'
-import { mkdir, mkdtemp, rename, rm, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, rename, rm, stat, unlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { app } from 'electron'
@@ -51,6 +51,63 @@ function parseFfmpegTimeSec(line: string): number | null {
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4]) / 100
 }
 
+// Hardware H.264 encoding: the bundled ffmpeg has NVENC/QuickSync/AMF (Windows) and VideoToolbox
+// (macOS) compiled in, but whether any of them actually WORK depends on the machine's real GPU
+// and drivers — the codec being present in `ffmpeg -encoders` proves nothing on its own. Detected
+// once per app run (a real ~0.2s test encode per candidate, cheapest way to know for sure) and
+// cached, rather than re-probed on every clip export. libx264 (plain CPU) is the universal
+// fallback — always tried if the detected hardware encoder ever fails on a real export too, so a
+// GPU/driver hiccup degrades an export's speed, never breaks it outright.
+type HwEncoder = { codec: string; args: string[] }
+let cachedHwEncoder: HwEncoder | null | undefined // undefined = not probed yet this run
+
+async function probeEncoder(codec: string, args: string[]): Promise<boolean> {
+  const testOut = join(tmpdir(), `hwenc-probe-${randomUUID()}.mp4`)
+  try {
+    await runProcess(ffmpegPath, [
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=black:size=64x64:duration=0.2:rate=5',
+      '-frames:v',
+      '1',
+      '-c:v',
+      codec,
+      ...args,
+      '-f',
+      'mp4',
+      testOut
+    ])
+    const st = await stat(testOut).catch(() => null)
+    return !!st && st.size > 0
+  } catch {
+    return false
+  } finally {
+    await unlink(testOut).catch(() => {})
+  }
+}
+
+async function detectHardwareEncoder(): Promise<HwEncoder | null> {
+  if (cachedHwEncoder !== undefined) return cachedHwEncoder
+  const candidates: HwEncoder[] =
+    process.platform === 'darwin'
+      ? [{ codec: 'h264_videotoolbox', args: ['-b:v', '6M'] }]
+      : [
+          { codec: 'h264_nvenc', args: ['-rc', 'vbr', '-cq', '20', '-b:v', '0'] },
+          { codec: 'h264_qsv', args: ['-global_quality', '20'] },
+          { codec: 'h264_amf', args: ['-rc', 'cqp', '-qp_i', '20', '-qp_p', '20'] }
+        ]
+  for (const candidate of candidates) {
+    if (await probeEncoder(candidate.codec, candidate.args)) {
+      cachedHwEncoder = candidate
+      return candidate
+    }
+  }
+  cachedHwEncoder = null
+  return null
+}
+
 // Playback fallback: some codecs a camera phone records with (HEVC/H.265 in a .mov being the
 // most common case — the iPhone default since ~2017) have no decoder bundled in Chromium, so the
 // native <video> element can never play them no matter how the file is loaded. ffmpeg itself has
@@ -79,14 +136,26 @@ export async function transcodeForPlayback(
   // has none it recognizes ("Unable to choose an output format"), so -f mp4 pins it explicitly
   // regardless of what the temp filename looks like.
   const tmpOutputPath = outputPath + '.tmp'
-  await runProcess(
-    ffmpegPath,
-    ['-y', '-i', sourcePath, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-f', 'mp4', tmpOutputPath],
-    (line) => {
+  function buildArgs(hw: HwEncoder | null): string[] {
+    const videoArgs = hw ? ['-c:v', hw.codec, ...hw.args] : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20']
+    return ['-y', '-i', sourcePath, ...videoArgs, '-c:a', 'aac', '-f', 'mp4', tmpOutputPath]
+  }
+  async function runTranscode(hw: HwEncoder | null): Promise<void> {
+    await runProcess(ffmpegPath, buildArgs(hw), (line) => {
       const t = parseFfmpegTimeSec(line)
       if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
+    })
+  }
+  const hw = await detectHardwareEncoder()
+  try {
+    await runTranscode(hw)
+  } catch (err) {
+    if (hw) {
+      await runTranscode(null)
+    } else {
+      throw err
     }
-  )
+  }
   // Renamed into place only once fully written, so a half-converted file left behind by a crash
   // or force-quit mid-transcode is never mistaken for a valid cache hit on the next attempt.
   await rename(tmpOutputPath, outputPath)
@@ -174,24 +243,47 @@ export async function exportClipFramesWithAudio(
     const tmpOutputPath = outputPath + '.tmp'
     const hasAudio = !!sourceVideoPath && audioOutSec > audioInSec
 
-    const args = ['-y', '-framerate', String(fps), '-i', pattern]
-    if (hasAudio) {
-      args.push('-ss', String(audioInSec), '-to', String(audioOutSec), '-i', sourceVideoPath as string)
+    function buildArgs(hw: HwEncoder | null): string[] {
+      const args = ['-y', '-framerate', String(fps), '-i', pattern]
+      if (hasAudio) {
+        args.push('-ss', String(audioInSec), '-to', String(audioOutSec), '-i', sourceVideoPath as string)
+      }
+      args.push('-map', '0:v')
+      if (hasAudio) args.push('-map', '1:a?')
+      if (hw) {
+        args.push('-c:v', hw.codec, ...hw.args, '-pix_fmt', 'yuv420p')
+      } else {
+        args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p')
+      }
+      if (hasAudio) args.push('-c:a', 'aac', '-b:a', '192k', '-shortest')
+      // ffmpeg picks the output container purely from the filename's last extension — "*.mp4.tmp"
+      // has none it recognizes ("Unable to choose an output format"), so -f mp4 pins it explicitly.
+      // This was the actual cause of "Não foi possível concluir a exportação": every export failed
+      // at this exact ffmpeg invocation, regardless of anything upstream (frames, audio, JPEG vs PNG).
+      args.push('-movflags', '+faststart', '-f', 'mp4', tmpOutputPath)
+      return args
     }
-    args.push('-map', '0:v')
-    if (hasAudio) args.push('-map', '1:a?')
-    args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p')
-    if (hasAudio) args.push('-c:a', 'aac', '-b:a', '192k', '-shortest')
-    // ffmpeg picks the output container purely from the filename's last extension — "*.mp4.tmp"
-    // has none it recognizes ("Unable to choose an output format"), so -f mp4 pins it explicitly.
-    // This was the actual cause of "Não foi possível concluir a exportação": every export failed
-    // at this exact ffmpeg invocation, regardless of anything upstream (frames, audio, JPEG vs PNG).
-    args.push('-movflags', '+faststart', '-f', 'mp4', tmpOutputPath)
 
-    await runProcess(ffmpegPath, args, (line) => {
-      const t = parseFfmpegTimeSec(line)
-      if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
-    })
+    async function runEncode(hw: HwEncoder | null): Promise<void> {
+      await runProcess(ffmpegPath, buildArgs(hw), (line) => {
+        const t = parseFfmpegTimeSec(line)
+        if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
+      })
+    }
+
+    const hw = await detectHardwareEncoder()
+    try {
+      await runEncode(hw)
+    } catch (err) {
+      // A codec passing the earlier lightweight probe doesn't guarantee it survives a real encode
+      // (driver quirks under load, VRAM limits, etc.) — if the hardware path fails here, fall back
+      // to libx264 once rather than losing the export outright.
+      if (hw) {
+        await runEncode(null)
+      } else {
+        throw err
+      }
+    }
     await rename(tmpOutputPath, outputPath)
   } finally {
     await rm(workDir, { recursive: true, force: true })
