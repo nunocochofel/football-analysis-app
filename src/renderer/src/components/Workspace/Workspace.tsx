@@ -225,46 +225,18 @@ export default function Workspace({ match: initialMatch, onBack }: Props): JSX.E
     })
   }
 
+  // This prototype shell isn't loaded at runtime (see the comment above createWindow() in
+  // src/main/index.ts — the LINHA single-file app is what actually ships) and its own export
+  // main-process functions (cutClip/exportSequence) were removed as dead code during the LINHA
+  // export-system rewrite. Kept as inert stubs, not deleted along with them, so this component
+  // stays reversible/buildable per that same comment's intent, rather than reviving unused IPC
+  // surface just to keep two unreachable handlers technically functional.
   async function handleExportSelected(): Promise<void> {
-    if (!match.videoPath) return
-    const segments = events
-      .filter((e) => selectedForExport.has(e.id))
-      .sort((a, b) => a.startSec - b.startSec)
-      .map((e) => ({
-        startSec: Math.max(0, e.startSec - 3),
-        endSec: Math.min(duration, (e.endSec > e.startSec ? e.endSec : e.startSec) + 3)
-      }))
-    if (segments.length === 0) {
-      setStatus('Seleciona pelo menos um evento na timeline para exportar.')
-      return
-    }
-    const outputPath = await window.api.saveExport()
-    if (!outputPath) return
-    setStatus('A exportar...')
-    try {
-      await window.api.exportSequence({ matchVideoPath: match.videoPath, segments, outputPath })
-      setStatus(`Exportado com sucesso: ${outputPath}`)
-    } catch (err) {
-      setStatus(`Erro ao exportar: ${(err as Error).message}`)
-    }
+    setStatus('Exportação de sequência foi movida para a aplicação LINHA — este protótipo já não a suporta.')
   }
 
   async function handleExportInOut(): Promise<void> {
-    if (!match.videoPath || inSec == null || outSec == null) return
-    const outputPath = await window.api.saveExport()
-    if (!outputPath) return
-    setStatus('A exportar clip...')
-    try {
-      await window.api.cutClip({
-        sourcePath: match.videoPath,
-        startSec: Math.min(inSec, outSec),
-        endSec: Math.max(inSec, outSec),
-        outputPath
-      })
-      setStatus(`Clip exportado: ${outputPath}`)
-    } catch (err) {
-      setStatus(`Erro ao exportar: ${(err as Error).message}`)
-    }
+    setStatus('Exportação de clip foi movida para a aplicação LINHA — este protótipo já não a suporta.')
   }
 
   const teamName = (id: number): string => teams.find((t) => t.id === id)?.name ?? '—'

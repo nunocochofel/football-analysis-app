@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   DrawingShape,
   EventRecord,
-  ExportClipRequest,
   ExportTacticFramesRequest,
   Match,
   Player,
@@ -18,9 +17,6 @@ const api = {
   saveExport: (): Promise<string | null> => ipcRenderer.invoke('dialog:saveExport'),
 
   probeVideo: (filePath: string): Promise<VideoProbeResult> => ipcRenderer.invoke('video:probe', filePath),
-  cutClip: (args: { sourcePath: string; startSec: number; endSec: number; outputPath: string }): Promise<void> =>
-    ipcRenderer.invoke('video:cutClip', args),
-  exportSequence: (args: ExportClipRequest): Promise<void> => ipcRenderer.invoke('video:exportSequence', args),
   saveTacticExport: (format: 'mp4' | 'gif'): Promise<string | null> =>
     ipcRenderer.invoke('dialog:saveTacticExport', format),
   exportTacticFrames: (args: ExportTacticFramesRequest): Promise<void> =>
@@ -32,19 +28,8 @@ const api = {
   onTranscodeProgress: (cb: (percent: number) => void): void => {
     ipcRenderer.on('video:transcodeProgress', (_e, percent: number) => cb(percent))
   },
-  getFaststartCachePath: (sourcePath: string): Promise<string | null> =>
-    ipcRenderer.invoke('video:getFaststartCachePath', sourcePath),
-  remuxToFaststart: (args: { playablePath: string; cacheKeyPath: string }): Promise<string> =>
-    ipcRenderer.invoke('video:remuxToFaststart', args),
-  onRemuxProgress: (cb: (percent: number) => void): void => {
-    ipcRenderer.on('video:remuxProgress', (_e, percent: number) => cb(percent))
-  },
-  readFileRange: (args: { path: string; start: number; end: number }): Promise<Uint8Array> =>
-    ipcRenderer.invoke('video:readFileRange', args),
 
-  saveClipExport: (suggestedName: string): Promise<string | null> =>
-    ipcRenderer.invoke('dialog:saveClipExport', suggestedName),
-  saveClipZip: (): Promise<string | null> => ipcRenderer.invoke('dialog:saveClipZip'),
+  selectExportFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:selectExportFolder'),
   exportClipFrames: (args: {
     frames: string[]
     fps: number
@@ -54,16 +39,20 @@ const api = {
     outputPath?: string
     folderPath?: string
     filename?: string
+    resolution: 'original' | '1080p' | '720p'
+    quality: 'high' | 'balanced' | 'small'
+    jobId: string
   }): Promise<string> => ipcRenderer.invoke('video:exportClipFrames', args),
-  beginBatchExport: (): Promise<string> => ipcRenderer.invoke('video:beginBatchExport'),
-  finishBatchExportZip: (args: {
-    tempDir: string
-    entries: { tempPath: string; categoryLabel: string; filename: string }[]
-    outputZipPath: string
-  }): Promise<string> => ipcRenderer.invoke('video:finishBatchExportZip', args),
-  onExportProgress: (cb: (percent: number) => void): void => {
-    ipcRenderer.on('video:exportProgress', (_e, percent: number) => cb(percent))
+  cancelExport: (jobId: string): Promise<boolean> => ipcRenderer.invoke('video:cancelExport', jobId),
+  concatClips: (args: { clipPaths: string[]; outputPath: string }): Promise<void> =>
+    ipcRenderer.invoke('video:concatClips', args),
+  onExportProgress: (cb: (jobId: string, percent: number) => void): void => {
+    ipcRenderer.on('video:exportProgress', (_e, data: { jobId: string; percent: number }) =>
+      cb(data.jobId, data.percent)
+    )
   },
+  fileExists: (filePath: string): Promise<boolean> => ipcRenderer.invoke('fs:fileExists', filePath),
+  showItemInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showItemInFolder', filePath),
 
   writeProjectBackup: (args: { projectId: string; projectName: string; payload: unknown }): Promise<string> =>
     ipcRenderer.invoke('project:writeBackup', args),

@@ -1,4 +1,4 @@
-import { spawn } from 'child_process'
+import { spawn, type ChildProcess } from 'child_process'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync } from 'fs'
 import { mkdir, mkdtemp, rename, rm, stat, unlink, writeFile } from 'fs/promises'
@@ -22,9 +22,21 @@ function unpackAsarPath(p: string): string {
 const ffmpegPath = unpackAsarPath(ffmpegPathRaw as unknown as string)
 const ffprobePath = { path: unpackAsarPath(ffprobeStatic.path) }
 
-function runProcess(bin: string, args: string[], onStderrLine?: (line: string) => void): Promise<string> {
+// Thrown (with this exact message) when a tracked export job's process was killed via
+// cancelExportJob() rather than failing on its own — callers check for this to skip the
+// libx264-fallback-on-failure behavior (a cancel should stay cancelled, not silently keep
+// exporting on CPU) and to show the renderer a distinct "cancelled" state instead of an error.
+export const EXPORT_CANCELLED_MESSAGE = 'EXPORT_CANCELLED'
+
+function runProcess(
+  bin: string,
+  args: string[],
+  onStderrLine?: (line: string) => void,
+  onProcess?: (proc: ChildProcess) => void
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(bin, args)
+    onProcess?.(proc)
     let stdout = ''
     let stderr = ''
     proc.stdout.on('data', (d) => (stdout += d.toString()))
@@ -38,9 +50,22 @@ function runProcess(bin: string, args: string[], onStderrLine?: (line: string) =
     proc.on('error', reject)
     proc.on('close', (code) => {
       if (code === 0) resolve(stdout)
+      else if (proc.killed) reject(new Error(EXPORT_CANCELLED_MESSAGE))
       else reject(new Error(`${bin} exited with code ${code}: ${stderr.slice(-2000)}`))
     })
   })
+}
+
+// Export jobs (the ffmpeg encode step of exportClipFramesWithAudio) are tracked by a renderer-
+// generated jobId so a queue item's "Cancelar" action can reach the right in-flight process —
+// the renderer's own capture loop has its own, separate cancel checkpoint (a flag checked at its
+// existing per-frame yield point) for the capture phase that happens before this even starts.
+const activeExportJobs = new Map<string, ChildProcess>()
+export function cancelExportJob(jobId: string): boolean {
+  const proc = activeExportJobs.get(jobId)
+  if (!proc) return false
+  proc.kill()
+  return true
 }
 
 // ffmpeg's own progress lines (with -stats, on by default) look like:
@@ -162,52 +187,6 @@ export async function transcodeForPlayback(
   return outputPath
 }
 
-// Fast clip capture (see captureClipFrames/decodeClipViaWebCodecs in the renderer) demuxes the
-// currently-playable file directly with mp4box.js instead of asking <video> to "play" it, so it
-// needs to find the `moov` box (the sample index) cheaply — only guaranteed if it's at the START
-// of the file ("faststart"). Camera/OBS recordings very often have it at the end instead. Rather
-// than always remuxing up front (wasted work for files that already happen to be faststart), the
-// renderer tries a small ranged read first and only asks for this remux if that comes up empty.
-// `-c copy` makes this a pure container rewrite (no re-encode), so it's fast even on a huge file —
-// it never reads/rewrites the actual video bitstream, just relocates+rewrites headers. Cached by a
-// hash of the ORIGINAL source path (same key `transcodedCachePath` uses) so it's discoverable
-// again next session regardless of whether `playablePath` was the original file or an already-
-// transcoded playback copy at remux time.
-export function faststartCachePath(sourcePath: string): string {
-  const hash = createHash('sha1').update(sourcePath).digest('hex').slice(0, 16)
-  return join(playbackCacheDir(), `${hash}.faststart.mp4`)
-}
-export function hasFaststartCache(sourcePath: string): boolean {
-  return existsSync(faststartCachePath(sourcePath))
-}
-export async function remuxToFaststart(
-  playablePath: string,
-  cacheKeyPath: string,
-  onProgress: (percent: number) => void
-): Promise<string> {
-  await mkdir(playbackCacheDir(), { recursive: true })
-  const outputPath = faststartCachePath(cacheKeyPath)
-  const tmpOutputPath = outputPath + '.tmp'
-  // A stream copy is fast enough (seconds, even on a huge file) that a real percentage isn't
-  // worth an extra ffprobe call just to get a duration to divide by — a single "started" tick
-  // is enough for the renderer to know this step is the one currently running.
-  onProgress(1)
-  await runProcess(ffmpegPath, [
-    '-y',
-    '-i',
-    playablePath,
-    '-c',
-    'copy',
-    '-movflags',
-    '+faststart',
-    '-f',
-    'mp4',
-    tmpOutputPath
-  ])
-  await rename(tmpOutputPath, outputPath)
-  return outputPath
-}
-
 export async function probeVideo(filePath: string): Promise<VideoProbeResult> {
   const out = await runProcess(ffprobePath.path, [
     '-v',
@@ -232,31 +211,38 @@ export async function probeVideo(filePath: string): Promise<VideoProbeResult> {
   }
 }
 
-export async function cutClip(
-  sourcePath: string,
-  startSec: number,
-  endSec: number,
-  outputPath: string
-): Promise<void> {
-  const duration = Math.max(0, endSec - startSec)
-  await runProcess(ffmpegPath, [
-    '-y',
-    '-ss',
-    String(startSec),
-    '-i',
-    sourcePath,
-    '-t',
-    String(duration),
-    '-c:v',
-    'libx264',
-    '-preset',
-    'veryfast',
-    '-crf',
-    '18',
-    '-c:a',
-    'aac',
-    outputPath
-  ])
+export type ExportResolution = 'original' | '1080p' | '720p'
+export type ExportQuality = 'high' | 'balanced' | 'small'
+
+const CRF_BY_QUALITY: Record<ExportQuality, number> = { high: 18, balanced: 20, small: 24 }
+
+// Per-codec quality knobs are different shapes (CRF-like for nvenc/qsv/amf, bitrate-tiered for
+// videotoolbox, which has no per-frame quality control in older ffmpeg builds) — kept separate
+// from detectHardwareEncoder's own probe args (those only need to produce *a* valid frame quickly
+// to confirm the codec works at all; quality doesn't matter there).
+function hwQualityArgs(codec: string, quality: ExportQuality): string[] {
+  const crf = CRF_BY_QUALITY[quality]
+  switch (codec) {
+    case 'h264_nvenc':
+      return ['-rc', 'vbr', '-cq', String(crf), '-b:v', '0']
+    case 'h264_qsv':
+      return ['-global_quality', String(crf)]
+    case 'h264_amf':
+      return ['-rc', 'cqp', '-qp_i', String(crf), '-qp_p', String(crf)]
+    case 'h264_videotoolbox':
+      return ['-b:v', quality === 'high' ? '10M' : quality === 'balanced' ? '6M' : '3M']
+    default:
+      return []
+  }
+}
+
+// min(iw,W)/min(ih,H) before force_original_aspect_ratio=decrease is what actually prevents
+// upscaling — decrease alone still scales UP a smaller source to fill the target box; capping the
+// target to the source's own size first makes it a no-op whenever the source is already smaller.
+function scaleFilterArgs(resolution: ExportResolution): string[] {
+  if (resolution === 'original') return []
+  const [w, h] = resolution === '1080p' ? [1920, 1080] : [1280, 720]
+  return ['-vf', `scale=w='min(iw,${w})':h='min(ih,${h})':force_original_aspect_ratio=decrease:force_divisible_by=2`]
 }
 
 // Fast clip export: the renderer seeks the video frame-by-frame (not real-time playback) and
@@ -276,6 +262,9 @@ export async function exportClipFramesWithAudio(
   audioInSec: number,
   audioOutSec: number,
   outputPath: string,
+  resolution: ExportResolution,
+  quality: ExportQuality,
+  jobId: string,
   onProgress: (percent: number) => void
 ): Promise<void> {
   const workDir = await mkdtemp(join(tmpdir(), 'football-clip-frames-'))
@@ -296,10 +285,11 @@ export async function exportClipFramesWithAudio(
       }
       args.push('-map', '0:v')
       if (hasAudio) args.push('-map', '1:a?')
+      args.push(...scaleFilterArgs(resolution))
       if (hw) {
-        args.push('-c:v', hw.codec, ...hw.args, '-pix_fmt', 'yuv420p')
+        args.push('-c:v', hw.codec, ...hwQualityArgs(hw.codec, quality), '-pix_fmt', 'yuv420p')
       } else {
-        args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p')
+        args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(CRF_BY_QUALITY[quality]), '-pix_fmt', 'yuv420p')
       }
       if (hasAudio) args.push('-c:a', 'aac', '-b:a', '192k', '-shortest')
       // ffmpeg picks the output container purely from the filename's last extension — "*.mp4.tmp"
@@ -311,24 +301,33 @@ export async function exportClipFramesWithAudio(
     }
 
     async function runEncode(hw: HwEncoder | null): Promise<void> {
-      await runProcess(ffmpegPath, buildArgs(hw), (line) => {
-        const t = parseFfmpegTimeSec(line)
-        if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
-      })
+      await runProcess(
+        ffmpegPath,
+        buildArgs(hw),
+        (line) => {
+          const t = parseFfmpegTimeSec(line)
+          if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
+        },
+        (proc) => activeExportJobs.set(jobId, proc)
+      )
     }
 
     const hw = await detectHardwareEncoder()
     try {
       await runEncode(hw)
     } catch (err) {
-      // A codec passing the earlier lightweight probe doesn't guarantee it survives a real encode
-      // (driver quirks under load, VRAM limits, etc.) — if the hardware path fails here, fall back
-      // to libx264 once rather than losing the export outright.
-      if (hw) {
-        await runEncode(null)
-      } else {
+      // A cancelled job stays cancelled — never silently keep exporting on CPU after the user
+      // asked to stop. Otherwise: a codec passing the earlier lightweight probe doesn't guarantee
+      // it survives a real encode (driver quirks under load, VRAM limits, etc.) — if the hardware
+      // path fails here for a real reason, fall back to libx264 once rather than losing the
+      // export outright.
+      const cancelled = err instanceof Error && err.message === EXPORT_CANCELLED_MESSAGE
+      if (cancelled || !hw) {
         throw err
       }
+      await runEncode(null)
+    } finally {
+      activeExportJobs.delete(jobId)
     }
     await rename(tmpOutputPath, outputPath)
   } finally {
@@ -394,22 +393,18 @@ export async function exportImageSequence(
   }
 }
 
-export async function exportSequence(
-  sourcePath: string,
-  segments: { startSec: number; endSec: number }[],
-  outputPath: string
-): Promise<void> {
-  const workDir = await mkdtemp(join(tmpdir(), 'football-clips-'))
+// "Vídeo compilado": joins already-exported individual clips (in the order given) into one file.
+// A plain stream-copy concat (no re-encode) is valid and lossless here specifically because every
+// clip in one export batch was just encoded with the exact same codec/resolution/quality by
+// exportClipFramesWithAudio above — concat demuxer's -c copy requires matching stream parameters,
+// which this guarantees by construction.
+export async function concatClips(clipPaths: string[], outputPath: string): Promise<void> {
+  const workDir = await mkdtemp(join(tmpdir(), 'football-concat-'))
   try {
-    const clipPaths: string[] = []
-    for (let i = 0; i < segments.length; i++) {
-      const clipPath = join(workDir, `clip_${i}.mp4`)
-      await cutClip(sourcePath, segments[i].startSec, segments[i].endSec, clipPath)
-      clipPaths.push(clipPath)
-    }
     const listFile = join(workDir, 'list.txt')
     const listContent = clipPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n')
     await writeFile(listFile, listContent, 'utf-8')
+    const tmpOutputPath = outputPath + '.tmp'
     await runProcess(ffmpegPath, [
       '-y',
       '-f',
@@ -420,9 +415,13 @@ export async function exportSequence(
       listFile,
       '-c',
       'copy',
-      outputPath
+      '-f',
+      'mp4',
+      tmpOutputPath
     ])
+    await rename(tmpOutputPath, outputPath)
   } finally {
     await rm(workDir, { recursive: true, force: true })
   }
 }
+

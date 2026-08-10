@@ -61,12 +61,6 @@ export interface VideoProbeResult {
   codec: string
 }
 
-export interface ExportClipRequest {
-  matchVideoPath: string
-  segments: { startSec: number; endSec: number }[]
-  outputPath: string
-}
-
 export interface ExportTacticFramesRequest {
   frames: string[] // base64 PNG data (no "data:" prefix), one per animation frame, in order
   fps: number

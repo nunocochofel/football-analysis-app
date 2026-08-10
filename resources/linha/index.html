@@ -697,6 +697,43 @@
   .context-menu button:hover{background:#26303a;}
   .context-menu button.danger:hover{background:rgba(209,73,91,.18); color:var(--crimson);}
 
+  .export-field{display:flex; flex-direction:column; gap:4px; margin-bottom:12px; font-size:12.5px; color:var(--muted);}
+  .export-field select{padding:7px 8px; border-radius:var(--radius-sm); border:1px solid var(--line); background:var(--panel-alt); color:var(--chalk); font-size:13px;}
+  .export-field-checkbox{display:flex; align-items:center; gap:8px; margin-bottom:12px; font-size:12.5px; color:var(--muted); cursor:pointer;}
+  .clip-row-check{display:flex; align-items:center; cursor:pointer;}
+
+  .export-queue-panel{
+    position:fixed; right:16px; bottom:16px; width:340px; max-height:min(70vh, 520px); display:flex; flex-direction:column;
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); z-index:260;
+  }
+  .export-queue-head{
+    display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid var(--line);
+    font-size:13px; font-weight:600; cursor:pointer;
+  }
+  .export-queue-head-actions{display:flex; align-items:center; gap:6px;}
+  .export-queue-head-actions .btn{padding:4px 8px; font-size:11px;}
+  .export-queue-panel.collapsed .export-queue-global, .export-queue-panel.collapsed .export-queue-items{display:none;}
+  .export-queue-global{padding:8px 12px; border-bottom:1px solid var(--line);}
+  .export-queue-bar{height:6px; border-radius:4px; background:var(--panel-alt); overflow:hidden;}
+  .export-queue-bar-fill{height:100%; background:var(--pitch); width:0%; transition:width .2s;}
+  .export-queue-global span{display:block; margin-top:4px; font-size:11px; color:var(--muted);}
+  .export-queue-items{overflow-y:auto; padding:6px 12px 10px;}
+  .export-queue-item{padding:8px 0; border-bottom:1px solid var(--line);}
+  .export-queue-item:last-child{border-bottom:none;}
+  .export-queue-item-row{display:flex; align-items:center; justify-content:space-between; gap:6px; font-size:12px;}
+  .export-queue-item-name{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .export-queue-badge{font-size:10px; font-weight:700; padding:2px 6px; border-radius:20px; text-transform:uppercase; flex-shrink:0;}
+  .export-queue-badge.waiting{background:var(--panel-alt); color:var(--muted);}
+  .export-queue-badge.processing{background:rgba(79,143,201,.2); color:#6db1ff;}
+  .export-queue-badge.done{background:rgba(63,145,66,.2); color:#7fd68a;}
+  .export-queue-badge.error{background:rgba(193,83,61,.2); color:var(--crimson);}
+  .export-queue-badge.cancelled{background:var(--panel-alt); color:var(--muted);}
+  .export-queue-item-bar{height:4px; border-radius:3px; background:var(--panel-alt); margin-top:5px; overflow:hidden;}
+  .export-queue-item-bar-fill{height:100%; background:var(--pitch); width:0%; transition:width .2s;}
+  .export-queue-item-error{font-size:11px; color:var(--crimson); margin-top:4px;}
+  .export-queue-item-actions{display:flex; gap:4px; margin-top:6px;}
+  .export-queue-item-actions button{font-size:10.5px; padding:3px 7px;}
+
   .info-list{font-size:13px; line-height:1.6; color:var(--muted);}
   .info-list b{color:var(--chalk);}
   .info-list li{margin-bottom:8px;}
@@ -1281,6 +1318,59 @@
 <div class="context-menu" id="clipContextMenu" style="display:none;">
   <button data-cmact="edit">🖊 Editar</button>
   <button data-cmact="delete" class="danger">✕ Remover</button>
+</div>
+
+<div class="modal-overlay" id="exportDialog">
+  <div class="modal" style="width:420px;">
+    <div class="modal-head">
+      <h3>Exportar clipes</h3>
+      <button class="modal-close" data-close="exportDialog">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="exportDialogCount" style="margin-bottom:14px; color:var(--muted); font-size:13px;"></p>
+      <label class="export-field">
+        <span>Formato</span>
+        <select disabled><option>MP4 (H.264 + AAC)</option></select>
+      </label>
+      <label class="export-field">
+        <span>Resolução</span>
+        <select id="exportResolution">
+          <option value="original">Original (sem upscale)</option>
+          <option value="1080p">1080p</option>
+          <option value="720p">720p</option>
+        </select>
+      </label>
+      <label class="export-field">
+        <span>Qualidade</span>
+        <select id="exportQuality">
+          <option value="high">Alta</option>
+          <option value="balanced" selected>Equilibrada</option>
+          <option value="small">Reduzida (ficheiro mais pequeno)</option>
+        </select>
+      </label>
+      <label class="export-field-checkbox" id="exportCombineRow" style="display:none;">
+        <input type="checkbox" id="exportCombine">
+        <span>Além dos ficheiros individuais, juntar tudo num único vídeo compilado</span>
+      </label>
+      <button class="btn primary" id="btnExportDialogStart" style="width:100%; margin-top:16px;">⬇ Exportar agora</button>
+    </div>
+  </div>
+</div>
+
+<div class="export-queue-panel" id="exportQueuePanel" style="display:none;">
+  <div class="export-queue-head" id="exportQueueHead">
+    <span>📦 Exportação</span>
+    <div class="export-queue-head-actions">
+      <button class="btn" id="btnClearFinishedExports" title="Limpar concluídos">Limpar</button>
+      <button class="btn danger" id="btnCancelAllExports" title="Cancelar tudo">Cancelar tudo</button>
+      <button class="modal-close" id="btnCloseExportQueue" title="Fechar painel">✕</button>
+    </div>
+  </div>
+  <div class="export-queue-global">
+    <div class="export-queue-bar"><div class="export-queue-bar-fill" id="exportQueueGlobalFill"></div></div>
+    <span id="exportQueueGlobalLabel"></span>
+  </div>
+  <div class="export-queue-items" id="exportQueueItems"></div>
 </div>
 
 <!-- Shared rich text-editor panel — opened by double-clicking a text shape, on the video canvas
@@ -3020,12 +3110,6 @@ let freezeTrackedClipId = null;
 let freezeTriggered = new Set();
 let freezeHoldTimeout = null;
 videoEl.addEventListener('timeupdate', ()=>{
-  // A clip export drives videoEl itself (its own seek/play/pause + freeze-hold watchdog, see
-  // exportClip) — usually while that very clip is also selectedClipId (the normal flow is edit
-  // clip, then export it). Left running, this handler's own freeze/bounds logic would fight the
-  // export's over who gets to pause/resume the video, and the export could hang forever waiting
-  // for an outSec it never reaches. So it stands down entirely for the duration of an export.
-  if(exportBusy){ return; }
   if(selectedClipId){
     const clip = state.tags.find(t=>t.id===selectedClipId);
     if(clip){
@@ -4299,7 +4383,9 @@ function renderClipTable(){
   tree.querySelectorAll('.cat-group-export-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      exportCategoryClips(btn.dataset.cid);
+      const catId = btn.dataset.cid;
+      const list = getFilteredTags().filter(t => t.mode !== 'stopwatch' && t.categoryId === catId).sort((a,b)=>a.inSec-b.inSec);
+      openExportDialog(list);
     });
   });
 
@@ -4312,6 +4398,7 @@ function renderClipTable(){
     });
   });
   wireClipRows(tree);
+  updateExportAllButtonLabel();
 }
 
 function renderClipRow(t, cat){
@@ -4325,6 +4412,9 @@ function renderClipRow(t, cat){
   return `
   <div class="clip-row ${isEditing ? 'selected' : ''}" data-id="${t.id}"${teamStripStyle}>
     <div class="clip-row-head" data-id="${t.id}">
+      <label class="clip-row-check" onclick="event.stopPropagation()">
+        <input type="checkbox" class="clip-select-cb" ${exportSelectedIds.has(t.id)?'checked':''}>
+      </label>
       <span class="clip-row-time">${fmtTime(t.inSec)}–${fmtTime(t.outSec)}</span>
       <span class="clip-row-player">${p ? escapeHtml(p.name) : '—'}</span>
       ${t.outcome ? `<span title="${t.outcome==='positive'?'Positiva':'Negativa'}">${t.outcome==='positive'?'👍':'👎'}</span>` : ''}
@@ -4425,6 +4515,14 @@ function wireClipRows(container){
     });
     head.addEventListener('contextmenu', e => openClipContextMenu(e, head.dataset.id));
   });
+  container.querySelectorAll('.clip-select-cb').forEach(cb => {
+    cb.addEventListener('change', e => {
+      const row = e.target.closest('.clip-row');
+      const id = row.dataset.id;
+      if(e.target.checked) exportSelectedIds.add(id); else exportSelectedIds.delete(id);
+      updateExportAllButtonLabel();
+    });
+  });
   container.querySelectorAll('.clip-in').forEach(inp => {
     inp.addEventListener('change', e => {
       const row = e.target.closest('.clip-row');
@@ -4470,10 +4568,11 @@ function wireClipRows(container){
       const act = btn.dataset.act;
       if(act === 'review') reviewClip(t);
       else if(act === 'edit'){ selectedClipId === id ? exitClipEdit() : selectClipForEdit(id); renderClipTable(); }
-      else if(act === 'export') exportClip(t);
+      else if(act === 'export') openExportDialog([t]);
       else if(act === 'delete'){
         state.tags = state.tags.filter(x => x.id !== id);
         if(selectedClipId === id) selectedClipId = null;
+        exportSelectedIds.delete(id);
         renderClipTable(); renderTouchlineFlags(); saveState();
       }
       else if(act === 'posOutcome'){
@@ -4539,8 +4638,8 @@ function playNextInReel(){
    then muxed with the drawn frames. Electron-only — there's no ffmpeg
    in a plain browser tab, so export there just explains that plainly.
 =================================================================== */
-let exportBusy = false;
 const CLIP_EXPORT_FPS = 20;
+let exportSelectedIds = new Set();
 
 // A clip's rank (1-based) among every other tag of the same category, ordered by when it
 // happened — used to name exported files "Categoria_1", "Categoria_2"... instead of a timestamp,
@@ -4551,298 +4650,57 @@ function categoryOccurrenceIndex(tag){
   return idx>=0 ? idx+1 : 1;
 }
 
-function seekVideoTo(t){
+function seekVideoTo(el, t){
   return new Promise(resolve => {
-    const onSeeked = () => { videoEl.removeEventListener('seeked', onSeeked); resolve(); };
-    videoEl.addEventListener('seeked', onSeeked);
-    videoEl.currentTime = t;
+    const onSeeked = () => { el.removeEventListener('seeked', onSeeked); resolve(); };
+    el.addEventListener('seeked', onSeeked);
+    el.currentTime = t;
   });
 }
 
-/* ===================================================================
-   CAPTURA RÁPIDA (WEBCODECS)
-   Demuxa o ficheiro que já está carregado no <video> diretamente com mp4box.js e descodifica só o
-   intervalo de amostras de que um clip precisa com VideoDecoder — sem pedir ao <video> para
-   "reproduzir" nada, por isso sem a sincronização/gestão de buffer em tempo real que causa as
-   paragens do método antigo (captureClipFramesViaPlayback, mantido abaixo como rede de segurança).
-=================================================================== */
-let mp4boxModulePromise = null;
-// A plain <script src> tag, not a dynamic import() of an ES module — file:// pages have origin
-// "null", and Chromium's module loader always fetches modules in CORS mode, which fails outright
-// for "null" origins ("Failed to fetch dynamically imported module"). Classic scripts don't have
-// that restriction, so mp4box.js ships pre-bundled as a dependency-free IIFE (resources/linha/
-// vendor/mp4box.bundle.js, built with esbuild from the upstream ESM package) exposing
-// window.MP4BoxLib, instead of its published .mjs form.
-function loadMp4Box(){
-  if(window.MP4BoxLib) return Promise.resolve(window.MP4BoxLib);
-  if(!mp4boxModulePromise){
-    mp4boxModulePromise = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'vendor/mp4box.bundle.js';
-      script.onload = () => resolve(window.MP4BoxLib);
-      script.onerror = () => reject(new Error('Não foi possível carregar mp4box.js'));
-      document.head.appendChild(script);
-    });
-  }
-  return mp4boxModulePromise;
+// A dedicated, never-visible <video> used only for export capture — kept entirely separate from
+// the main `videoEl` the user is watching/editing with, so exporting never pauses, seeks, mutes
+// or changes the playback rate of whatever is on screen. Loaded from the same file
+// (currentPlaybackPath) the visible player uses, independently.
+let exportVideoEl = null;
+function getExportVideoEl(){
+  if(exportVideoEl) return exportVideoEl;
+  exportVideoEl = document.createElement('video');
+  exportVideoEl.muted = true;
+  exportVideoEl.playsInline = true;
+  exportVideoEl.style.display = 'none';
+  document.body.appendChild(exportVideoEl);
+  return exportVideoEl;
 }
-// Lê exatamente [start, end] (inclusive) de `path` via IPC (fs no processo principal) e devolve
-// um ArrayBuffer com `.fileStart` já anotado, pronto a entregar a mp4boxfile.appendBuffer(). Não
-// se usa fetch() aqui: Chromium recusa-o liminarmente para o esquema file: ("URL scheme 'file' is
-// not supported") — não é uma questão de CORS/origem contornável, é mesmo não suportado.
-async function readFileRangeBuffer(path, start, end){
-  const bytes = await window.api.readFileRange({path, start, end});
-  const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  buf.fileStart = start;
-  return buf;
-}
-
-// Alimenta um prefixo crescente de `path` a uma instância descartável de MP4Box até `onReady`
-// disparar (encontrou a caixa moov) ou `maxBytes` ser excedido. Ficheiros "faststart" (moov no
-// início) resolvem-se logo na primeira leitura pequena; qualquer outro esgota o teto e quem chama
-// cai para um remux faststart.
-async function probeMp4Ready(path, mp4box, maxBytes){
-  let prefixSize = 4*1024*1024;
-  while(prefixSize <= maxBytes){
-    const buf = await readFileRangeBuffer(path, 0, prefixSize-1);
-    const mp4boxfile = mp4box.createFile();
-    const info = await new Promise((resolve) => {
-      mp4boxfile.onReady = (i) => resolve(i);
-      mp4boxfile.onError = () => resolve(null);
-      mp4boxfile.appendBuffer(buf);
-    });
-    if(info) return {mp4boxfile, info};
-    if(buf.byteLength < prefixSize) return null; // já chegámos ao fim do ficheiro sem achar moov
-    prefixSize *= 4;
-  }
-  return null;
-}
-
-// Uma preparação por vídeo-fonte, em cache — para que "Exportar tudo" sonde/remuxe uma vez só, não
-// uma vez por clip. Esta preparação (sondar moov e, se preciso, remuxar para faststart) é o único
-// passo cujo custo escala com o TAMANHO TOTAL da gravação (pode ser um jogo inteiro, GBs), não com
-// a duração do clip — por isso fica de fora do limite de tempo apertado usado para a descodificação
-// de cada clip (ver ensureFastDemuxSourceOrFallback), que reutiliza o resultado daqui e deve ser
-// sempre rápida independentemente do tamanho do vídeo fonte.
-let fastDemuxCache = null; // {forOriginalPath, path, mp4box, mp4boxfile, info} | {forOriginalPath, failed:true}
-async function ensureFastDemuxSource(){
-  if(!isElectron() || !currentPlaybackPath || !electronVideoSourcePath) return null;
-  if(fastDemuxCache && fastDemuxCache.forOriginalPath === electronVideoSourcePath){
-    return fastDemuxCache.failed ? null : fastDemuxCache;
-  }
-
-  const t0 = performance.now();
-  const mp4box = await loadMp4Box();
-  const PROBE_CEILING = 64*1024*1024;
-  let path = currentPlaybackPath;
-  let ready = await probeMp4Ready(path, mp4box, PROBE_CEILING);
-  console.log('LINHA: captura rápida — sondagem inicial', ready ? 'encontrou moov' : 'não encontrou moov (vai remuxar)', 'em', Math.round(performance.now()-t0), 'ms');
-  if(!ready){
-    let faststartPath = await window.api.getFaststartCachePath(electronVideoSourcePath);
-    if(!faststartPath){
-      const tRemux = performance.now();
-      faststartPath = await window.api.remuxToFaststart({
-        playablePath: currentPlaybackPath, cacheKeyPath: electronVideoSourcePath
-      });
-      console.log('LINHA: captura rápida — remux faststart concluído em', Math.round(performance.now()-tRemux), 'ms');
+let exportVideoLoadedPath = null;
+function ensureExportVideoLoaded(){
+  const el = getExportVideoEl();
+  const path = currentPlaybackPath;
+  if(!path) return Promise.reject(new Error('Sem vídeo carregado.'));
+  if(exportVideoLoadedPath === path && el.readyState >= 1) return Promise.resolve(el);
+  return new Promise((resolve, reject) => {
+    const onReady = () => { cleanup(); exportVideoLoadedPath = path; resolve(el); };
+    const onErr = () => { cleanup(); reject(new Error('Não foi possível carregar o vídeo para exportação.')); };
+    function cleanup(){
+      el.removeEventListener('loadedmetadata', onReady);
+      el.removeEventListener('error', onErr);
     }
-    path = faststartPath;
-    ready = await probeMp4Ready(path, mp4box, PROBE_CEILING);
-    if(!ready) throw new Error('Não foi possível indexar este vídeo para captura rápida.');
-  }
-  fastDemuxCache = {forOriginalPath: electronVideoSourcePath, path, mp4box, mp4boxfile: ready.mp4boxfile, info: ready.info};
-  console.log('LINHA: captura rápida — preparação total concluída em', Math.round(performance.now()-t0), 'ms');
-  return fastDemuxCache;
-}
-
-// Envolve ensureFastDemuxSource com um limite de tempo generoso (é um custo único por vídeo, pode
-// legitimamente demorar mais para uma gravação grande) e, se falhar ou exceder o tempo, marca esse
-// vídeo como "falhou" em cache — para "Exportar tudo" não voltar a pagar o mesmo custo lento em
-// cada clip seguinte, só tentar uma vez por vídeo por sessão.
-async function ensureFastDemuxSourceOrFallback(){
-  if(fastDemuxCache && fastDemuxCache.forOriginalPath === electronVideoSourcePath){
-    return fastDemuxCache.failed ? null : fastDemuxCache;
-  }
-  try{
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Preparação da captura rápida excedeu o tempo limite')), 180000));
-    return await Promise.race([ensureFastDemuxSource(), timeout]);
-  }catch(err){
-    console.warn('LINHA: preparação da captura rápida falhou — desativada para este vídeo nesta sessão.', err);
-    fastDemuxCache = {forOriginalPath: electronVideoSourcePath, failed: true};
-    return null;
-  }
-}
-
-// Bytes de descrição (avcC/hvcC) que o WebCodecs precisa a par da string de codec RFC6381 que o
-// mp4box já dá — padrão standard de extração para mp4box.js + WebCodecs: escreve a caixa completa
-// para um DataStream e descarta os 8 bytes do cabeçalho da própria caixa (tamanho+tipo).
-function getCodecDescription(mp4box, mp4boxfile, trackId){
-  const trak = mp4boxfile.getTrackById(trackId);
-  const entry = trak.mdia.minf.stbl.stsd.entries[0];
-  const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
-  if(!box) return undefined;
-  const stream = new mp4box.DataStream(undefined, 0, mp4box.Endianness.BIG_ENDIAN);
-  box.write(stream);
-  return new Uint8Array(stream.buffer, 8);
-}
-
-// Replica o algoritmo interno de seek do mp4box.js (procurar a amostra RAP/keyframe mais próxima
-// antes de `targetSec`) para decidirmos nós mesmos o índice de arranque — em vez de chamar
-// mp4boxfile.seek() (que mexe em TODAS as tracks, incluindo áudio, e cujo offset devolvido não é
-// especificamente o que precisamos), mantemos o controlo total do intervalo de bytes a pedir.
-function findRapSampleIndex(samples, timescale, targetSec){
-  let seekIdx = 0, rapIdx = 0;
-  for(let j=0;j<samples.length;j++){
-    const sample = samples[j];
-    if(j===0){ seekIdx = 0; }
-    else if(sample.cts > targetSec*timescale){ seekIdx = j-1; break; }
-    else { seekIdx = j; }
-    if(sample.is_sync) rapIdx = j;
-  }
-  return rapIdx;
-}
-function findEndSampleIndex(samples, timescale, targetSec){
-  let idx = 0;
-  for(let j=0;j<samples.length;j++){
-    if(samples[j].cts <= targetSec*timescale) idx = j; else break;
-  }
-  return Math.min(samples.length-1, idx+1); // +1: margem de segurança para arredondamentos
-}
-
-async function decodeClipViaWebCodecs(demux, tag, fps, onProgress){
-  const tClip = performance.now();
-  const { mp4box, mp4boxfile, info } = demux;
-  const videoTrackInfo = info.videoTracks && info.videoTracks[0];
-  if(!videoTrackInfo) throw new Error('Sem track de vídeo.');
-  const trackId = videoTrackInfo.id;
-  const trak = mp4boxfile.getTrackById(trackId);
-  const samples = trak.samples;
-  if(!samples || !samples.length) throw new Error('Sem amostras de vídeo.');
-  const timescale = samples[0].timescale;
-
-  const description = getCodecDescription(mp4box, mp4boxfile, trackId);
-  // 'prefer-hardware' sounds like the obvious choice, but on a machine without a hardware decoder
-  // for this codec/profile some Chromium builds report isConfigSupported as UNSUPPORTED outright
-  // (confirmed empirically — Playwright's headless Chromium reports {supported:false} for
-  // 'prefer-hardware' on a plain H.264 stream, while 'no-preference' correctly reports
-  // {supported:true} for the exact same codec) rather than gracefully degrading to software. That
-  // would silently and permanently disable this whole path on such machines — always falling back
-  // to the old method with no visible error — for the exact opposite of what "prefer" suggests.
-  // 'no-preference' still uses hardware decode when it's actually available and beneficial.
-  const decoderConfig = { codec: videoTrackInfo.codec, description, hardwareAcceleration: 'no-preference' };
-  const support = await VideoDecoder.isConfigSupported(decoderConfig);
-  if(!support.supported) throw new Error('Codec não suportado pelo WebCodecs: '+videoTrackInfo.codec);
-
-  // Pequeno lookback antes de tag.inSec para garantir que há sempre uma keyframe anterior dentro
-  // do intervalo pedido — sem isto, um clip a começar mesmo em cima (ou perto) de uma keyframe
-  // podia ficar sem contexto de descodificação suficiente.
-  const lookbackSec = Math.max(0, tag.inSec - 2);
-  const startIdx = findRapSampleIndex(samples, timescale, lookbackSec);
-  const endIdx = findEndSampleIndex(samples, timescale, tag.outSec);
-  if(endIdx < startIdx) throw new Error('Intervalo de amostras inválido.');
-  const sampleCount = endIdx - startIdx + 1;
-
-  let minOffset = Infinity, maxEnd = 0;
-  for(let i=startIdx; i<=endIdx; i++){
-    minOffset = Math.min(minOffset, samples[i].offset);
-    maxEnd = Math.max(maxEnd, samples[i].offset + samples[i].size);
-  }
-
-  mp4boxfile.unsetExtractionOptions(trackId);
-  mp4boxfile.setExtractionOptions(trackId, null, {nbSamples: sampleCount});
-  trak.nextSample = startIdx; // setExtractionOptions acima repôs isto a 0 — reposicionar à keyframe
-  mp4boxfile.start();
-
-  const tRead = performance.now();
-  const rangeBuf = await readFileRangeBuffer(demux.path, minOffset, maxEnd-1);
-  console.log('LINHA: captura rápida — leitura de', (maxEnd-minOffset), 'bytes (', sampleCount, 'amostras) em', Math.round(performance.now()-tRead), 'ms');
-
-  const decodedSamples = await new Promise((resolve, reject) => {
-    mp4boxfile.onError = (e) => reject(new Error('Erro mp4box: '+e));
-    mp4boxfile.onSamples = (id, user, decoded) => resolve(decoded);
-    try{ mp4boxfile.appendBuffer(rangeBuf, true); }
-    catch(err){ reject(err); }
+    el.addEventListener('loadedmetadata', onReady);
+    el.addEventListener('error', onErr);
+    el.src = 'file:///' + path.replace(/\\/g,'/').split('/').map(encodeURIComponent).join('/');
+    el.load();
   });
-  if(!decodedSamples || decodedSamples.length !== sampleCount){
-    throw new Error('Amostras de vídeo incompletas para este intervalo.');
-  }
-
-  const exportCanvas = document.createElement('canvas');
-  exportCanvas.width = videoTrackInfo.track_width || videoEl.videoWidth || 1280;
-  exportCanvas.height = videoTrackInfo.track_height || videoEl.videoHeight || 720;
-  const ectx = exportCanvas.getContext('2d');
-  const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
-  const frameInterval = 1/fps;
-  const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
-  const frames = [];
-  let nextSampleTime = tag.inSec;
-  let freezeIdx = 0;
-  let decodeError = null;
-
-  let lastFrameJpeg = null;
-  function captureUpTo(atSec, source){
-    while(nextSampleTime <= atSec && nextSampleTime <= tag.outSec + 1e-6){
-      const frame = drawExportFrame(ectx, exportCanvas, tag, nextSampleTime, source);
-      lastFrameJpeg = frame;
-      frames.push(frame);
-      onProgress(Math.min(99, Math.round((nextSampleTime-tag.inSec)/totalSec*100)));
-      while(freezeIdx < freezes.length && freezes[freezeIdx].atSec <= nextSampleTime){
-        const holdFrames = Math.max(1, Math.round(Math.max(0, freezes[freezeIdx].holdSec) * fps));
-        for(let h=0; h<holdFrames; h++) frames.push(frame);
-        freezeIdx++;
-      }
-      nextSampleTime += frameInterval;
-    }
-  }
-
-  const decoder = new VideoDecoder({
-    output(frame){
-      try{
-        const atSec = frame.timestamp/1e6;
-        // Amostras antes de tag.inSec só existem para dar contexto de descodificação (lookback até
-        // à keyframe anterior) — nunca desenhadas, só avançam o descodificador.
-        if(atSec >= tag.inSec) captureUpTo(Math.min(atSec, tag.outSec), frame);
-      }catch(err){ decodeError = err; }
-      finally{ frame.close(); }
-    },
-    error(err){ decodeError = err; }
-  });
-  decoder.configure(decoderConfig);
-  for(const sample of decodedSamples){
-    decoder.decode(new EncodedVideoChunk({
-      type: sample.is_sync ? 'key' : 'delta',
-      timestamp: Math.round(sample.cts/timescale*1e6),
-      duration: Math.round(sample.duration/timescale*1e6),
-      data: sample.data
-    }));
-  }
-  await decoder.flush();
-  decoder.close();
-  if(decodeError) throw decodeError;
-
-  if(lastFrameJpeg && (!frames.length || (tag.outSec - tag.inSec) > (frames.length/fps) + frameInterval)){
-    // Repete o último frame já desenhado (equivalente ao "backfill" do método de reprodução) em
-    // vez de redesenhar — o canvas já foi fechado como VideoFrame, e redesenhar aplicaria as
-    // shapes ativas uma segunda vez por cima das já pintadas nesse frame.
-    frames.push(lastFrameJpeg);
-  }
-  onProgress(100);
-  console.log('LINHA: captura rápida — clip de', (tag.outSec-tag.inSec).toFixed(1), 's concluído em', Math.round(performance.now()-tClip), 'ms (', frames.length, 'frames)');
-  return frames;
 }
 
-// Draws one export frame (video/decoded-frame + zoom crop + active shapes) onto the offscreen
-// export canvas and returns it as a base64 JPEG — shared by both capture methods below, which
-// differ only in WHERE `source` comes from (the live <video> element vs. a WebCodecs VideoFrame).
-// `ctx.drawImage()` accepts either as a CanvasImageSource, so this needs no branching on its own.
-// canvas.toBlob() encodes without blocking the main thread's synchronous execution — unlike
-// toDataURL(), which does the JPEG encode + base64 conversion as one long blocking call. For a
-// small canvas the difference is invisible, but for a full-HD+ source frame (a real match
-// recording, not the small synthetic clips this was tested against) that single blocking call can
-// itself take a very noticeable stretch — long enough that no amount of yielding *between* frames
-// helps, since the block is *inside* one encode call, not in the gaps around it. This was the
-// actual cause of export still feeling "stuck" even at 1x with an explicit per-frame yield: the
-// bottleneck was never how fast frames arrived, it was how long each one took to encode.
+// Draws one export frame (video frame + zoom crop + active shapes) onto the offscreen export
+// canvas and returns it as a base64 JPEG. canvas.toBlob() encodes without blocking the main
+// thread's synchronous execution — unlike toDataURL(), which does the JPEG encode + base64
+// conversion as one long blocking call. For a small canvas the difference is invisible, but for a
+// full-HD+ source frame (a real match recording) that single blocking call can itself take a very
+// noticeable stretch — long enough that no amount of yielding *between* frames helps, since the
+// block is *inside* one encode call, not in the gaps around it. This was the actual cause of
+// export still feeling "stuck" even at plain 1x playback speed with an explicit per-frame yield:
+// the bottleneck was never how fast frames arrived, it was how long each one took to encode.
 function canvasToBase64Jpeg(canvas, quality){
   return new Promise((resolve, reject) => {
     canvas.toBlob(blob => {
@@ -4873,82 +4731,44 @@ async function drawExportFrame(ectx, exportCanvas, tag, atTime, source){
   return canvasToBase64Jpeg(exportCanvas, 0.88);
 }
 
-// Captures a clip as a JPEG-per-frame sequence. Tries decodeClipViaWebCodecs first (see the
-// "CAPTURA RÁPIDA (WEBCODECS)" section above) — decoding directly instead of asking <video> to
-// "play" it, so there's no real-time playback pacing to stall on. Any failure there (unsupported
-// codec, WebCodecs unavailable, a demux/decode bug) transparently falls back to the proven
-// playback-based method below, so this can never behave worse than it already did.
-const FAST_CAPTURE_VIA_WEBCODECS_ENABLED = false; // ver nota abaixo
-async function captureClipFrames(tag, fps, onProgress){
-  // DESATIVADO (v0.8.23): confirmado, com o utilizador, que a preparação (sondar/remuxar o
-  // ficheiro fonte) está a exceder mesmo o limite generoso de 3 minutos com vídeos reais de jogo
-  // completo, deixando a app a parecer bloqueada durante essa espera antes de finalmente cair
-  // para o método de reprodução — pior do que nunca ter tentado. Duas rondas de correções (fixar
-  // hardwareAcceleration, separar os limites de tempo) não foram suficientes sem conseguir testar
-  // contra um vídeo do tamanho real de um jogo completo. O código fica todo aqui, intacto, para
-  // retomar este trabalho mais tarde com melhor forma de testar — não apagar.
-  // NOTA (v0.8.27): drawExportFrame passou a ser assíncrona (canvas.toBlob() em vez de
-  // toDataURL()) — decodeClipViaWebCodecs's captureUpTo ainda chama-a de forma síncrona a partir
-  // do callback output() do VideoDecoder; antes de reativar isto é preciso adaptar esse callback
-  // para lidar com a Promise (ex.: enfileirar os frames descodificados e processá-los um a um).
-  if(FAST_CAPTURE_VIA_WEBCODECS_ENABLED && isElectron() && typeof VideoDecoder !== 'undefined'){
-    try{
-      // Preparar a fonte (sondar/remuxar — custo único por vídeo, pode ser lento para uma
-      // gravação grande) tem o seu próprio limite de tempo, generoso, em
-      // ensureFastDemuxSourceOrFallback — separado deste, que só cobre a descodificação do
-      // clip em si (já com a fonte pronta) e por isso pode ser mais apertado: se um clip
-      // individual demorar mais do que isto depois da preparação já estar feita, algo está
-      // mesmo preso (não é só um vídeo grande a demorar) e vale a pena cair para o método antigo.
-      const demux = await ensureFastDemuxSourceOrFallback();
-      if(demux){
-        const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Descodificação do clip excedeu o tempo limite')), 30000));
-        return await Promise.race([decodeClipViaWebCodecs(demux, tag, fps, onProgress), timeout]);
-      }
-    }catch(err){
-      console.warn('LINHA: captura rápida via WebCodecs falhou, a usar o método de reprodução.', err);
-    }
-  }
-  return captureClipFramesViaPlayback(tag, fps, onProgress);
-}
+const EXPORT_CANCELLED = 'EXPORT_CANCELLED'; // must match ffmpeg.ts's EXPORT_CANCELLED_MESSAGE
 
-// Plays the clip forward for real (muted, at normal 1x speed — see the comment further down on
-// why not faster) and grabs each decoded frame via requestVideoFrameCallback, using its exact
-// mediaTime — not the older approach of seeking to each 1/fps instant one at a time. A seek pays
-// a real cost every time (locate the nearest keyframe, decode forward to the exact target), and
-// paying that ~N times per clip was the actual reason export felt endless. Sequential decode
-// during playback is what the video pipeline is built for and avoids that cost almost entirely;
-// requestVideoFrameCallback's own delivery rate — not a fixed timer — paces how fast frames come
-// in, and a frame is captured for every fps-aligned instant that's now behind the playhead,
-// backfilling with the just-decoded frame if the pipeline ever delivers more than one per
-// fps-interval (same idea as a freeze hold). JPEG, not PNG: these are throwaway intermediates
-// that ffmpeg re-encodes to H.264 (itself lossy) a moment later, so PNG's lossless compression
-// buys nothing here.
-async function captureClipFramesViaPlayback(tag, fps, onProgress){
+// Captures a clip as a JPEG-per-frame sequence by playing it forward for real (muted, at normal
+// 1x speed) on `el` and grabbing each decoded frame via requestVideoFrameCallback, using its
+// exact mediaTime — not seeking to each 1/fps instant one at a time. A seek pays a real cost every
+// time (locate the nearest keyframe, decode forward to the exact target), and paying that ~N
+// times per clip was the original reason export felt endless. Sequential decode during playback
+// is what the video pipeline is built for; requestVideoFrameCallback's own delivery rate — not a
+// fixed timer — paces how fast frames come in. Any playbackRate above 1x asks the decoder to
+// sustain faster-than-real-time throughput, which stalled repeatedly on real match footage across
+// many earlier attempts (16x/8x/4x all stalled) — 1x is exactly what this pipeline is built to
+// sustain reliably, the same speed the video already plays at normally without ever stalling.
+// `isCancelled()` is checked at the same natural yield point between frames so a queue item's
+// "Cancelar" reaches this loop promptly without needing to poll on a timer of its own.
+async function captureClipFrames(el, tag, fps, onProgress, isCancelled){
   const exportCanvas = document.createElement('canvas');
-  exportCanvas.width = videoEl.videoWidth || 1280;
-  exportCanvas.height = videoEl.videoHeight || 720;
+  exportCanvas.width = el.videoWidth || 1280;
+  exportCanvas.height = el.videoHeight || 720;
   const ectx = exportCanvas.getContext('2d');
   const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
   const frameInterval = 1/fps;
   const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
 
   function drawFrame(atTime){
-    return drawExportFrame(ectx, exportCanvas, tag, atTime, videoEl);
+    return drawExportFrame(ectx, exportCanvas, tag, atTime, el);
   }
 
-  // Older/unusual runtimes without requestVideoFrameCallback fall back to the slower but
-  // unconditionally-correct seek-per-frame method rather than not exporting at all.
-  if(typeof videoEl.requestVideoFrameCallback !== 'function'){
-    return captureClipFramesBySeeking(tag, fps, drawFrame, onProgress);
+  if(typeof el.requestVideoFrameCallback !== 'function'){
+    return captureClipFramesBySeeking(el, tag, fps, drawFrame, onProgress, isCancelled);
   }
 
-  videoEl.pause();
-  await seekVideoTo(tag.inSec);
+  el.pause();
+  await seekVideoTo(el, tag.inSec);
 
   const frames = [];
-  const originalMuted = videoEl.muted;
-  const originalRate = videoEl.playbackRate;
-  videoEl.muted = true;
+  const originalMuted = el.muted;
+  const originalRate = el.playbackRate;
+  el.muted = true;
 
   try{
     await new Promise((resolve, reject) => {
@@ -4957,12 +4777,6 @@ async function captureClipFramesViaPlayback(tag, fps, onProgress){
 
       async function captureUpTo(t){
         while(nextSampleTime <= t && nextSampleTime <= tag.outSec + 1e-6){
-          // drawFrame (drawExportFrame) encodes via canvas.toBlob(), not the synchronous
-          // toDataURL() — the encode itself no longer blocks the main thread, which matters a
-          // lot for a full-HD+ source frame (a real match recording), where that single encode
-          // call could otherwise take a very noticeable stretch on its own regardless of how
-          // fast frames were arriving — the actual reason every capture-speed experiment (16x
-          // down to 1x, even with an explicit per-frame yield) still felt "stuck".
           const frame = await drawFrame(nextSampleTime);
           frames.push(frame);
           onProgress(Math.min(99, Math.round((nextSampleTime-tag.inSec)/totalSec*100)));
@@ -4977,56 +4791,49 @@ async function captureClipFramesViaPlayback(tag, fps, onProgress){
 
       async function onFrame(now, metadata){
         try{
+          if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
           await captureUpTo(metadata.mediaTime);
-          if(metadata.mediaTime >= tag.outSec || videoEl.ended){
-            videoEl.pause();
+          if(metadata.mediaTime >= tag.outSec || el.ended){
+            el.pause();
             resolve();
             return;
           }
-        }catch(err){ videoEl.pause(); reject(err); return; }
-        // requestVideoFrameCallback already yields between calls, and awaiting the (now
-        // non-blocking) encode above yields too — this extra explicit macrotask yield just
-        // guarantees the browser gets a real turn to paint (the toast update, window controls,
-        // etc.) after every captured frame, on top of that.
+        }catch(err){ el.pause(); reject(err); return; }
+        // requestVideoFrameCallback already yields between calls, and awaiting the (non-blocking)
+        // encode above yields too — this extra explicit macrotask yield just guarantees the
+        // browser gets a real turn to paint (queue panel progress, window controls, etc.) after
+        // every captured frame, on top of that.
         await new Promise(r => setTimeout(r, 0));
-        videoEl.requestVideoFrameCallback(onFrame);
+        el.requestVideoFrameCallback(onFrame);
       }
 
-      // Any playbackRate above 1x asks the decoder to sustain faster-than-real-time throughput —
-      // 16x, then 8x, then 4x all still stalled on real match footage (confirmed by user testing
-      // across v0.8.19-0.8.24), each stall showing as progress "sticking" for several seconds
-      // while decode catches up. 1x is exactly what this pipeline is built to sustain reliably
-      // (it's ordinary playback speed — the same as just watching the video normally, which never
-      // stalls in this app) — trading away the speed win for capture that should never get stuck,
-      // still not paying the seek-per-frame cost that made the original export method so slow.
-      videoEl.playbackRate = 1;
-      videoEl.play().then(() => { videoEl.requestVideoFrameCallback(onFrame); }).catch(reject);
+      el.playbackRate = 1;
+      el.play().then(() => { el.requestVideoFrameCallback(onFrame); }).catch(reject);
     });
-    // Playback may end a hair before outSec (rounding) — make sure the final sampled instant,
-    // and anything a trailing freeze still owes, actually gets emitted.
     if(!frames.length || (tag.outSec - tag.inSec) > (frames.length/fps) + frameInterval){
       const frame = await drawFrame(tag.outSec);
       frames.push(frame);
     }
   } finally {
-    videoEl.muted = originalMuted;
-    videoEl.playbackRate = originalRate;
+    el.muted = originalMuted;
+    el.playbackRate = originalRate;
   }
   onProgress(100);
   return frames;
 }
 
-// Fallback path (no requestVideoFrameCallback support): the original seek-per-frame method.
-async function captureClipFramesBySeeking(tag, fps, drawFrame, onProgress){
+// Fallback path (no requestVideoFrameCallback support): seek-per-frame.
+async function captureClipFramesBySeeking(el, tag, fps, drawFrame, onProgress, isCancelled){
   const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
   const frames = [];
   const frameDur = 1/fps;
   const totalFrames = Math.max(1, Math.round((tag.outSec - tag.inSec) * fps));
   let freezeIdx = 0;
   let t = tag.inSec;
-  videoEl.pause();
-  await seekVideoTo(t);
+  el.pause();
+  await seekVideoTo(el, t);
   for(let i=0; i<totalFrames; i++){
+    if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
     const frame = await drawFrame(t);
     frames.push(frame);
     if(freezeIdx < freezes.length && t >= freezes[freezeIdx].atSec){
@@ -5035,103 +4842,289 @@ async function captureClipFramesBySeeking(tag, fps, drawFrame, onProgress){
       freezeIdx++;
     }
     t = Math.min(tag.outSec, t+frameDur);
-    if(i < totalFrames-1) await seekVideoTo(t);
+    if(i < totalFrames-1) await seekVideoTo(el, t);
     if(onProgress && i%8===0) onProgress(Math.round((i/totalFrames)*100));
   }
   onProgress(100);
   return frames;
 }
 
-async function exportClip(tag){
-  if(exportBusy){ toast('Já há uma exportação em curso — aguarda terminar.'); return; }
-  if(!videoEl.duration){ toast('Carrega um vídeo primeiro.'); return; }
-  if(!isElectron()){ toast('A exportação de vídeo requer a aplicação instalada (não funciona num browser comum).'); return; }
+/* ===================================================================
+   FILA DE EXPORTAÇÃO
+   Cada clip selecionado vira um item da fila com estado próprio (a aguardar/a processar/
+   concluído/erro) — a falha de um nunca aborta os outros, cada um pode ser cancelado ou repetido
+   individualmente, e o progresso (por item e global) fica visível num painel que não bloqueia o
+   resto da app. Processa um clip de cada vez (não em paralelo): descodificar vários ao mesmo tempo
+   competiria pelos mesmos recursos de CPU/GPU e arrisca reintroduzir o tipo de paragem que tanto
+   custou a corrigir na captura em si — a codificação (ffmpeg, processo à parte) já corre em
+   paralelo com a captura do clip seguinte, já que é despachada assim que cada clip termina.
+=================================================================== */
+let exportQueue = [];
+let exportQueueRunning = false;
+// Session-only (not persisted with the project): a cache hit is revalidated against disk anyway
+// (fs:fileExists), so nothing is lost by not remembering it across app restarts, and it keeps the
+// project file's schema untouched.
+let exportCache = {};
+
+// Canonical export parameters — anything in here changing means the previous output no longer
+// matches, and anything NOT in here (categoryId, teamId, playerId, outcome...) has no effect on
+// the exported pixels/audio, so changing those alone must NOT invalidate a cache hit.
+function buildExportSpec(tag, options){
+  return {
+    inSec: tag.inSec, outSec: tag.outSec,
+    shapes: tag.shapes || [], zoom: tag.zoom || null, freezes: tag.freezes || [],
+    videoPath: electronVideoSourcePath,
+    resolution: options.resolution, quality: options.quality, fps: CLIP_EXPORT_FPS
+  };
+}
+// A simple deterministic string hash (djb2-ish) — this is a cache key, not a security boundary,
+// so cryptographic strength buys nothing here.
+function hashExportSpec(spec){
+  const str = JSON.stringify(spec);
+  let h = 5381;
+  for(let i=0; i<str.length; i++){ h = ((h*33) ^ str.charCodeAt(i)) >>> 0; }
+  return h.toString(16);
+}
+
+function exportItemLabel(tag){
   const cat = catById(tag.categoryId);
-  const label = cat ? cat.label : 'clip';
-  const filename = `${label.replace(/[^\w\-]+/g,'_')}_${categoryOccurrenceIndex(tag)}.mp4`;
-  const outputPath = await window.api.saveClipExport(filename);
-  if(!outputPath) return;
-
-  exportBusy = true;
-  const originalTime = videoEl.currentTime;
-  try{
-    toast('A preparar "'+label+'"…');
-    const frames = await captureClipFrames(tag, CLIP_EXPORT_FPS, pct => toast('A preparar "'+label+'"… '+pct+'%'));
-    toast('A codificar vídeo…');
-    await window.api.exportClipFrames({
-      frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
-      audioInSec: tag.inSec, audioOutSec: tag.outSec, outputPath
-    });
-    toast('Exportado: '+outputPath);
-  }catch(err){
-    console.error(err);
-    toast('Não foi possível exportar este corte.');
-  }finally{
-    exportBusy = false;
-    if(videoEl.duration) videoEl.currentTime = originalTime;
-  }
+  return cat ? cat.label : 'clip';
+}
+function exportItemFilename(tag){
+  return `${exportItemLabel(tag).replace(/[^\w\-]+/g,'_')}_${categoryOccurrenceIndex(tag)}.mp4`;
 }
 
-// Shared by "Exportar tudo" and a per-categoria export (o botão ⬇ junto a cada categoria na
-// árvore de clipes) — captura cada clip da lista e compacta tudo num único .zip, uma pasta por
-// categoria dentro dele (uma exportação de uma só categoria produz só uma pasta). Exportar
-// categoria a categoria dá lotes mais pequenos e independentes: um problema numa categoria não
-// arrisca perder o trabalho já feito nas outras, e o utilizador só tem de esperar pelo que
-// precisa de fato naquele momento.
-async function exportTagsAsZip(list, confirmMessage){
-  if(!list.length){ toast('Sem clipes para exportar.'); return; }
-  if(!isElectron()){ toast('A exportação de vídeo requer a aplicação instalada (não funciona num browser comum).'); return; }
-  if(exportBusy){ toast('Já há uma exportação em curso — aguarda terminar.'); return; }
-  if(!videoEl.duration){ toast('Carrega um vídeo primeiro.'); return; }
-
-  const zipPath = await window.api.saveClipZip();
-  if(!zipPath) return;
-  if(!confirm(confirmMessage)) return;
-
-  exportBusy = true;
-  const originalTime = videoEl.currentTime;
-  try{
-    const tempDir = await window.api.beginBatchExport();
-    const entries = [];
-    for(let i=0;i<list.length;i++){
-      const tag = list[i];
-      const cat = catById(tag.categoryId);
-      const label = cat ? cat.label : 'clip';
-      const filename = `${label.replace(/[^\w\-]+/g,'_')}_${categoryOccurrenceIndex(tag)}.mp4`;
-      toast('A exportar '+(i+1)+'/'+list.length+': '+label+'…');
-      const frames = await captureClipFrames(tag, CLIP_EXPORT_FPS, pct => toast('A exportar '+(i+1)+'/'+list.length+': '+label+'… '+pct+'%'));
-      const tempPath = await window.api.exportClipFrames({
-        frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
-        audioInSec: tag.inSec, audioOutSec: tag.outSec,
-        folderPath: tempDir, filename
-      });
-      entries.push({ tempPath, categoryLabel: label, filename });
+// Adds one queue item per tag (already-cached ones are marked 'done' immediately, without
+// touching the capture/encode pipeline at all) and makes sure the processing loop is running.
+async function enqueueForExport(tags, options){
+  for(const tag of tags){
+    const spec = buildExportSpec(tag, options);
+    const cacheKey = hashExportSpec(spec);
+    const item = {
+      id: uid(), tagId: tag.id, label: exportItemLabel(tag), filename: exportItemFilename(tag),
+      spec, cacheKey, options,
+      status: 'waiting', progress: 0, error: null, outputPath: null,
+      cancelRequested: false, jobId: null
+    };
+    const cachedPath = exportCache[cacheKey];
+    if(cachedPath && await window.api.fileExists(cachedPath)){
+      item.status = 'done';
+      item.progress = 100;
+      item.outputPath = cachedPath;
     }
-    toast('A compactar tudo num .zip…');
-    await window.api.finishBatchExportZip({ tempDir, entries, outputZipPath: zipPath });
-    toast('Exportação concluída: '+zipPath);
+    exportQueue.push(item);
+  }
+  renderExportQueuePanel();
+  processExportQueue();
+}
+
+async function processExportQueue(){
+  if(exportQueueRunning) return;
+  exportQueueRunning = true;
+  try{
+    while(true){
+      const item = exportQueue.find(i => i.status === 'waiting');
+      if(!item) break;
+      await processExportItem(item);
+    }
+  } finally {
+    exportQueueRunning = false;
+  }
+  maybeStartCombinedExport();
+}
+
+async function processExportItem(item){
+  const tag = state.tags.find(t => t.id === item.tagId);
+  if(!tag){ item.status = 'error'; item.error = 'O corte foi removido antes de ser exportado.'; renderExportQueuePanel(); return; }
+  item.status = 'processing';
+  item.jobId = uid();
+  renderExportQueuePanel();
+  try{
+    const el = await ensureExportVideoLoaded();
+    const frames = await captureClipFrames(el, tag, CLIP_EXPORT_FPS, pct => {
+      item.progress = Math.round(pct*0.5);
+      renderExportQueuePanel();
+    }, () => item.cancelRequested);
+    if(item.cancelRequested) throw new Error(EXPORT_CANCELLED);
+    item.progress = 50;
+    renderExportQueuePanel();
+    const outputPath = await window.api.exportClipFrames({
+      frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
+      audioInSec: tag.inSec, audioOutSec: tag.outSec,
+      folderPath: item.options.destFolder, filename: item.filename,
+      resolution: item.options.resolution, quality: item.options.quality, jobId: item.jobId
+    });
+    item.status = 'done';
+    item.progress = 100;
+    item.outputPath = outputPath;
+    exportCache[item.cacheKey] = outputPath;
   }catch(err){
-    console.error(err);
-    toast('Não foi possível concluir a exportação.');
-  }finally{
-    exportBusy = false;
-    if(videoEl.duration) videoEl.currentTime = originalTime;
+    if(err && err.message === EXPORT_CANCELLED){
+      item.status = 'cancelled';
+    }else{
+      console.error(err);
+      item.status = 'error';
+      item.error = (err && err.message) ? err.message : 'Falha desconhecida.';
+    }
+  }
+  renderExportQueuePanel();
+}
+
+function cancelExportItem(id){
+  const item = exportQueue.find(i => i.id === id);
+  if(!item) return;
+  if(item.status === 'waiting'){
+    item.status = 'cancelled';
+  }else if(item.status === 'processing'){
+    item.cancelRequested = true;
+    if(item.jobId) window.api.cancelExport(item.jobId);
+  }
+  renderExportQueuePanel();
+}
+function cancelAllExports(){
+  exportQueue.forEach(item => { if(item.status === 'waiting' || item.status === 'processing') cancelExportItem(item.id); });
+}
+function retryExportItem(id){
+  const item = exportQueue.find(i => i.id === id);
+  if(!item) return;
+  item.status = 'waiting'; item.progress = 0; item.error = null; item.cancelRequested = false;
+  renderExportQueuePanel();
+  processExportQueue();
+}
+function clearFinishedExports(){
+  exportQueue = exportQueue.filter(i => i.status === 'waiting' || i.status === 'processing');
+  renderExportQueuePanel();
+}
+
+// "Vídeo compilado": once every item from one enqueueForExport() batch that requested it has
+// settled (done/error/cancelled), concatenate the successful ones in selection order. Runs once
+// per batch — tracked via `combined` on the batch options object so re-entrant queue drains
+// (e.g. a retry) don't trigger it again.
+async function maybeStartCombinedExport(){
+  const pending = exportQueue.filter(i => i.options.combineIntoOne && !i.options._combinedDone
+    && (i.status === 'waiting' || i.status === 'processing'));
+  if(pending.length) return; // this batch isn't finished yet
+  const batches = new Map(); // options object identity -> items
+  exportQueue.forEach(i => {
+    if(!i.options.combineIntoOne || i.options._combinedDone) return;
+    if(!batches.has(i.options)) batches.set(i.options, []);
+    batches.get(i.options).push(i);
+  });
+  for(const [options, items] of batches){
+    options._combinedDone = true;
+    const clipPaths = items.filter(i => i.status === 'done' && i.outputPath).map(i => i.outputPath);
+    if(clipPaths.length < 2) continue; // nothing meaningful to join
+    const outputPath = `${options.destFolder}/Compilado_${Date.now()}.mp4`.replace(/\\/g,'/');
+    try{
+      await window.api.concatClips({ clipPaths, outputPath });
+      toast('Vídeo compilado criado: '+outputPath);
+    }catch(err){
+      console.error(err);
+      toast('Não foi possível criar o vídeo compilado (os clipes individuais foram exportados na mesma).');
+    }
   }
 }
 
-async function exportAllClips(){
-  const list = getFilteredTags().filter(t => t.mode !== 'stopwatch').sort((a,b) => a.inSec - b.inSec);
-  await exportTagsAsZip(list, 'Vais exportar '+list.length+' clipe(s) para um único ficheiro .zip, organizados por categoria. Continuar?');
+/* ===================================================================
+   INTERFACE DE EXPORTAÇÃO
+   Um único fluxo para os três pontos de entrada (botão por clip, ⬇ por categoria, "Exportar
+   tudo"/seleção): escolher os cortes (checkboxes na lista, ou as conveniências de categoria/tudo)
+   → diálogo de opções → escolher pasta de destino → entram na fila.
+=================================================================== */
+function updateExportAllButtonLabel(){
+  const btn = document.getElementById('btnExportAll');
+  if(!btn) return;
+  const n = exportSelectedIds.size;
+  btn.textContent = n>0 ? `⬇ Exportar seleção (${n})` : '⬇ Exportar tudo';
 }
 
-async function exportCategoryClips(catId){
-  const cat = catById(catId);
-  const label = cat ? cat.label : 'categoria';
-  const list = getFilteredTags().filter(t => t.mode !== 'stopwatch' && t.categoryId === catId).sort((a,b) => a.inSec - b.inSec);
-  await exportTagsAsZip(list, 'Vais exportar '+list.length+' clipe(s) da categoria "'+label+'" para um ficheiro .zip. Continuar?');
+let exportDialogTags = [];
+function openExportDialog(tags){
+  if(!tags.length){ toast('Sem clipes selecionados para exportar.'); return; }
+  if(!isElectron()){ toast('A exportação de vídeo requer a aplicação instalada (não funciona num browser comum).'); return; }
+  if(!videoEl.duration){ toast('Carrega um vídeo primeiro.'); return; }
+  exportDialogTags = tags;
+  document.getElementById('exportDialogCount').textContent = tags.length+' corte(s) selecionado(s).';
+  const combineRow = document.getElementById('exportCombineRow');
+  combineRow.style.display = tags.length > 1 ? '' : 'none';
+  openModal('exportDialog');
 }
 
-document.getElementById('btnExportAll').addEventListener('click', exportAllClips);
+document.getElementById('btnExportDialogStart').addEventListener('click', async () => {
+  closeModal('exportDialog');
+  const destFolder = await window.api.selectExportFolder();
+  if(!destFolder) return;
+  const options = {
+    resolution: document.getElementById('exportResolution').value,
+    quality: document.getElementById('exportQuality').value,
+    combineIntoOne: exportDialogTags.length > 1 && document.getElementById('exportCombine').checked,
+    destFolder
+  };
+  const tags = exportDialogTags.slice();
+  exportSelectedIds.clear();
+  renderClipTable();
+  await enqueueForExport(tags, options);
+});
+
+function exportQueueBadgeLabel(status){
+  return {waiting:'A aguardar', processing:'A processar', done:'Concluído', error:'Erro', cancelled:'Cancelado'}[status] || status;
+}
+
+function renderExportQueuePanel(){
+  const panel = document.getElementById('exportQueuePanel');
+  if(!exportQueue.length){ panel.style.display = 'none'; return; }
+  panel.style.display = 'flex';
+  const total = exportQueue.length;
+  const finished = exportQueue.filter(i => i.status!=='waiting' && i.status!=='processing').length;
+  const currentIdx = Math.min(finished + (exportQueue.some(i=>i.status==='processing') ? 1 : 0), total);
+  const globalPct = Math.round(exportQueue.reduce((sum,i) => sum + (i.status==='waiting'||i.status==='processing' ? i.progress : 100), 0) / total);
+  document.getElementById('exportQueueGlobalLabel').textContent = `Corte ${Math.max(currentIdx,1)} de ${total} — ${globalPct}%`;
+  document.getElementById('exportQueueGlobalFill').style.width = globalPct+'%';
+
+  document.getElementById('exportQueueItems').innerHTML = exportQueue.map(item => `
+    <div class="export-queue-item">
+      <div class="export-queue-item-row">
+        <span class="export-queue-item-name" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</span>
+        <span class="export-queue-badge ${item.status}">${exportQueueBadgeLabel(item.status)}</span>
+      </div>
+      ${item.status==='processing' || item.status==='waiting' ? `<div class="export-queue-item-bar"><div class="export-queue-item-bar-fill" style="width:${item.progress}%"></div></div>` : ''}
+      ${item.status==='error' ? `<p class="export-queue-item-error">${escapeHtml(item.error||'')}</p>` : ''}
+      <div class="export-queue-item-actions">
+        ${item.status==='done' ? `<button class="btn" data-qact="open" data-qid="${item.id}">Abrir</button>` : ''}
+        ${item.status==='error' ? `<button class="btn" data-qact="retry" data-qid="${item.id}">Tentar novamente</button>` : ''}
+        ${(item.status==='waiting'||item.status==='processing') ? `<button class="btn danger" data-qact="cancel" data-qid="${item.id}">Cancelar</button>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+document.getElementById('exportQueueItems').addEventListener('click', e => {
+  const btn = e.target.closest('[data-qact]'); if(!btn) return;
+  const id = btn.dataset.qid;
+  if(btn.dataset.qact==='cancel') cancelExportItem(id);
+  else if(btn.dataset.qact==='retry') retryExportItem(id);
+  else if(btn.dataset.qact==='open'){
+    const item = exportQueue.find(i=>i.id===id);
+    if(item && item.outputPath) window.api.showItemInFolder(item.outputPath);
+  }
+});
+document.getElementById('btnCancelAllExports').addEventListener('click', cancelAllExports);
+document.getElementById('btnClearFinishedExports').addEventListener('click', clearFinishedExports);
+document.getElementById('btnCloseExportQueue').addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.getElementById('exportQueuePanel').style.display = 'none';
+});
+document.getElementById('exportQueueHead').addEventListener('click', (e) => {
+  if(e.target.closest('button')) return;
+  document.getElementById('exportQueuePanel').classList.toggle('collapsed');
+});
+
+document.getElementById('btnExportAll').addEventListener('click', () => {
+  const list = exportSelectedIds.size > 0
+    ? state.tags.filter(t => exportSelectedIds.has(t.id)).sort((a,b)=>a.inSec-b.inSec)
+    : getFilteredTags().filter(t => t.mode !== 'stopwatch').sort((a,b)=>a.inSec-b.inSec);
+  openExportDialog(list);
+});
 
 /* ===================================================================
    TACTIC BOARD

@@ -1,26 +1,23 @@
 import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron'
-import { createReadStream } from 'fs'
-import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'fs/promises'
-import { tmpdir } from 'os'
+import { existsSync } from 'fs'
+import { mkdir, readdir, readFile, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
 import * as XLSX from 'xlsx'
 import Papa from 'papaparse'
 import {
   probeVideo,
-  cutClip,
   exportClipFramesWithAudio,
-  exportSequence,
   exportImageSequence,
+  concatClips,
   hasTranscodedCache,
   transcodedCachePath,
   transcodeForPlayback,
-  hasFaststartCache,
-  faststartCachePath,
-  remuxToFaststart
+  cancelExportJob,
+  type ExportResolution,
+  type ExportQuality
 } from './ffmpeg'
-import { zipClipsByCategory } from './archive'
 import * as q from './db/queries'
-import type { ExportClipRequest, ExportTacticFramesRequest } from '../shared/types'
+import type { ExportTacticFramesRequest } from '../shared/types'
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void {
   // File dialogs
@@ -84,38 +81,19 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return result.filePath
   })
 
-  ipcMain.handle('dialog:saveClipExport', async (_e, suggestedName: string) => {
+  // Export queue destination — clips are written directly into this folder as individual files
+  // (Categoria_N.mp4), not bundled into a .zip, so the queue panel can offer a real "Abrir" action
+  // per finished item without waiting for a whole batch to be archived first.
+  ipcMain.handle('dialog:selectExportFolder', async () => {
     const win = getWindow()
     if (!win) return null
-    const result = await dialog.showSaveDialog(win, {
-      defaultPath: suggestedName,
-      filters: [{ name: 'Vídeo MP4', extensions: ['mp4'] }]
-    })
-    if (result.canceled || !result.filePath) return null
-    return result.filePath
-  })
-
-  ipcMain.handle('dialog:saveClipZip', async () => {
-    const win = getWindow()
-    if (!win) return null
-    const result = await dialog.showSaveDialog(win, {
-      defaultPath: 'clipes.zip',
-      filters: [{ name: 'Arquivo ZIP', extensions: ['zip'] }]
-    })
-    if (result.canceled || !result.filePath) return null
-    return result.filePath
+    const result = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
   })
 
   // Video processing
   ipcMain.handle('video:probe', (_e, filePath: string) => probeVideo(filePath))
-  ipcMain.handle(
-    'video:cutClip',
-    (_e, args: { sourcePath: string; startSec: number; endSec: number; outputPath: string }) =>
-      cutClip(args.sourcePath, args.startSec, args.endSec, args.outputPath)
-  )
-  ipcMain.handle('video:exportSequence', (_e, args: ExportClipRequest) =>
-    exportSequence(args.matchVideoPath, args.segments, args.outputPath)
-  )
   ipcMain.handle('video:exportTacticFrames', (_e, args: ExportTacticFramesRequest) =>
     exportImageSequence(args.frames, args.fps, args.outputPath, args.format)
   )
@@ -131,42 +109,13 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     })
   )
 
-  // Fast clip capture (WebCodecs demux/decode in the renderer) needs the currently-playable file
-  // to have its `moov` box up front — see the big comment above remuxToFaststart() in ffmpeg.ts.
-  // Same check-then-create split as the playback cache pair above.
-  ipcMain.handle('video:getFaststartCachePath', (_e, sourcePath: string) =>
-    hasFaststartCache(sourcePath) ? faststartCachePath(sourcePath) : null
-  )
-  ipcMain.handle(
-    'video:remuxToFaststart',
-    (e, args: { playablePath: string; cacheKeyPath: string }) =>
-      remuxToFaststart(args.playablePath, args.cacheKeyPath, (percent) => {
-        e.sender.send('video:remuxProgress', percent)
-      })
-  )
-
-  // Chromium's fetch() hard-refuses the file: scheme outright ("URL scheme 'file' is not
-  // supported") — not a CORS/origin restriction that could be worked around, just unsupported —
-  // so the renderer can't Range-fetch the local video file itself for WebCodecs demuxing. Reading
-  // the exact byte range here via Node's fs sidesteps that entirely, and is the only real change
-  // this forces: everything else about the fast-capture design (probe a small prefix, read exactly
-  // the mdat range a clip's samples need) stays the same either way.
-  ipcMain.handle('video:readFileRange', (_e, args: { path: string; start: number; end: number }) => {
-    return new Promise<Uint8Array>((resolve, reject) => {
-      const chunks: Buffer[] = []
-      const stream = createReadStream(args.path, { start: args.start, end: args.end })
-      stream.on('data', (chunk) => chunks.push(chunk as Buffer))
-      stream.on('end', () => resolve(new Uint8Array(Buffer.concat(chunks))))
-      stream.on('error', reject)
-    })
-  })
-
-  // Fast clip export: the renderer already did the slow part (seeking frame-by-frame and drawing
-  // video+shapes+zoom onto a canvas) and just hands over the resulting PNG sequence — this turns
-  // that into a real MP4 with the original audio muxed back in. See the big comment above
-  // exportClipFramesWithAudio() in ffmpeg.ts. Used for both a single clip (outputPath given
-  // directly) and one clip within a batch export (folderPath+filename, written into the batch's
-  // temp directory — see beginBatchExport/finishBatchExportZip below).
+  // Export queue: the renderer already did the slow part (capturing frames from a hidden video
+  // element and drawing video+shapes+zoom onto a canvas per frame) and just hands over the
+  // resulting JPEG sequence — this turns that into a real MP4 with the original audio muxed back
+  // in. See the big comment above exportClipFramesWithAudio() in ffmpeg.ts. jobId lets a queue
+  // item's "Cancelar" action reach this exact in-flight ffmpeg process via video:cancelExport;
+  // progress is tagged with jobId so the renderer can route it to the right queue row even if a
+  // later export starts before an earlier progress event for a different job arrives.
   ipcMain.handle(
     'video:exportClipFrames',
     async (
@@ -180,6 +129,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
         outputPath?: string
         folderPath?: string
         filename?: string
+        resolution: ExportResolution
+        quality: ExportQuality
+        jobId: string
       }
     ) => {
       const outputPath = args.outputPath ?? join(args.folderPath as string, args.filename as string)
@@ -190,35 +142,27 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
         args.audioInSec,
         args.audioOutSec,
         outputPath,
+        args.resolution,
+        args.quality,
+        args.jobId,
         (percent) => {
-          e.sender.send('video:exportProgress', percent)
+          e.sender.send('video:exportProgress', { jobId: args.jobId, percent })
         }
       )
       return outputPath
     }
   )
+  ipcMain.handle('video:cancelExport', (_e, jobId: string) => cancelExportJob(jobId))
 
-  // Batch export ("Exportar tudo"): each clip gets rendered into this shared scratch directory via
-  // the same video:exportClipFrames handler above, then everything gets zipped up — one folder per
-  // category — and the scratch directory is removed.
-  ipcMain.handle('video:beginBatchExport', async () => mkdtemp(join(tmpdir(), 'football-batch-')))
-  ipcMain.handle(
-    'video:finishBatchExportZip',
-    async (
-      _e,
-      args: {
-        tempDir: string
-        entries: { tempPath: string; categoryLabel: string; filename: string }[]
-        outputZipPath: string
-      }
-    ) => {
-      try {
-        await zipClipsByCategory(args.entries, args.outputZipPath)
-      } finally {
-        await rm(args.tempDir, { recursive: true, force: true })
-      }
-      return args.outputZipPath
-    }
+  // Export queue panel actions: confirm a previously-exported file is still there before trusting
+  // a cache hit (state.exportCache in the renderer only remembers a path, not whether the user
+  // moved/deleted it since), and reveal a finished export in the OS file manager.
+  ipcMain.handle('fs:fileExists', (_e, filePath: string) => existsSync(filePath))
+  ipcMain.handle('shell:showItemInFolder', (_e, filePath: string) => shell.showItemInFolder(filePath))
+
+  // "Vídeo compilado" — see the big comment above concatClips() in ffmpeg.ts.
+  ipcMain.handle('video:concatClips', (_e, args: { clipPaths: string[]; outputPath: string }) =>
+    concatClips(args.clipPaths, args.outputPath)
   )
 
   // Automatic project backups: a periodic, on-disk safety net independent of the browser's own
