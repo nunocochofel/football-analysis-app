@@ -4887,18 +4887,18 @@ async function captureClipFrames(tag, fps, onProgress){
   return captureClipFramesViaPlayback(tag, fps, onProgress);
 }
 
-// Plays the clip forward for real (muted, at a high playbackRate) and grabs each decoded frame via
-// requestVideoFrameCallback, using its exact mediaTime — not the older approach of seeking to each
-// 1/fps instant one at a time. A seek pays a real cost every time (locate the nearest keyframe,
-// decode forward to the exact target), and paying that ~N times per clip was the actual reason
-// export felt endless. Sequential decode during playback is what the video pipeline is built for
-// and avoids that cost almost entirely; requestVideoFrameCallback's own delivery rate — not a
-// fixed timer — paces how fast frames come in, and a frame is captured for every fps-aligned
-// instant that's now behind the playhead, backfilling with the just-decoded frame if the pipeline
-// delivered several at once (normal at high playbackRate — the picture just doesn't change between
-// those samples, same as a freeze hold). JPEG, not PNG: these are throwaway intermediates that
-// ffmpeg re-encodes to H.264 (itself lossy) a moment later, so PNG's lossless compression buys
-// nothing here.
+// Plays the clip forward for real (muted, at normal 1x speed — see the comment further down on
+// why not faster) and grabs each decoded frame via requestVideoFrameCallback, using its exact
+// mediaTime — not the older approach of seeking to each 1/fps instant one at a time. A seek pays
+// a real cost every time (locate the nearest keyframe, decode forward to the exact target), and
+// paying that ~N times per clip was the actual reason export felt endless. Sequential decode
+// during playback is what the video pipeline is built for and avoids that cost almost entirely;
+// requestVideoFrameCallback's own delivery rate — not a fixed timer — paces how fast frames come
+// in, and a frame is captured for every fps-aligned instant that's now behind the playhead,
+// backfilling with the just-decoded frame if the pipeline ever delivers more than one per
+// fps-interval (same idea as a freeze hold). JPEG, not PNG: these are throwaway intermediates
+// that ffmpeg re-encodes to H.264 (itself lossy) a moment later, so PNG's lossless compression
+// buys nothing here.
 async function captureClipFramesViaPlayback(tag, fps, onProgress){
   const exportCanvas = document.createElement('canvas');
   exportCanvas.width = videoEl.videoWidth || 1280;
@@ -4957,14 +4957,14 @@ async function captureClipFramesViaPlayback(tag, fps, onProgress){
         videoEl.requestVideoFrameCallback(onFrame);
       }
 
-      // 16x is the nominal Chromium ceiling, but sustaining it depends on the source's resolution/
-      // codec and the machine's decode throughput — when it can't keep up, playback stalls
-      // periodically to let decode catch up, which shows up as progress "sticking" for a few
-      // seconds at a time and ends up slower overall than a rate it can actually sustain
-      // continuously. 8x still stalled on real match footage (confirmed by user testing on
-      // v0.8.19-0.8.23) — dropped further to 4x, half the decode throughput demand, still well
-      // above the old per-frame seek method's effective speed.
-      videoEl.playbackRate = 4;
+      // Any playbackRate above 1x asks the decoder to sustain faster-than-real-time throughput —
+      // 16x, then 8x, then 4x all still stalled on real match footage (confirmed by user testing
+      // across v0.8.19-0.8.24), each stall showing as progress "sticking" for several seconds
+      // while decode catches up. 1x is exactly what this pipeline is built to sustain reliably
+      // (it's ordinary playback speed — the same as just watching the video normally, which never
+      // stalls in this app) — trading away the speed win for capture that should never get stuck,
+      // still not paying the seek-per-frame cost that made the original export method so slow.
+      videoEl.playbackRate = 1;
       videoEl.play().then(() => { videoEl.requestVideoFrameCallback(onFrame); }).catch(reject);
     });
     // Playback may end a hair before outSec (rounding) — make sure the final sampled instant,
