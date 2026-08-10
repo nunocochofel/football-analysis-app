@@ -4602,29 +4602,58 @@ async function probeMp4Ready(path, mp4box, maxBytes){
 }
 
 // Uma preparação por vídeo-fonte, em cache — para que "Exportar tudo" sonde/remuxe uma vez só, não
-// uma vez por clip.
-let fastDemuxCache = null; // {forOriginalPath, path, mp4box, mp4boxfile, info}
+// uma vez por clip. Esta preparação (sondar moov e, se preciso, remuxar para faststart) é o único
+// passo cujo custo escala com o TAMANHO TOTAL da gravação (pode ser um jogo inteiro, GBs), não com
+// a duração do clip — por isso fica de fora do limite de tempo apertado usado para a descodificação
+// de cada clip (ver ensureFastDemuxSourceOrFallback), que reutiliza o resultado daqui e deve ser
+// sempre rápida independentemente do tamanho do vídeo fonte.
+let fastDemuxCache = null; // {forOriginalPath, path, mp4box, mp4boxfile, info} | {forOriginalPath, failed:true}
 async function ensureFastDemuxSource(){
   if(!isElectron() || !currentPlaybackPath || !electronVideoSourcePath) return null;
-  if(fastDemuxCache && fastDemuxCache.forOriginalPath === electronVideoSourcePath) return fastDemuxCache;
+  if(fastDemuxCache && fastDemuxCache.forOriginalPath === electronVideoSourcePath){
+    return fastDemuxCache.failed ? null : fastDemuxCache;
+  }
 
+  const t0 = performance.now();
   const mp4box = await loadMp4Box();
   const PROBE_CEILING = 64*1024*1024;
   let path = currentPlaybackPath;
   let ready = await probeMp4Ready(path, mp4box, PROBE_CEILING);
+  console.log('LINHA: captura rápida — sondagem inicial', ready ? 'encontrou moov' : 'não encontrou moov (vai remuxar)', 'em', Math.round(performance.now()-t0), 'ms');
   if(!ready){
     let faststartPath = await window.api.getFaststartCachePath(electronVideoSourcePath);
     if(!faststartPath){
+      const tRemux = performance.now();
       faststartPath = await window.api.remuxToFaststart({
         playablePath: currentPlaybackPath, cacheKeyPath: electronVideoSourcePath
       });
+      console.log('LINHA: captura rápida — remux faststart concluído em', Math.round(performance.now()-tRemux), 'ms');
     }
     path = faststartPath;
     ready = await probeMp4Ready(path, mp4box, PROBE_CEILING);
     if(!ready) throw new Error('Não foi possível indexar este vídeo para captura rápida.');
   }
   fastDemuxCache = {forOriginalPath: electronVideoSourcePath, path, mp4box, mp4boxfile: ready.mp4boxfile, info: ready.info};
+  console.log('LINHA: captura rápida — preparação total concluída em', Math.round(performance.now()-t0), 'ms');
   return fastDemuxCache;
+}
+
+// Envolve ensureFastDemuxSource com um limite de tempo generoso (é um custo único por vídeo, pode
+// legitimamente demorar mais para uma gravação grande) e, se falhar ou exceder o tempo, marca esse
+// vídeo como "falhou" em cache — para "Exportar tudo" não voltar a pagar o mesmo custo lento em
+// cada clip seguinte, só tentar uma vez por vídeo por sessão.
+async function ensureFastDemuxSourceOrFallback(){
+  if(fastDemuxCache && fastDemuxCache.forOriginalPath === electronVideoSourcePath){
+    return fastDemuxCache.failed ? null : fastDemuxCache;
+  }
+  try{
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Preparação da captura rápida excedeu o tempo limite')), 180000));
+    return await Promise.race([ensureFastDemuxSource(), timeout]);
+  }catch(err){
+    console.warn('LINHA: preparação da captura rápida falhou — desativada para este vídeo nesta sessão.', err);
+    fastDemuxCache = {forOriginalPath: electronVideoSourcePath, failed: true};
+    return null;
+  }
 }
 
 // Bytes de descrição (avcC/hvcC) que o WebCodecs precisa a par da string de codec RFC6381 que o
@@ -4663,9 +4692,8 @@ function findEndSampleIndex(samples, timescale, targetSec){
   return Math.min(samples.length-1, idx+1); // +1: margem de segurança para arredondamentos
 }
 
-async function decodeClipViaWebCodecs(tag, fps, onProgress){
-  const demux = await ensureFastDemuxSource();
-  if(!demux) throw new Error('Sem fonte de vídeo elegível para captura rápida.');
+async function decodeClipViaWebCodecs(demux, tag, fps, onProgress){
+  const tClip = performance.now();
   const { mp4box, mp4boxfile, info } = demux;
   const videoTrackInfo = info.videoTracks && info.videoTracks[0];
   if(!videoTrackInfo) throw new Error('Sem track de vídeo.');
@@ -4708,7 +4736,9 @@ async function decodeClipViaWebCodecs(tag, fps, onProgress){
   trak.nextSample = startIdx; // setExtractionOptions acima repôs isto a 0 — reposicionar à keyframe
   mp4boxfile.start();
 
+  const tRead = performance.now();
   const rangeBuf = await readFileRangeBuffer(demux.path, minOffset, maxEnd-1);
+  console.log('LINHA: captura rápida — leitura de', (maxEnd-minOffset), 'bytes (', sampleCount, 'amostras) em', Math.round(performance.now()-tRead), 'ms');
 
   const decodedSamples = await new Promise((resolve, reject) => {
     mp4boxfile.onError = (e) => reject(new Error('Erro mp4box: '+e));
@@ -4780,6 +4810,7 @@ async function decodeClipViaWebCodecs(tag, fps, onProgress){
     frames.push(lastFrameJpeg);
   }
   onProgress(100);
+  console.log('LINHA: captura rápida — clip de', (tag.outSec-tag.inSec).toFixed(1), 's concluído em', Math.round(performance.now()-tClip), 'ms (', frames.length, 'frames)');
   return frames;
 }
 
@@ -4813,11 +4844,17 @@ function drawExportFrame(ectx, exportCanvas, tag, atTime, source){
 async function captureClipFrames(tag, fps, onProgress){
   if(isElectron() && typeof VideoDecoder !== 'undefined'){
     try{
-      // A generous but finite ceiling: if something in the new path hangs instead of erroring
-      // outright (e.g. a byte-range miscalculation leaving mp4box waiting for data that never
-      // arrives), this guarantees a fall back to the known-good method instead of a stuck export.
-      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Captura rápida excedeu o tempo limite')), 25000));
-      return await Promise.race([decodeClipViaWebCodecs(tag, fps, onProgress), timeout]);
+      // Preparar a fonte (sondar/remuxar — custo único por vídeo, pode ser lento para uma
+      // gravação grande) tem o seu próprio limite de tempo, generoso, em
+      // ensureFastDemuxSourceOrFallback — separado deste, que só cobre a descodificação do
+      // clip em si (já com a fonte pronta) e por isso pode ser mais apertado: se um clip
+      // individual demorar mais do que isto depois da preparação já estar feita, algo está
+      // mesmo preso (não é só um vídeo grande a demorar) e vale a pena cair para o método antigo.
+      const demux = await ensureFastDemuxSourceOrFallback();
+      if(demux){
+        const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Descodificação do clip excedeu o tempo limite')), 30000));
+        return await Promise.race([decodeClipViaWebCodecs(demux, tag, fps, onProgress), timeout]);
+      }
     }catch(err){
       console.warn('LINHA: captura rápida via WebCodecs falhou, a usar o método de reprodução.', err);
     }
