@@ -4619,7 +4619,13 @@ async function captureClipFrames(tag, fps, onProgress){
         videoEl.requestVideoFrameCallback(onFrame);
       }
 
-      videoEl.playbackRate = 16;
+      // 16x is the nominal Chromium ceiling, but sustaining it depends on the source's resolution/
+      // codec and the machine's decode throughput — when it can't keep up, playback stalls
+      // periodically to let decode catch up, which shows up as progress "sticking" for a few
+      // seconds at a time and ends up slower overall than a rate it can actually sustain
+      // continuously. 8x is comfortably within what typical hardware decodes smoothly for
+      // broadcast-resolution footage, while still being far faster than the old per-frame seek.
+      videoEl.playbackRate = 8;
       videoEl.play().then(() => { videoEl.requestVideoFrameCallback(onFrame); }).catch(reject);
     });
     // Playback may end a hair before outSec (rounding) — make sure the final sampled instant,
