@@ -135,8 +135,9 @@
   .clip-sidebar-actions .btn{width:100%; justify-content:center;}
 
   .cat-group{border-bottom:1px solid #1e2530;}
+  .cat-group-headrow{display:flex; align-items:center;}
   .cat-group-head{
-    display:flex; align-items:center; gap:8px; width:100%; padding:9px 14px; background:transparent; border:none;
+    display:flex; align-items:center; gap:8px; flex:1; min-width:0; padding:9px 14px; background:transparent; border:none;
     color:var(--chalk); font-size:12.5px; font-weight:600; text-align:left;
   }
   .cat-group-head:hover{background:var(--panel-alt);}
@@ -144,6 +145,12 @@
   .cat-group-head .sw{width:9px; height:9px; border-radius:50%; flex-shrink:0;}
   .cat-group-name{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .cat-group-count{color:var(--muted); font-family:'IBM Plex Mono'; font-size:11px;}
+  .cat-group-export-btn{
+    flex-shrink:0; width:24px; height:24px; margin-right:10px; border-radius:4px; border:none;
+    background:transparent; color:var(--muted); font-size:12px; cursor:pointer;
+  }
+  .cat-group-export-btn:hover:not(:disabled){background:var(--panel-alt); color:var(--chalk);}
+  .cat-group-export-btn:disabled{opacity:0.3; cursor:default;}
   .cat-group-body{padding:2px 8px 8px 26px; display:flex; flex-direction:column; gap:4px;}
 
   .clip-row{background:var(--panel-alt); border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden;}
@@ -4274,17 +4281,27 @@ function renderClipTable(){
     const isOpen = openCategoryGroups.has(c.id);
     return `
     <div class="cat-group">
-      <button class="cat-group-head" data-cid="${c.id}">
-        <span class="chev">${isOpen ? '▾' : '▸'}</span>
-        <span class="sw" style="background:${c.color}"></span>
-        <span class="cat-group-name">${escapeHtml(c.label)}</span>
-        <span class="cat-group-count">${items.length}</span>
-      </button>
+      <div class="cat-group-headrow">
+        <button class="cat-group-head" data-cid="${c.id}">
+          <span class="chev">${isOpen ? '▾' : '▸'}</span>
+          <span class="sw" style="background:${c.color}"></span>
+          <span class="cat-group-name">${escapeHtml(c.label)}</span>
+          <span class="cat-group-count">${items.length}</span>
+        </button>
+        <button class="cat-group-export-btn" data-cid="${c.id}" title="Exportar clipes desta categoria" ${items.length ? '' : 'disabled'}>⬇</button>
+      </div>
       ${isOpen ? `<div class="cat-group-body">${
         items.length ? items.map(t => renderClipRow(t, c)).join('') : '<div class="empty-row" style="padding:8px;">Sem clipes</div>'
       }</div>` : ''}
     </div>`;
   }).join('');
+
+  tree.querySelectorAll('.cat-group-export-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportCategoryClips(btn.dataset.cid);
+    });
+  });
 
   tree.querySelectorAll('.cat-group-head').forEach(head => {
     head.addEventListener('click', () => {
@@ -4841,8 +4858,16 @@ function drawExportFrame(ectx, exportCanvas, tag, atTime, source){
 // "play" it, so there's no real-time playback pacing to stall on. Any failure there (unsupported
 // codec, WebCodecs unavailable, a demux/decode bug) transparently falls back to the proven
 // playback-based method below, so this can never behave worse than it already did.
+const FAST_CAPTURE_VIA_WEBCODECS_ENABLED = false; // ver nota abaixo
 async function captureClipFrames(tag, fps, onProgress){
-  if(isElectron() && typeof VideoDecoder !== 'undefined'){
+  // DESATIVADO (v0.8.23): confirmado, com o utilizador, que a preparação (sondar/remuxar o
+  // ficheiro fonte) está a exceder mesmo o limite generoso de 3 minutos com vídeos reais de jogo
+  // completo, deixando a app a parecer bloqueada durante essa espera antes de finalmente cair
+  // para o método de reprodução — pior do que nunca ter tentado. Duas rondas de correções (fixar
+  // hardwareAcceleration, separar os limites de tempo) não foram suficientes sem conseguir testar
+  // contra um vídeo do tamanho real de um jogo completo. O código fica todo aqui, intacto, para
+  // retomar este trabalho mais tarde com melhor forma de testar — não apagar.
+  if(FAST_CAPTURE_VIA_WEBCODECS_ENABLED && isElectron() && typeof VideoDecoder !== 'undefined'){
     try{
       // Preparar a fonte (sondar/remuxar — custo único por vídeo, pode ser lento para uma
       // gravação grande) tem o seu próprio limite de tempo, generoso, em
@@ -5011,10 +5036,13 @@ async function exportClip(tag){
   }
 }
 
-// "Exportar tudo" bundles every filtered clip into a single .zip — one folder per category,
-// clips named "Categoria_N.mp4" inside it — instead of a folder full of loose files.
-async function exportAllClips(){
-  const list = getFilteredTags().filter(t => t.mode !== 'stopwatch').sort((a,b) => a.inSec - b.inSec);
+// Shared by "Exportar tudo" and a per-categoria export (o botão ⬇ junto a cada categoria na
+// árvore de clipes) — captura cada clip da lista e compacta tudo num único .zip, uma pasta por
+// categoria dentro dele (uma exportação de uma só categoria produz só uma pasta). Exportar
+// categoria a categoria dá lotes mais pequenos e independentes: um problema numa categoria não
+// arrisca perder o trabalho já feito nas outras, e o utilizador só tem de esperar pelo que
+// precisa de fato naquele momento.
+async function exportTagsAsZip(list, confirmMessage){
   if(!list.length){ toast('Sem clipes para exportar.'); return; }
   if(!isElectron()){ toast('A exportação de vídeo requer a aplicação instalada (não funciona num browser comum).'); return; }
   if(exportBusy){ toast('Já há uma exportação em curso — aguarda terminar.'); return; }
@@ -5022,7 +5050,7 @@ async function exportAllClips(){
 
   const zipPath = await window.api.saveClipZip();
   if(!zipPath) return;
-  if(!confirm('Vais exportar '+list.length+' clipe(s) para um único ficheiro .zip, organizados por categoria. Continuar?')) return;
+  if(!confirm(confirmMessage)) return;
 
   exportBusy = true;
   const originalTime = videoEl.currentTime;
@@ -5053,6 +5081,18 @@ async function exportAllClips(){
     exportBusy = false;
     if(videoEl.duration) videoEl.currentTime = originalTime;
   }
+}
+
+async function exportAllClips(){
+  const list = getFilteredTags().filter(t => t.mode !== 'stopwatch').sort((a,b) => a.inSec - b.inSec);
+  await exportTagsAsZip(list, 'Vais exportar '+list.length+' clipe(s) para um único ficheiro .zip, organizados por categoria. Continuar?');
+}
+
+async function exportCategoryClips(catId){
+  const cat = catById(catId);
+  const label = cat ? cat.label : 'categoria';
+  const list = getFilteredTags().filter(t => t.mode !== 'stopwatch' && t.categoryId === catId).sort((a,b) => a.inSec - b.inSec);
+  await exportTagsAsZip(list, 'Vais exportar '+list.length+' clipe(s) da categoria "'+label+'" para um ficheiro .zip. Continuar?');
 }
 
 document.getElementById('btnExportAll').addEventListener('click', exportAllClips);
