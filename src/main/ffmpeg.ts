@@ -75,10 +75,13 @@ export async function transcodeForPlayback(
 ): Promise<string> {
   await mkdir(playbackCacheDir(), { recursive: true })
   const outputPath = transcodedCachePath(sourcePath)
+  // ffmpeg picks the output container purely from the filename's last extension — "*.mp4.tmp"
+  // has none it recognizes ("Unable to choose an output format"), so -f mp4 pins it explicitly
+  // regardless of what the temp filename looks like.
   const tmpOutputPath = outputPath + '.tmp'
   await runProcess(
     ffmpegPath,
-    ['-y', '-i', sourcePath, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', tmpOutputPath],
+    ['-y', '-i', sourcePath, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-f', 'mp4', tmpOutputPath],
     (line) => {
       const t = parseFfmpegTimeSec(line)
       if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
@@ -179,7 +182,11 @@ export async function exportClipFramesWithAudio(
     if (hasAudio) args.push('-map', '1:a?')
     args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p')
     if (hasAudio) args.push('-c:a', 'aac', '-b:a', '192k', '-shortest')
-    args.push('-movflags', '+faststart', tmpOutputPath)
+    // ffmpeg picks the output container purely from the filename's last extension — "*.mp4.tmp"
+    // has none it recognizes ("Unable to choose an output format"), so -f mp4 pins it explicitly.
+    // This was the actual cause of "Não foi possível concluir a exportação": every export failed
+    // at this exact ffmpeg invocation, regardless of anything upstream (frames, audio, JPEG vs PNG).
+    args.push('-movflags', '+faststart', '-f', 'mp4', tmpOutputPath)
 
     await runProcess(ffmpegPath, args, (line) => {
       const t = parseFfmpegTimeSec(line)
