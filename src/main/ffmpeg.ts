@@ -245,6 +245,70 @@ function scaleFilterArgs(resolution: ExportResolution): string[] {
   return ['-vf', `scale=w='min(iw,${w})':h='min(ih,${h})':force_original_aspect_ratio=decrease:force_divisible_by=2`]
 }
 
+// Direct trim: for a clip with no shapes/zoom/freezes — the things that actually need per-frame
+// canvas compositing — there is nothing for the renderer's capture loop to contribute at all, so
+// skip it entirely and have ffmpeg cut straight from the source file. Real measurement
+// (scripts/export-bench) showed JPEG-encoding each captured frame in the renderer was the single
+// largest cost in a clip export (bigger than ffmpeg's own encode, bigger than decode, far bigger
+// than drawing overlays) — this path avoids paying it at all for the — likely large — fraction of
+// tagged clips that are plain cuts with no drawings. `-ss` before `-i` is a fast demuxer-level
+// seek to the nearest keyframe at/before the target; ffmpeg's accurate_seek (on by default since
+// 2.1) then decodes-and-discards up to the exact requested timestamp before encoding starts, so
+// this is both fast AND frame-accurate — unlike a true `-c copy` stream-copy trim, which can only
+// cut on keyframe boundaries and would silently shift a clip's start by up to a GOP's length.
+// A side effect: unlike the JS pipeline (which resamples to CLIP_EXPORT_FPS), this preserves the
+// source's native frame rate — strictly smoother, never a regression.
+export async function exportClipDirect(
+  sourceVideoPath: string,
+  inSec: number,
+  outSec: number,
+  outputPath: string,
+  resolution: ExportResolution,
+  quality: ExportQuality,
+  jobId: string,
+  onProgress: (percent: number) => void
+): Promise<void> {
+  const tmpOutputPath = outputPath + '.tmp'
+  const durationSec = Math.max(0.05, outSec - inSec)
+
+  function buildArgs(hw: HwEncoder | null): string[] {
+    const args = ['-y', '-ss', String(inSec), '-i', sourceVideoPath, '-t', String(durationSec), '-map', '0:v', '-map', '0:a?']
+    args.push(...scaleFilterArgs(resolution))
+    if (hw) {
+      args.push('-c:v', hw.codec, ...hwQualityArgs(hw.codec, quality), '-pix_fmt', 'yuv420p')
+    } else {
+      args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(CRF_BY_QUALITY[quality]), '-pix_fmt', 'yuv420p')
+    }
+    args.push('-c:a', 'aac', '-b:a', '192k', '-shortest')
+    args.push('-movflags', '+faststart', '-f', 'mp4', tmpOutputPath)
+    return args
+  }
+
+  async function runEncode(hw: HwEncoder | null): Promise<void> {
+    await runProcess(
+      ffmpegPath,
+      buildArgs(hw),
+      (line) => {
+        const t = parseFfmpegTimeSec(line)
+        if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
+      },
+      (proc) => activeExportJobs.set(jobId, proc)
+    )
+  }
+
+  const hw = await detectHardwareEncoder()
+  try {
+    await runEncode(hw)
+  } catch (err) {
+    const cancelled = err instanceof Error && err.message === EXPORT_CANCELLED_MESSAGE
+    if (cancelled || !hw) throw err
+    await runEncode(null)
+  } finally {
+    activeExportJobs.delete(jobId)
+  }
+  await rename(tmpOutputPath, outputPath)
+}
+
 // Fast clip export: the renderer seeks the video frame-by-frame (not real-time playback) and
 // draws each one onto an offscreen canvas — video frame + zoom crop + whatever drawings/freezes
 // are active at that instant — so a 10-minute clip with 40 drawings takes as long as it takes to
@@ -256,7 +320,7 @@ function scaleFilterArgs(resolution: ExportResolution): string[] {
 // is both fast and lossless). If a clip has freeze points the video track ends up slightly longer
 // than the audio; -shortest just lets it run out near the end rather than stretching to fit.
 export async function exportClipFramesWithAudio(
-  frames: string[],
+  frames: Uint8Array[],
   fps: number,
   sourceVideoPath: string | null,
   audioInSec: number,
@@ -267,12 +331,19 @@ export async function exportClipFramesWithAudio(
   jobId: string,
   onProgress: (percent: number) => void
 ): Promise<void> {
+  // Opt-in wall-clock instrumentation for the export benchmark harness (scripts/export-bench) —
+  // EXPORT_BENCH is never set in a normal run, so this whole block is dead weight (one env lookup)
+  // for everyone else.
+  const bench = process.env.EXPORT_BENCH === '1'
+  const tStart = bench ? Date.now() : 0
   const workDir = await mkdtemp(join(tmpdir(), 'football-clip-frames-'))
   try {
+    const tWrite0 = bench ? Date.now() : 0
     for (let i = 0; i < frames.length; i++) {
       const framePath = join(workDir, `frame_${String(i).padStart(5, '0')}.jpg`)
-      await writeFile(framePath, Buffer.from(frames[i], 'base64'))
+      await writeFile(framePath, frames[i])
     }
+    if (bench) console.log(`[export-bench-main] frameWriteMs=${Date.now() - tWrite0} frameCount=${frames.length}`)
     const pattern = join(workDir, 'frame_%05d.jpg')
     const durationSec = frames.length / fps
     const tmpOutputPath = outputPath + '.tmp'
@@ -312,7 +383,10 @@ export async function exportClipFramesWithAudio(
       )
     }
 
+    const tHw0 = bench ? Date.now() : 0
     const hw = await detectHardwareEncoder()
+    if (bench) console.log(`[export-bench-main] hwDetectMs=${Date.now() - tHw0} encoder=${hw ? hw.codec : 'libx264(cpu)'}`)
+    const tEncode0 = bench ? Date.now() : 0
     try {
       await runEncode(hw)
     } catch (err) {
@@ -329,9 +403,11 @@ export async function exportClipFramesWithAudio(
     } finally {
       activeExportJobs.delete(jobId)
     }
+    if (bench) console.log(`[export-bench-main] encodeMs=${Date.now() - tEncode0}`)
     await rename(tmpOutputPath, outputPath)
   } finally {
     await rm(workDir, { recursive: true, force: true })
+    if (bench) console.log(`[export-bench-main] totalMs=${Date.now() - tStart}`)
   }
 }
 

@@ -7,6 +7,7 @@ import Papa from 'papaparse'
 import {
   probeVideo,
   exportClipFramesWithAudio,
+  exportClipDirect,
   exportImageSequence,
   concatClips,
   hasTranscodedCache,
@@ -124,7 +125,7 @@ export function registerIpcHandlers(
     async (
       e,
       args: {
-        frames: string[]
+        frames: Uint8Array[]
         fps: number
         sourceVideoPath: string | null
         audioInSec: number
@@ -144,6 +145,41 @@ export function registerIpcHandlers(
         args.sourceVideoPath,
         args.audioInSec,
         args.audioOutSec,
+        outputPath,
+        args.resolution,
+        args.quality,
+        args.jobId,
+        (percent) => {
+          e.sender.send('video:exportProgress', { jobId: args.jobId, percent })
+        }
+      )
+      return outputPath
+    }
+  )
+  // Direct trim (no renderer capture at all): see the big comment above exportClipDirect() in
+  // ffmpeg.ts — used instead of video:exportClipFrames when a clip has no shapes/zoom/freezes for
+  // the renderer to composite, so there's nothing for the JS capture pipeline to contribute.
+  ipcMain.handle(
+    'video:exportClipDirect',
+    async (
+      e,
+      args: {
+        sourceVideoPath: string
+        inSec: number
+        outSec: number
+        outputPath?: string
+        folderPath?: string
+        filename?: string
+        resolution: ExportResolution
+        quality: ExportQuality
+        jobId: string
+      }
+    ) => {
+      const outputPath = args.outputPath ?? join(args.folderPath as string, args.filename as string)
+      await exportClipDirect(
+        args.sourceVideoPath,
+        args.inSec,
+        args.outSec,
         outputPath,
         args.resolution,
         args.quality,

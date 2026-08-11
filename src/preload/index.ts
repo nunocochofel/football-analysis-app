@@ -31,7 +31,7 @@ const api = {
 
   selectExportFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:selectExportFolder'),
   exportClipFrames: (args: {
-    frames: string[]
+    frames: Uint8Array[]
     fps: number
     sourceVideoPath: string | null
     audioInSec: number
@@ -43,6 +43,17 @@ const api = {
     quality: 'high' | 'balanced' | 'small'
     jobId: string
   }): Promise<string> => ipcRenderer.invoke('video:exportClipFrames', args),
+  exportClipDirect: (args: {
+    sourceVideoPath: string
+    inSec: number
+    outSec: number
+    outputPath?: string
+    folderPath?: string
+    filename?: string
+    resolution: 'original' | '1080p' | '720p'
+    quality: 'high' | 'balanced' | 'small'
+    jobId: string
+  }): Promise<string> => ipcRenderer.invoke('video:exportClipDirect', args),
   cancelExport: (jobId: string): Promise<boolean> => ipcRenderer.invoke('video:cancelExport', jobId),
   concatClips: (args: { clipPaths: string[]; outputPath: string }): Promise<void> =>
     ipcRenderer.invoke('video:concatClips', args),

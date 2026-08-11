@@ -4710,27 +4710,36 @@ function ensureExportVideoLoaded(){
 }
 
 // Draws one export frame (video frame + zoom crop + active shapes) onto the offscreen export
-// canvas and returns it as a base64 JPEG. canvas.toBlob() encodes without blocking the main
-// thread's synchronous execution — unlike toDataURL(), which does the JPEG encode + base64
-// conversion as one long blocking call. For a small canvas the difference is invisible, but for a
-// full-HD+ source frame (a real match recording) that single blocking call can itself take a very
-// noticeable stretch — long enough that no amount of yielding *between* frames helps, since the
-// block is *inside* one encode call, not in the gaps around it. This was the actual cause of
-// export still feeling "stuck" even at plain 1x playback speed with an explicit per-frame yield:
-// the bottleneck was never how fast frames arrived, it was how long each one took to encode.
-function canvasToBase64Jpeg(canvas, quality){
+// canvas and returns it as a JPEG-encoded Uint8Array. canvas.toBlob() encodes without blocking the
+// main thread's synchronous execution — unlike toDataURL(), which does the JPEG encode + base64
+// conversion as one long blocking call.
+//
+// Real measurement (scripts/export-bench, before this fix): base64 text conversion via
+// FileReader.readAsDataURL() — not the JPEG encode itself, not decode, not drawing — was 42-55% of
+// TOTAL export wall time across every clip length tested (10s/30s/60s, with and without overlays).
+// blob.arrayBuffer() gets the exact same compressed JPEG bytes straight out of toBlob() with no
+// text-encoding pass at all, and Electron's IPC (structured clone) transfers a Uint8Array to the
+// main process natively — no base64 there either, and no Buffer.from(base64) decode on arrival.
+// `bench` is an optional accumulator ({drawMs, jpegEncodeMs, ...}) used only by the export
+// benchmark harness (scripts/export-bench) — a few performance.now() calls per frame is
+// negligible next to the actual encode/draw work, so this stays wired in unconditionally rather
+// than behind a flag, but every existing caller that doesn't pass one behaves identically.
+function canvasToJpegBytes(canvas, quality, bench){
+  const t0 = bench ? performance.now() : 0;
   return new Promise((resolve, reject) => {
-    canvas.toBlob(blob => {
+    canvas.toBlob(async blob => {
       if(!blob){ reject(new Error('Falha ao codificar o frame.')); return; }
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(blob);
+      try{
+        const buf = await blob.arrayBuffer();
+        if(bench) bench.jpegEncodeMs = (bench.jpegEncodeMs||0) + (performance.now()-t0);
+        resolve(new Uint8Array(buf));
+      }catch(err){ reject(err); }
     }, 'image/jpeg', quality);
   });
 }
 
-async function drawExportFrame(ectx, exportCanvas, tag, atTime, source){
+async function drawExportFrame(ectx, exportCanvas, tag, atTime, source, bench){
+  const tDraw0 = bench ? performance.now() : 0;
   const zoom = tag.zoom;
   if(zoom && zoom.scale > 1){
     const sw = exportCanvas.width/zoom.scale, sh = exportCanvas.height/zoom.scale;
@@ -4745,7 +4754,8 @@ async function drawExportFrame(ectx, exportCanvas, tag, atTime, source){
     const end = s.endSec!=null ? s.endSec : tag.outSec;
     if(atTime>=start && atTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
   });
-  return canvasToBase64Jpeg(exportCanvas, 0.88);
+  if(bench) bench.drawMs = (bench.drawMs||0) + (performance.now()-tDraw0);
+  return canvasToJpegBytes(exportCanvas, 0.88, bench);
 }
 
 const EXPORT_CANCELLED = 'EXPORT_CANCELLED'; // must match ffmpeg.ts's EXPORT_CANCELLED_MESSAGE
@@ -4762,44 +4772,80 @@ const EXPORT_CANCELLED = 'EXPORT_CANCELLED'; // must match ffmpeg.ts's EXPORT_CA
 // sustain reliably, the same speed the video already plays at normally without ever stalling.
 // `isCancelled()` is checked at the same natural yield point between frames so a queue item's
 // "Cancelar" reaches this loop promptly without needing to poll on a timer of its own.
-async function captureClipFrames(el, tag, fps, onProgress, isCancelled){
+// `bench`: optional accumulator populated with wall-clock phase timings for the export benchmark
+// harness (scripts/export-bench) — see canvasToJpegBytes above for why this is unconditional.
+// `decodeWaitMs` specifically isolates time spent *waiting for rVFC to deliver the next decoded
+// frame* (i.e. the video decoder's own real-time pacing, since playbackRate is pinned to 1) from
+// time spent actually drawing/encoding — the two have very different fixes if either turns out to
+// dominate.
+// Sizes the capture canvas to the REQUESTED export resolution instead of always the full source
+// resolution — shapes are drawn in normalized 0-1 coordinates and drawImage's destination size
+// already does the scaling, so this needs no other change anywhere else in the draw path. Real
+// measurement (scripts/export-bench) showed per-frame JPEG encode time as the dominant cost in
+// this pipeline, and encode time scales with pixel count — capturing at 1080p just to have ffmpeg
+// immediately downscale to 720p was pure wasted work whenever a user picks anything but "original".
+// Mirrors ffmpeg.ts's scaleFilterArgs (never upscale a smaller source; force even dimensions).
+function computeExportCanvasSize(sourceW, sourceH, resolution){
+  const w = sourceW || 1280, h = sourceH || 720;
+  if(resolution === 'original' || resolution == null) return {w, h};
+  const targets = {'1080p':[1920,1080], '720p':[1280,720]};
+  const target = targets[resolution];
+  if(!target) return {w, h};
+  const scale = Math.min(1, target[0]/w, target[1]/h);
+  return { w: Math.max(2, Math.round(w*scale/2)*2), h: Math.max(2, Math.round(h*scale/2)*2) };
+}
+async function captureClipFrames(el, tag, fps, resolution, onProgress, isCancelled, bench){
+  const tStart = bench ? performance.now() : 0;
   const exportCanvas = document.createElement('canvas');
-  exportCanvas.width = el.videoWidth || 1280;
-  exportCanvas.height = el.videoHeight || 720;
+  const canvasSize = computeExportCanvasSize(el.videoWidth, el.videoHeight, resolution);
+  exportCanvas.width = canvasSize.w;
+  exportCanvas.height = canvasSize.h;
   const ectx = exportCanvas.getContext('2d');
   const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
   const frameInterval = 1/fps;
   const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
 
   function drawFrame(atTime){
-    return drawExportFrame(ectx, exportCanvas, tag, atTime, el);
+    return drawExportFrame(ectx, exportCanvas, tag, atTime, el, bench);
   }
 
   if(typeof el.requestVideoFrameCallback !== 'function'){
     return captureClipFramesBySeeking(el, tag, fps, drawFrame, onProgress, isCancelled);
   }
 
+  const tSeek0 = bench ? performance.now() : 0;
   el.pause();
   await seekVideoTo(el, tag.inSec);
+  if(bench) bench.seekMs = (bench.seekMs||0) + (performance.now()-tSeek0);
 
   const frames = [];
   const originalMuted = el.muted;
   const originalRate = el.playbackRate;
   el.muted = true;
+  let tLastFrameEnd = bench ? performance.now() : 0;
 
   try{
+    // Pipelining: drawFrame() draws synchronously and hands the canvas to toBlob() *before*
+    // returning — toBlob's own spec requires it to snapshot the bitmap synchronously at call time
+    // and encode in the background, which is exactly why it's safe to immediately draw the NEXT
+    // frame without waiting for THIS one's JPEG encode to finish. Not awaiting drawFrame() here
+    // (pushing its promise instead of its resolved value) lets JPEG encoding for frame N run on
+    // its own thread while the main thread moves on to decode-wait + draw for frame N+1, instead of
+    // the two being strictly serial. Real measurement (scripts/export-bench) showed decode-wait
+    // averaging far less per frame than JPEG-encode — serializing them was adding the full encode
+    // cost on top of decode-pacing for every single frame.
     await new Promise((resolve, reject) => {
       let nextSampleTime = tag.inSec;
       let freezeIdx = 0;
 
-      async function captureUpTo(t){
+      function captureUpTo(t){
         while(nextSampleTime <= t && nextSampleTime <= tag.outSec + 1e-6){
-          const frame = await drawFrame(nextSampleTime);
-          frames.push(frame);
+          const framePromise = drawFrame(nextSampleTime);
+          frames.push(framePromise);
           onProgress(Math.min(99, Math.round((nextSampleTime-tag.inSec)/totalSec*100)));
           while(freezeIdx < freezes.length && freezes[freezeIdx].atSec <= nextSampleTime){
             const holdFrames = Math.max(1, Math.round(Math.max(0, freezes[freezeIdx].holdSec) * fps));
-            for(let h=0; h<holdFrames; h++) frames.push(frame);
+            for(let h=0; h<holdFrames; h++) frames.push(framePromise);
             freezeIdx++;
           }
           nextSampleTime += frameInterval;
@@ -4807,36 +4853,44 @@ async function captureClipFrames(el, tag, fps, onProgress, isCancelled){
       }
 
       async function onFrame(now, metadata){
+        if(bench){
+          const tNow = performance.now();
+          bench.decodeWaitMs = (bench.decodeWaitMs||0) + (tNow-tLastFrameEnd);
+        }
         try{
           if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
-          await captureUpTo(metadata.mediaTime);
+          captureUpTo(metadata.mediaTime);
           if(metadata.mediaTime >= tag.outSec || el.ended){
             el.pause();
             resolve();
             return;
           }
         }catch(err){ el.pause(); reject(err); return; }
-        // requestVideoFrameCallback already yields between calls, and awaiting the (non-blocking)
-        // encode above yields too — this extra explicit macrotask yield just guarantees the
-        // browser gets a real turn to paint (queue panel progress, window controls, etc.) after
-        // every captured frame, on top of that.
+        // requestVideoFrameCallback already yields between calls — this extra explicit macrotask
+        // yield just guarantees the browser gets a real turn to paint (queue panel progress, window
+        // controls, etc.) after every captured frame, on top of that.
         await new Promise(r => setTimeout(r, 0));
+        if(bench) tLastFrameEnd = performance.now();
         el.requestVideoFrameCallback(onFrame);
       }
 
       el.playbackRate = 1;
-      el.play().then(() => { el.requestVideoFrameCallback(onFrame); }).catch(reject);
+      el.play().then(() => { tLastFrameEnd = bench ? performance.now() : 0; el.requestVideoFrameCallback(onFrame); }).catch(reject);
     });
     if(!frames.length || (tag.outSec - tag.inSec) > (frames.length/fps) + frameInterval){
-      const frame = await drawFrame(tag.outSec);
-      frames.push(frame);
+      frames.push(drawFrame(tag.outSec));
     }
   } finally {
     el.muted = originalMuted;
     el.playbackRate = originalRate;
   }
+  const resolvedFrames = await Promise.all(frames);
   onProgress(100);
-  return frames;
+  if(bench){
+    bench.captureTotalMs = performance.now()-tStart;
+    bench.frameCount = resolvedFrames.length;
+  }
+  return resolvedFrames;
 }
 
 // Fallback path (no requestVideoFrameCallback support): seek-per-frame.
@@ -4914,6 +4968,11 @@ function syncExportBackgroundState(){
 // Canonical export parameters — anything in here changing means the previous output no longer
 // matches, and anything NOT in here (categoryId, teamId, playerId, outcome...) has no effect on
 // the exported pixels/audio, so changing those alone must NOT invalidate a cache hit.
+// Shapes/zoom/freezes are the only things a clip export actually needs the renderer's canvas for
+// (video+audio trimming needs no per-frame JS at all) — see exportClipDirect() in ffmpeg.ts.
+function isDirectTrimEligible(tag){
+  return (!tag.shapes || tag.shapes.length===0) && !tag.zoom && (!tag.freezes || tag.freezes.length===0);
+}
 function buildExportSpec(tag, options){
   return {
     inSec: tag.inSec, outSec: tag.outSec,
@@ -4965,54 +5024,157 @@ async function enqueueForExport(tags, options){
   processExportQueue();
 }
 
+// Bounds how many ffmpeg encodes run at once. Deliberately NOT "more workers = faster" — measured
+// with a real batch export (4 and 8 queued clips, .tmp-export-bench) at concurrency 1/2/4 on this
+// machine's Intel Quick Sync iGPU: 1->2 was a clear, repeatable ~30-40% reduction in total batch
+// time; 2->4 was a wash (faster on the 4-clip batch, marginally slower on the 8-clip one — within
+// run-to-run noise, not a real further gain either way). Both runs also showed throughput visibly
+// dropping for clips started after the first wave, regardless of the concurrency setting — some
+// encoder-side degradation under sustained load that raising this number doesn't fix. 2 is the
+// smallest number that captured the real, repeatable win.
+const EXPORT_ENCODE_CONCURRENCY = 2;
+let activeExportEncodes = 0;
+const exportEncodeWaiters = [];
+function acquireEncodeSlot(){
+  if(activeExportEncodes < EXPORT_ENCODE_CONCURRENCY){ activeExportEncodes++; return Promise.resolve(); }
+  return new Promise(resolve => exportEncodeWaiters.push(resolve));
+}
+function releaseEncodeSlot(){
+  activeExportEncodes--;
+  const next = exportEncodeWaiters.shift();
+  if(next){ activeExportEncodes++; next(); }
+}
+
 async function processExportQueue(){
   if(exportQueueRunning) return;
   exportQueueRunning = true;
+  // Only the CAPTURE half of each item (video decode + canvas draw, which all share the one
+  // hidden <video> element) is serialized by this loop — the ENCODE half (a separate ffmpeg OS
+  // process either way) is kicked off and tracked here instead of awaited, so item N+1's capture
+  // can run while item N is still encoding. Real measurement (scripts/export-bench) confirmed
+  // capture and encode don't compete for the same resource, so there was no reason for one to
+  // block the other beyond the concurrency limiter above.
+  const pendingEncodes = [];
   try{
     while(true){
       const item = exportQueue.find(i => i.status === 'waiting');
       if(!item) break;
-      await processExportItem(item);
+      const result = await beginExportItem(item);
+      if(result) pendingEncodes.push(result.tail);
     }
   } finally {
     exportQueueRunning = false;
   }
+  await Promise.all(pendingEncodes);
   maybeStartCombinedExport();
 }
 
-async function processExportItem(item){
+// Runs an item's capture phase (serialized — shares the one hidden <video> element) and returns
+// {tail: <promise for its encode phase>}. The tail promise is wrapped in a plain object rather
+// than returned directly: an async function that `return`s a promise has its OWN promise adopt
+// that inner promise before settling, so a caller doing `await beginExportItem(item)` would still
+// end up waiting for the full encode either way — defeating the entire point of not blocking the
+// next item's capture on it. Wrapping it in a non-thenable object is what actually lets the queue
+// loop move on as soon as capture (or, for the fast path, nothing) is done. Fast-path items have no
+// capture phase at all, so they go straight to being handed to the encode-concurrency limiter.
+async function beginExportItem(item){
+  if(window.__EXPORT_BENCH__) console.log('[export-bench-debug] beginExportItem tagId='+item.tagId+' itemId='+item.id+' queueLen='+exportQueue.length+' allStatuses='+exportQueue.map(i=>i.status).join(','));
   const tag = state.tags.find(t => t.id === item.tagId);
-  if(!tag){ item.status = 'error'; item.error = 'O corte foi removido antes de ser exportado.'; renderExportQueuePanel(); return; }
+  if(!tag){ item.status = 'error'; item.error = 'O corte foi removido antes de ser exportado.'; renderExportQueuePanel(); return null; }
   item.status = 'processing';
   item.jobId = uid();
   renderExportQueuePanel();
+  // Opt-in wall-clock instrumentation for the export benchmark harness (scripts/export-bench) —
+  // window.__EXPORT_BENCH__ is never set in normal use, so this is a no-op branch for everyone
+  // else. Logged (not returned) because the harness drives this via real DOM events, same as it
+  // drives the rest of the app, and reads results back from the console.
+  const bench = window.__EXPORT_BENCH__ ? {} : null;
+  const tItemStart = bench ? performance.now() : 0;
+
+  if(isDirectTrimEligible(tag) && electronVideoSourcePath){
+    // No shapes/zoom/freezes means there is nothing for the renderer's canvas pipeline to
+    // contribute — ffmpeg cuts straight from the source file instead. Real measurement
+    // (scripts/export-bench) showed the renderer's per-frame JPEG encode was the single largest
+    // cost in a clip export, well ahead of ffmpeg's own encode — this path skips it entirely
+    // rather than trying to speed it up, for what's likely the majority of tagged clips (a plain
+    // cut with no drawings).
+    return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, true, async () =>
+      window.api.exportClipDirect({
+        sourceVideoPath: electronVideoSourcePath, inSec: tag.inSec, outSec: tag.outSec,
+        folderPath: item.options.destFolder, filename: item.filename,
+        resolution: item.options.resolution, quality: item.options.quality, jobId: item.jobId
+      })
+    ) };
+  }
+
   try{
     const el = await ensureExportVideoLoaded();
-    const frames = await captureClipFrames(el, tag, CLIP_EXPORT_FPS, pct => {
+    const frames = await captureClipFrames(el, tag, CLIP_EXPORT_FPS, item.options.resolution, pct => {
       item.progress = Math.round(pct*0.5);
       renderExportQueuePanel();
-    }, () => item.cancelRequested);
+    }, () => item.cancelRequested, bench);
     if(item.cancelRequested) throw new Error(EXPORT_CANCELLED);
     item.progress = 50;
     renderExportQueuePanel();
-    const outputPath = await window.api.exportClipFrames({
-      frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
-      audioInSec: tag.inSec, audioOutSec: tag.outSec,
-      folderPath: item.options.destFolder, filename: item.filename,
-      resolution: item.options.resolution, quality: item.options.quality, jobId: item.jobId
-    });
+    return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, false, async () =>
+      window.api.exportClipFrames({
+        frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
+        audioInSec: tag.inSec, audioOutSec: tag.outSec,
+        folderPath: item.options.destFolder, filename: item.filename,
+        resolution: item.options.resolution, quality: item.options.quality, jobId: item.jobId
+      })
+    ) };
+  }catch(err){
+    finishExportItemWithError(item, err);
+    return null;
+  }
+}
+
+// The encode "tail": gated by the concurrency limiter, runs the actual IPC call (ffmpeg), and
+// updates the item's final state. Returned as a promise the queue loop tracks but doesn't block
+// on — cancelling still works normally since item.jobId/cancelExportJob() reach the ffmpeg
+// process directly, independent of whether this promise has been awaited by anything yet.
+async function runExportEncode(item, bench, tItemStart, clipDurationSec, fastPath, runIpc){
+  await acquireEncodeSlot();
+  // A cancel requested while this item was queued behind the concurrency limit (still 'processing'
+  // in the UI, but ffmpeg was never actually spawned for it yet) has no in-flight process for
+  // window.api.cancelExport(jobId) to reach — activeExportJobs in the main process only gets an
+  // entry once ffmpeg actually starts. Check here, before spending a slot on it, so a cancel during
+  // that wait doesn't silently do nothing.
+  if(item.cancelRequested){
+    releaseEncodeSlot();
+    finishExportItemWithError(item, new Error(EXPORT_CANCELLED));
+    return;
+  }
+  try{
+    const tIpc0 = bench ? performance.now() : 0;
+    const outputPath = await runIpc();
     item.status = 'done';
     item.progress = 100;
     item.outputPath = outputPath;
     exportCache[item.cacheKey] = outputPath;
-  }catch(err){
-    if(err && err.message === EXPORT_CANCELLED){
-      item.status = 'cancelled';
-    }else{
-      console.error(err);
-      item.status = 'error';
-      item.error = (err && err.message) ? err.message : 'Falha desconhecida.';
+    if(bench){
+      bench.fastPath = fastPath;
+      if(!fastPath) bench.ipcAndEncodeMs = performance.now()-tIpc0;
+      bench.itemTotalMs = performance.now()-tItemStart;
+      bench.clipDurationSec = clipDurationSec;
+      console.log('[export-bench] ' + JSON.stringify(bench));
     }
+  }catch(err){
+    finishExportItemWithError(item, err);
+  } finally {
+    releaseEncodeSlot();
+    renderExportQueuePanel();
+  }
+}
+
+function finishExportItemWithError(item, err){
+  if(err && err.message === EXPORT_CANCELLED){
+    item.status = 'cancelled';
+  }else{
+    console.error(err);
+    item.status = 'error';
+    item.error = (err && err.message) ? err.message : 'Falha desconhecida.';
   }
   renderExportQueuePanel();
 }
