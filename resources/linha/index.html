@@ -505,6 +505,15 @@
     font-size:10px; font-weight:700; color:#08110A; cursor:grab; border:2px solid rgba(0,0,0,.35);
     box-shadow:0 2px 6px rgba(0,0,0,.4); user-select:none;
   }
+  /* Striped shirt fill (background is a repeating-linear-gradient set inline per-token — see
+     tokenFillBackground()) puts the number's center right on a stripe seam, so a single fixed
+     text color can't stay readable against both colors at once. White + a 4-direction shadow
+     (a text-outline substitute, since -webkit-text-stroke renders inconsistently) reads clearly
+     over any stripe color pair without touching the plain-color look of every other token. */
+  .token.token-striped{
+    color:#fff;
+    text-shadow:-1px -1px 0 rgba(0,0,0,.85), 1px -1px 0 rgba(0,0,0,.85), -1px 1px 0 rgba(0,0,0,.85), 1px 1px 0 rgba(0,0,0,.85);
+  }
   /* Ball: white circle with black hexagon panels — the actual six-sided
      shape via clip-path, not a wedge/pie pattern. */
   .token.ball{
@@ -666,8 +675,9 @@
   .roster-team-head input[type=text]{flex:1;}
   .roster-team-head input[type=color]{width:32px; height:32px; padding:2px; border-radius:6px;}
   .player-row{display:flex; gap:6px; margin-bottom:6px; align-items:center;}
-  .player-row input[type=text]{flex:1;}
+  .player-row input[type=text]{flex:1; min-width:0;}
   .player-row input.num{width:44px; flex:none;}
+  .player-row select.p-pattern{width:76px; flex:none; padding:5px 4px; font-size:11.5px;}
   .player-row input[type=color]{width:26px; height:26px; padding:1px; border-radius:5px; flex-shrink:0;}
   .player-row button{flex-shrink:0;}
   .player-row button.p-gk.active{background:var(--amber); border-color:var(--amber); color:#08110A;}
@@ -1976,6 +1986,25 @@ function resolvePlayerColor(teamId, player){
   if(player && player.isGK) return GK_DEFAULT_COLOR;
   return state.roster[teamId].color;
 }
+// Shirt-like fill for tactic-board player tokens — separate from (and additive to) the plain
+// player.color above, which stays exactly as it was for anything that doesn't opt into this.
+// New players get this seeded explicitly at creation time (see the roster panel's "+ Adicionar
+// jogador"/CSV import below) so every NEW player defaults to red/white stripes as requested;
+// existing players from a project saved before this feature shipped have no player.appearance at
+// all, so the fallback here derives a 'solid' appearance from resolvePlayerColor() instead of
+// silently restyling every already-customized team in an old project.
+const DEFAULT_PLAYER_APPEARANCE = { pattern:'vertical-stripes', primaryColor:'#C1533D', secondaryColor:'#FFFFFF' };
+function resolvePlayerAppearance(teamId, player){
+  if(player && player.appearance) return player.appearance;
+  return { pattern:'solid', primaryColor: resolvePlayerColor(teamId, player), secondaryColor:'#FFFFFF' };
+}
+// Lazily materializes player.appearance the first time the roster panel's controls actually edit
+// it — a player loaded from a project saved before this feature existed keeps looking exactly the
+// same (via the fallback above) right up until the user touches one of its appearance controls.
+function ensurePlayerAppearance(player, teamId){
+  if(!player.appearance) player.appearance = {...resolvePlayerAppearance(teamId, player)};
+  return player.appearance;
+}
 function allPlayersFlat(){
   const out=[];
   ['A','B'].forEach(tid=>state.roster[tid].players.forEach(p=>out.push({teamId:tid, ...p})));
@@ -2235,14 +2264,23 @@ function renderRosterModal(){
         <input type="text" class="team-name" value="${escapeHtml(team.name)}" placeholder="Nome do time">
       </div>
       <div class="player-list">
-        ${team.players.map(p=>`
+        ${team.players.map(p=>{
+          const app = resolvePlayerAppearance(tid, p);
+          const striped = app.pattern==='vertical-stripes';
+          return `
           <div class="player-row" data-pid="${p.id}">
             <input type="text" class="p-num num" value="${p.num}">
             <input type="text" class="p-name" value="${escapeHtml(p.name)}">
-            <input type="color" class="p-color" value="${resolvePlayerColor(tid, p)}" title="Cor do jogador">
+            <select class="p-pattern" title="Preenchimento">
+              <option value="solid"${striped?'':' selected'}>Sólido</option>
+              <option value="vertical-stripes"${striped?' selected':''}>Riscas</option>
+            </select>
+            <input type="color" class="p-color" value="${app.primaryColor}" title="Cor 1">
+            <input type="color" class="p-color2" value="${app.secondaryColor||'#FFFFFF'}" title="Cor 2" style="${striped?'':'display:none;'}">
             <button class="btn icon p-gk${p.isGK ? ' active' : ''}" title="Marcar/desmarcar como guarda-redes">GR</button>
             <button class="btn icon p-del" title="Remover">✕</button>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>
       <div class="import-row">
         <button class="btn add-player">+ Adicionar jogador</button>
@@ -2259,7 +2297,7 @@ function renderRosterModal(){
     block.querySelector('.team-name').addEventListener('input', e=>{ state.roster[tid].name=e.target.value; });
     block.querySelector('.add-player').addEventListener('click', ()=>{
       const num = state.roster[tid].players.length+1;
-      state.roster[tid].players.push({id:tid+'-p'+uid(), num, name:'Jogador '+num});
+      state.roster[tid].players.push({id:tid+'-p'+uid(), num, name:'Jogador '+num, appearance:{...DEFAULT_PLAYER_APPEARANCE}});
       renderRosterModal();
     });
     block.querySelector('.import-csv').addEventListener('change', e=>{
@@ -2274,7 +2312,8 @@ function renderRosterModal(){
             id:tid+'-p'+uid(),
             num: (parts[0]||'').trim() || '0',
             name:(parts[1]||'Jogador').trim(),
-            isGK: gkFlag==='gr' || gkFlag==='gk' || gkFlag==='1' || gkFlag==='sim'
+            isGK: gkFlag==='gr' || gkFlag==='gk' || gkFlag==='1' || gkFlag==='sim',
+            appearance:{...DEFAULT_PLAYER_APPEARANCE}
           };
         });
         if(players.length){ state.roster[tid].players = players; renderRosterModal(); toast('Escalação importada: '+players.length+' jogadores.'); }
@@ -2286,11 +2325,15 @@ function renderRosterModal(){
       const p = state.roster[tid].players.find(x=>x.id===pid);
       row.querySelector('.p-num').addEventListener('input', e=>{ p.num = e.target.value; });
       row.querySelector('.p-name').addEventListener('input', e=>{ p.name = e.target.value; });
-      row.querySelector('.p-color').addEventListener('input', e=>{ p.color = e.target.value; });
+      row.querySelector('.p-pattern').addEventListener('change', e=>{
+        ensurePlayerAppearance(p, tid).pattern = e.target.value;
+        row.querySelector('.p-color2').style.display = e.target.value==='vertical-stripes' ? '' : 'none';
+      });
+      row.querySelector('.p-color').addEventListener('input', e=>{ ensurePlayerAppearance(p, tid).primaryColor = e.target.value; });
+      row.querySelector('.p-color2').addEventListener('input', e=>{ ensurePlayerAppearance(p, tid).secondaryColor = e.target.value; });
       row.querySelector('.p-gk').addEventListener('click', e=>{
         p.isGK = !p.isGK;
         e.currentTarget.classList.toggle('active', p.isGK);
-        row.querySelector('.p-color').value = resolvePlayerColor(tid, p);
       });
       row.querySelector('.p-del').addEventListener('click', ()=>{
         state.roster[tid].players = state.roster[tid].players.filter(x=>x.id!==pid);
@@ -5497,7 +5540,8 @@ function formationCoords(formation, teamId){
     // Slot 0 in every lineup above is the deepest position (the goalkeeper) — fall back to the
     // GK color by slot when the roster doesn't have enough players to supply a real one.
     const color = p ? resolvePlayerColor(teamId, p) : (i===0 ? GK_DEFAULT_COLOR : team.color);
-    out[teamId+'-'+i] = {x:px, y, teamId, num:p?p.num:(i+1), color};
+    const appearance = p ? resolvePlayerAppearance(teamId, p) : {pattern:'solid', primaryColor:color, secondaryColor:'#FFFFFF'};
+    out[teamId+'-'+i] = {x:px, y, teamId, num:p?p.num:(i+1), color, appearance};
   });
   return out;
 }
@@ -5513,6 +5557,19 @@ defaultTokens();
 
 const OBJECT_KINDS_WITH_FACING = new Set(['player']); // goal/minigoal already look directional by shape
 
+// How many stripes a striped shirt-fill token shows — a repeating 2-color unit tiled twice across
+// the token's own width (percentage-based gradient stops, so it stays proportional at any token
+// size/zoom without extra JS, including the wheel-to-scale interaction below).
+const TOKEN_STRIPE_UNIT_PCT = 50;
+function tokenFillBackground(appearance, fallbackColor){
+  const a = appearance || {pattern:'solid', primaryColor:fallbackColor};
+  if(a.pattern==='vertical-stripes'){
+    const half = TOKEN_STRIPE_UNIT_PCT/2;
+    return `repeating-linear-gradient(90deg, ${a.primaryColor} 0%, ${a.primaryColor} ${half}%, ${a.secondaryColor} ${half}%, ${a.secondaryColor} ${TOKEN_STRIPE_UNIT_PCT}%)`;
+  }
+  return a.primaryColor || fallbackColor;
+}
+
 function renderTokens(){
   tacticPitch.querySelectorAll('.token').forEach(t=>t.remove());
   Object.entries(tokens).forEach(([id,tk])=>{
@@ -5523,7 +5580,11 @@ function renderTokens(){
     el.className='token'+(kind!=='player' ? ' '+kind : '');
     el.style.left=tk.x+'%'; el.style.top=tk.y+'%';
     el.style.transform = `translate(-50%,-50%) rotate(${angle}deg) scale(${scale})`;
-    if(kind==='player' || kind==='ball') el.style.background = tk.color;
+    if(kind==='ball') el.style.background = tk.color;
+    if(kind==='player'){
+      el.style.background = tokenFillBackground(tk.appearance, tk.color);
+      el.classList.toggle('token-striped', !!(tk.appearance && tk.appearance.pattern==='vertical-stripes'));
+    }
     if(kind==='image') el.style.backgroundImage = `url(${tk.imageUrl})`;
     el.textContent = kind==='player' ? tk.num : '';
     el.dataset.id=id;
@@ -5584,7 +5645,7 @@ document.addEventListener('click', e=>{
 // reflects the current roster.
 function addPlayer(teamId, player){
   const id = teamId+'-p'+uid(); // uid()-suffixed so it never collides with formation ids (teamId+'-'+i)
-  tokens[id] = {x:50, y:50, teamId, num:player.num, color: resolvePlayerColor(teamId, player)};
+  tokens[id] = {x:50, y:50, teamId, num:player.num, color: resolvePlayerColor(teamId, player), appearance: resolvePlayerAppearance(teamId, player)};
   renderTokens();
 }
 function renderPlayerFlyout(){
@@ -6005,6 +6066,28 @@ function getPitchBackgroundImage(mode){
   }
   return pitchBgCache[key];
 }
+// Canvas equivalent of tokenFillBackground() above — same 4-segment layout (a 2-color unit tiled
+// twice) so exported video/images match the live DOM view exactly, not just approximately. Must be
+// called with the circle's arc already the ctx's current path (not yet filled) — clip() and fill()
+// both act on it.
+function fillPlayerToken(ctx, r, appearance, fallbackColor){
+  const a = appearance || {pattern:'solid', primaryColor:fallbackColor};
+  if(a.pattern==='vertical-stripes'){
+    ctx.save();
+    ctx.clip();
+    const segments = 4;
+    const segW = (r*2)/segments;
+    for(let i=0;i<segments;i++){
+      ctx.fillStyle = i%2===0 ? a.primaryColor : a.secondaryColor;
+      // Slight overlap between segments avoids a faint anti-aliased seam between stripes.
+      ctx.fillRect(-r + i*segW - 0.5, -r, segW+1, r*2);
+    }
+    ctx.restore();
+  } else {
+    ctx.fillStyle = a.primaryColor || fallbackColor;
+    ctx.fill();
+  }
+}
 function drawTokenToCanvas(ctx, canvas, tk){
   const kind = tk.kind || (tk.teamId==='ball' ? 'ball' : 'player');
   const cx = tk.x/100*canvas.width, cy = tk.y/100*canvas.height;
@@ -6022,14 +6105,27 @@ function drawTokenToCanvas(ctx, canvas, tk){
   } else {
     const r = kind==='ball' ? baseR*0.9 : baseR;
     ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
-    ctx.fillStyle = kind==='ball' ? '#fff' : (tk.color||'#fff');
-    ctx.fill();
+    if(kind==='ball'){ ctx.fillStyle = '#fff'; ctx.fill(); }
+    else { fillPlayerToken(ctx, r, tk.appearance, tk.color); }
     ctx.lineWidth = Math.max(1, r*0.14); ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.stroke();
     if(kind==='player'){
-      ctx.fillStyle = '#08110A';
+      const striped = tk.appearance && tk.appearance.pattern==='vertical-stripes';
       ctx.font = `700 ${Math.round(r*0.9)}px Inter, sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(String(tk.num||''), 0, 0);
+      const label = String(tk.num||'');
+      if(striped){
+        // Matches the DOM view's white-text + dark-outline treatment (see .token-striped) — a
+        // fixed text color can't stay legible against two different stripe colors at once.
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = 'rgba(0,0,0,.85)';
+        ctx.lineWidth = Math.max(1, r*0.22);
+        ctx.strokeText(label, 0, 0);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, 0, 0);
+      } else {
+        ctx.fillStyle = '#08110A';
+        ctx.fillText(label, 0, 0);
+      }
     }
   }
   ctx.restore();
