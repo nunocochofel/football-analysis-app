@@ -674,6 +674,14 @@
   .roster-team-head{display:flex; align-items:center; gap:8px; margin-bottom:10px;}
   .roster-team-head input[type=text]{flex:1;}
   .roster-team-head input[type=color]{width:32px; height:32px; padding:2px; border-radius:6px;}
+  .team-appearance-section{background:var(--panel-alt); border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 12px; margin-bottom:12px;}
+  .team-appearance-row{display:flex; gap:8px; align-items:center; margin-bottom:8px;}
+  .team-appearance-row:last-child{margin-bottom:0;}
+  .team-appearance-row-label{width:112px; flex-shrink:0; font-size:12px; font-weight:600; color:var(--muted);}
+  .team-appearance-row select.t-pattern{flex:none; width:96px; padding:5px 4px; font-size:11.5px;}
+  .team-appearance-row input[type=color]{width:28px; height:28px; padding:1px; border-radius:5px; flex-shrink:0;}
+  .team-appearance-hint{font-size:11px; color:var(--muted); margin:-4px 0 10px;}
+  .player-list-label{font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; margin:4px 0 6px;}
   .player-row{display:flex; gap:6px; margin-bottom:6px; align-items:center;}
   .player-row input[type=text]{flex:1; min-width:0;}
   .player-row input.num{width:44px; flex:none;}
@@ -681,6 +689,9 @@
   .player-row input[type=color]{width:26px; height:26px; padding:1px; border-radius:5px; flex-shrink:0;}
   .player-row button{flex-shrink:0;}
   .player-row button.p-gk.active{background:var(--amber); border-color:var(--amber); color:#08110A;}
+  .player-row button.p-reset-override{display:none; opacity:.75;}
+  .player-row.has-override button.p-reset-override{display:inline-flex;}
+  .player-row.has-override input.p-name{box-shadow:inset 0 0 0 1px var(--pitch);}
   .import-row{display:flex; align-items:center; gap:8px; margin-top:6px;}
   .import-row label.btn{cursor:pointer;}
   .cat-edit-row{display:flex; gap:6px; align-items:center; margin-bottom:6px;}
@@ -1479,17 +1490,38 @@ function catByLabel(label){
   return state.categories.find(c=>c.label.toLowerCase()===label.toLowerCase());
 }
 
+// Appearance is configured ONCE per team (not per player) and cascades to every player
+// automatically — see resolvePlayerAppearance() further down. The goalkeeper gets its own
+// team-level appearance, kept deliberately distinct by default from both that team's outfield
+// players and the other team's goalkeeper, so all four groups (A players / A GK / B players / B
+// GK) are always visually separable at a glance without any manual color picking. Declared up
+// here (rather than next to the rest of the appearance logic below) because `let state =
+// defaultState()` runs at true top level a few lines down and needs these immediately — only ever
+// exactly two fixed teams (A/B) in this app, no dynamic team creation, so hardcoding four
+// already-distinct defaults is simpler and just as correct as a general collision-avoidance search
+// would be, without inventing machinery this app has no other use for.
+const DEFAULT_TEAM_APPEARANCE = {
+  A: { pattern:'vertical-stripes', primaryColor:'#C1533D', secondaryColor:'#FFFFFF' }, // red/white
+  B: { pattern:'vertical-stripes', primaryColor:'#2C5F9E', secondaryColor:'#FFFFFF' }  // blue/white
+};
+const DEFAULT_GK_APPEARANCE = {
+  A: { pattern:'solid', primaryColor:'#F2C230', secondaryColor:'#FFFFFF' }, // yellow
+  B: { pattern:'solid', primaryColor:'#3FA35A', secondaryColor:'#FFFFFF' }  // green
+};
+
 function defaultPlayers(prefix,count){
   const arr=[];
-  for(let i=1;i<=count;i++) arr.push({id:prefix+'-p'+i, num:i, name:'Jogador '+i});
+  // Player #1 is the goalkeeper by default (see isGoalkeeper()) — no manual "mark as GK" step
+  // needed for the common case of an untouched, freshly created squad.
+  for(let i=1;i<=count;i++) arr.push({id:prefix+'-p'+i, num:i, name:'Jogador '+i, isGK: i===1});
   return arr;
 }
 
 function defaultState(){
   return {
     roster:{
-      A:{name:'Time A', color:'#4F8FC9', players:defaultPlayers('A',11)},
-      B:{name:'Time B', color:'#E0B24C', players:defaultPlayers('B',11)},
+      A:{name:'Time A', color:'#4F8FC9', appearance:{...DEFAULT_TEAM_APPEARANCE.A}, goalkeeperAppearance:{...DEFAULT_GK_APPEARANCE.A}, players:defaultPlayers('A',11)},
+      B:{name:'Time B', color:'#E0B24C', appearance:{...DEFAULT_TEAM_APPEARANCE.B}, goalkeeperAppearance:{...DEFAULT_GK_APPEARANCE.B}, players:defaultPlayers('B',11)},
     },
     categories: JSON.parse(JSON.stringify(DEFAULT_CATS)),
     tags: [],
@@ -1925,6 +1957,7 @@ async function loadState(){
     if(raw){
       const parsed = JSON.parse(raw);
       state.roster = parsed.roster || state.roster;
+      migrateRosterAppearance();
       state.categories = parsed.categories || state.categories;
       // One-time relabel for projects created before this terminology change — matches the
       // current DEFAULT_CATS naming without disturbing the category's id, color or tagged events.
@@ -1977,33 +2010,93 @@ function playerById(teamId, playerId){
   const t = state.roster[teamId];
   return t ? t.players.find(p=>p.id===playerId) : null;
 }
-const GK_DEFAULT_COLOR = '#9B59B6';
-// Priority: an explicit per-player color always wins; otherwise a goalkeeper gets the shared GK
-// color so they stand out from outfield players without needing to be recolored one by one;
-// everyone else falls back to the team color.
+const GK_DEFAULT_COLOR = '#9B59B6'; // legacy fallback color, kept for resolvePlayerColor() below only
+function isGoalkeeper(player){ return !!(player && player.isGK); }
+// Priority: an explicit per-player color always wins; otherwise a goalkeeper gets a purple
+// fallback so they stand out from outfield players without needing to be recolored one by one;
+// everyone else falls back to the team color. Superseded by resolvePlayerAppearance() below for
+// anything that actually renders a token — kept only as the fallback color when a token has no
+// resolvable appearance at all (e.g. a legacy token from before this feature existed).
 function resolvePlayerColor(teamId, player){
   if(player && player.color) return player.color;
-  if(player && player.isGK) return GK_DEFAULT_COLOR;
+  if(isGoalkeeper(player)) return GK_DEFAULT_COLOR;
   return state.roster[teamId].color;
 }
-// Shirt-like fill for tactic-board player tokens — separate from (and additive to) the plain
-// player.color above, which stays exactly as it was for anything that doesn't opt into this.
-// New players get this seeded explicitly at creation time (see the roster panel's "+ Adicionar
-// jogador"/CSV import below) so every NEW player defaults to red/white stripes as requested;
-// existing players from a project saved before this feature shipped have no player.appearance at
-// all, so the fallback here derives a 'solid' appearance from resolvePlayerColor() instead of
-// silently restyling every already-customized team in an old project.
-const DEFAULT_PLAYER_APPEARANCE = { pattern:'vertical-stripes', primaryColor:'#C1533D', secondaryColor:'#FFFFFF' };
+// Shirt-like fill for tactic-board player tokens. Resolution order: an individual override on the
+// player always wins (see ensurePlayerAppearanceOverride/clearPlayerAppearanceOverride below);
+// otherwise a goalkeeper uses the team's goalkeeperAppearance, everyone else the team's own
+// appearance — both configured once in the roster panel and applied to every player automatically,
+// never per-player. The DEFAULT_* fallback only matters for a team that has never had its
+// appearance touched at all (a legacy project — see migrateRosterAppearance()).
 function resolvePlayerAppearance(teamId, player){
-  if(player && player.appearance) return player.appearance;
-  return { pattern:'solid', primaryColor: resolvePlayerColor(teamId, player), secondaryColor:'#FFFFFF' };
+  if(player && player.appearanceOverride) return player.appearanceOverride;
+  const team = state.roster[teamId];
+  if(isGoalkeeper(player)) return (team && team.goalkeeperAppearance) || DEFAULT_GK_APPEARANCE[teamId];
+  return (team && team.appearance) || DEFAULT_TEAM_APPEARANCE[teamId];
 }
-// Lazily materializes player.appearance the first time the roster panel's controls actually edit
-// it — a player loaded from a project saved before this feature existed keeps looking exactly the
-// same (via the fallback above) right up until the user touches one of its appearance controls.
-function ensurePlayerAppearance(player, teamId){
-  if(!player.appearance) player.appearance = {...resolvePlayerAppearance(teamId, player)};
-  return player.appearance;
+// A token only stores a player reference (pid) plus a snapshot color/appearance for legacy/no-pid
+// cases — for any token that DOES have a live pid, appearance is always resolved fresh from the
+// roster here, which is what makes a team/GK appearance edit (or an override add/remove) apply
+// instantly to every already-placed token, saved scene and export, with nothing to resync: there's
+// no snapshot to go stale in the first place.
+function resolveTokenAppearance(tk){
+  if(tk.pid){
+    const p = playerById(tk.teamId, tk.pid);
+    if(p) return resolvePlayerAppearance(tk.teamId, p);
+  }
+  return tk.appearance || { pattern:'solid', primaryColor: tk.color, secondaryColor:'#FFFFFF' };
+}
+// Lazily materializes player.appearanceOverride the first time the roster panel's per-player
+// controls are actually edited — until then the player keeps inheriting the team/GK appearance.
+function ensurePlayerAppearanceOverride(player, teamId){
+  if(!player.appearanceOverride) player.appearanceOverride = {...resolvePlayerAppearance(teamId, player)};
+  return player.appearanceOverride;
+}
+function clearPlayerAppearanceOverride(player){
+  delete player.appearanceOverride;
+}
+// Enforces at most one goalkeeper per team — setting a new one automatically un-marks whichever
+// player previously held the role (per the "changing the GK must correctly revert the old one"
+// requirement), rather than requiring the user to manually unmark them first. Clicking the current
+// GK's own button unmarks them with no replacement, matching a normal single-select toggle.
+function setGoalkeeper(teamId, playerId){
+  const team = state.roster[teamId];
+  if(!team) return;
+  const wasGK = team.players.some(p=>p.id===playerId && p.isGK);
+  team.players.forEach(p=>{ p.isGK = false; });
+  if(!wasGK){
+    const target = team.players.find(p=>p.id===playerId);
+    if(target) target.isGK = true;
+  }
+}
+function appearanceEquals(a,b){
+  return !!a && !!b && a.pattern===b.pattern && a.primaryColor===b.primaryColor && (a.secondaryColor||null)===(b.secondaryColor||null);
+}
+// One-time migration for a project saved before team-level appearance existed: seeds
+// team.appearance/goalkeeperAppearance with the same defaults a brand-new project gets, migrates
+// the old per-player `player.appearance` field (which the very first version of this feature wrote
+// identically to every single player) into `appearanceOverride` — but only when it differs from
+// that old universal default, since an identical copy on every player is indistinguishable from
+// "never customized" and would otherwise permanently opt every legacy player out of team-level
+// control — and assigns a default goalkeeper (player #1) to any team that doesn't have one yet.
+const LEGACY_DEFAULT_PLAYER_APPEARANCE = { pattern:'vertical-stripes', primaryColor:'#C1533D', secondaryColor:'#FFFFFF' };
+function migrateRosterAppearance(){
+  ['A','B'].forEach(tid=>{
+    const team = state.roster[tid];
+    if(!team) return;
+    if(!team.appearance) team.appearance = {...DEFAULT_TEAM_APPEARANCE[tid]};
+    if(!team.goalkeeperAppearance) team.goalkeeperAppearance = {...DEFAULT_GK_APPEARANCE[tid]};
+    (team.players||[]).forEach(p=>{
+      if(p.appearance){
+        if(!appearanceEquals(p.appearance, LEGACY_DEFAULT_PLAYER_APPEARANCE)) p.appearanceOverride = p.appearance;
+        delete p.appearance;
+      }
+    });
+    if(!team.players.some(p=>p.isGK)){
+      const gk = team.players.find(p=>String(p.num)==='1');
+      if(gk) gk.isGK = true;
+    }
+  });
 }
 function allPlayersFlat(){
   const out=[];
@@ -2253,6 +2346,42 @@ document.getElementById('btnReset').addEventListener('click', async ()=>{
 });
 
 /* ---------- Roster modal ---------- */
+// Keeps each player row's own pattern/color swatches (as opposed to the team-level editor rows
+// above them) in sync after a team/GK appearance edit, without rebuilding the row elements
+// themselves — rebuilding would drop focus out of the native color picker mid-drag. Players with
+// an individual override are skipped, since their swatches correctly show the override, not the
+// team appearance, and shouldn't move when the team's changes.
+function refreshTeamPlayerRowSwatches(tid){
+  const block = document.querySelector(`.roster-team-block[data-team="${tid}"]`);
+  if(!block) return;
+  const team = state.roster[tid];
+  block.querySelectorAll('.player-row').forEach(row=>{
+    const p = team.players.find(x=>x.id===row.dataset.pid);
+    if(!p || p.appearanceOverride) return;
+    const app = resolvePlayerAppearance(tid, p);
+    const striped = app.pattern==='vertical-stripes';
+    row.querySelector('.p-pattern').value = app.pattern;
+    row.querySelector('.p-color').value = app.primaryColor;
+    row.querySelector('.p-color2').value = app.secondaryColor || '#FFFFFF';
+    row.querySelector('.p-color2').style.display = striped ? '' : 'none';
+  });
+}
+// One appearance editor row for a team's field players or its goalkeeper — role is 'field' or
+// 'gk', purely to know which of team.appearance/team.goalkeeperAppearance it edits.
+function teamAppearanceRowHtml(role, appearance){
+  const striped = appearance.pattern==='vertical-stripes';
+  const label = role==='gk' ? 'Guarda-Redes' : 'Jogadores de campo';
+  return `
+    <div class="team-appearance-row" data-role="${role}">
+      <span class="team-appearance-row-label">${label}</span>
+      <select class="t-pattern" title="Preenchimento">
+        <option value="solid"${striped?'':' selected'}>Sólido</option>
+        <option value="vertical-stripes"${striped?' selected':''}>Riscas</option>
+      </select>
+      <input type="color" class="t-color" value="${appearance.primaryColor}" title="Cor 1">
+      <input type="color" class="t-color2" value="${appearance.secondaryColor||'#FFFFFF'}" title="Cor 2" style="${striped?'':'display:none;'}">
+    </div>`;
+}
 function renderRosterModal(){
   const el = document.getElementById('modalBodyTeams');
   el.innerHTML = ['A','B'].map(tid=>{
@@ -2263,12 +2392,19 @@ function renderRosterModal(){
         <input type="color" class="team-color" value="${team.color}">
         <input type="text" class="team-name" value="${escapeHtml(team.name)}" placeholder="Nome do time">
       </div>
+      <div class="team-appearance-section">
+        ${teamAppearanceRowHtml('field', team.appearance || DEFAULT_TEAM_APPEARANCE[tid])}
+        ${teamAppearanceRowHtml('gk', team.goalkeeperAppearance || DEFAULT_GK_APPEARANCE[tid])}
+      </div>
+      <div class="team-appearance-hint">Aplica-se a todos os jogadores da equipa automaticamente — usa os controlos por jogador só para uma exceção pontual.</div>
+      <div class="player-list-label">Jogadores</div>
       <div class="player-list">
         ${team.players.map(p=>{
           const app = resolvePlayerAppearance(tid, p);
           const striped = app.pattern==='vertical-stripes';
+          const hasOverride = !!p.appearanceOverride;
           return `
-          <div class="player-row" data-pid="${p.id}">
+          <div class="player-row${hasOverride?' has-override':''}" data-pid="${p.id}">
             <input type="text" class="p-num num" value="${p.num}">
             <input type="text" class="p-name" value="${escapeHtml(p.name)}">
             <select class="p-pattern" title="Preenchimento">
@@ -2277,7 +2413,8 @@ function renderRosterModal(){
             </select>
             <input type="color" class="p-color" value="${app.primaryColor}" title="Cor 1">
             <input type="color" class="p-color2" value="${app.secondaryColor||'#FFFFFF'}" title="Cor 2" style="${striped?'':'display:none;'}">
-            <button class="btn icon p-gk${p.isGK ? ' active' : ''}" title="Marcar/desmarcar como guarda-redes">GR</button>
+            <button class="btn icon p-gk${p.isGK ? ' active' : ''}" title="Marcar como guarda-redes desta equipa">GR</button>
+            <button class="btn icon p-reset-override" title="Repor aparência da equipa (remove a exceção individual)">↺</button>
             <button class="btn icon p-del" title="Remover">✕</button>
           </div>`;
         }).join('')}
@@ -2293,11 +2430,39 @@ function renderRosterModal(){
 
   el.querySelectorAll('.roster-team-block').forEach(block=>{
     const tid = block.dataset.team;
-    block.querySelector('.team-color').addEventListener('input', e=>{ state.roster[tid].color=e.target.value; });
-    block.querySelector('.team-name').addEventListener('input', e=>{ state.roster[tid].name=e.target.value; });
+    const team = state.roster[tid];
+    block.querySelector('.team-color').addEventListener('input', e=>{ team.color=e.target.value; });
+    block.querySelector('.team-name').addEventListener('input', e=>{ team.name=e.target.value; });
+
+    // Editing either row here changes exactly one of team.appearance/team.goalkeeperAppearance —
+    // resolvePlayerAppearance() means every player without an individual override (i.e. everyone,
+    // by default) picks this up immediately, with nothing per-player to touch. The board updates
+    // for free via renderTokens()->resolveTokenAppearance(), but the roster panel's OWN per-player
+    // swatches below are plain input values set once at render time, not live-bound — they need an
+    // explicit (but targeted, not a full renderRosterModal()) refresh so they don't go stale while
+    // the panel stays open. A full re-render would also stomp the color inputs' native picker,
+    // dropping focus on every drag-driven 'input' event.
+    block.querySelectorAll('.team-appearance-row').forEach(row=>{
+      const role = row.dataset.role;
+      const target = () => role==='gk'
+        ? (team.goalkeeperAppearance || (team.goalkeeperAppearance = {...DEFAULT_GK_APPEARANCE[tid]}))
+        : (team.appearance || (team.appearance = {...DEFAULT_TEAM_APPEARANCE[tid]}));
+      row.querySelector('.t-pattern').addEventListener('change', e=>{
+        target().pattern = e.target.value;
+        row.querySelector('.t-color2').style.display = e.target.value==='vertical-stripes' ? '' : 'none';
+        refreshTeamPlayerRowSwatches(tid);
+        renderTokens();
+      });
+      row.querySelector('.t-color').addEventListener('input', e=>{ target().primaryColor = e.target.value; refreshTeamPlayerRowSwatches(tid); renderTokens(); });
+      row.querySelector('.t-color2').addEventListener('input', e=>{ target().secondaryColor = e.target.value; refreshTeamPlayerRowSwatches(tid); renderTokens(); });
+    });
+
     block.querySelector('.add-player').addEventListener('click', ()=>{
-      const num = state.roster[tid].players.length+1;
-      state.roster[tid].players.push({id:tid+'-p'+uid(), num, name:'Jogador '+num, appearance:{...DEFAULT_PLAYER_APPEARANCE}});
+      const num = team.players.length+1;
+      const hasGK = team.players.some(x=>x.isGK);
+      // Only the very first player added to an empty/GK-less team defaults to goalkeeper — matches
+      // "player #1 is GK by default" without silently reassigning an already-configured squad.
+      team.players.push({id:tid+'-p'+uid(), num, name:'Jogador '+num, isGK: !hasGK && num===1});
       renderRosterModal();
     });
     block.querySelector('.import-csv').addEventListener('change', e=>{
@@ -2312,31 +2477,57 @@ function renderRosterModal(){
             id:tid+'-p'+uid(),
             num: (parts[0]||'').trim() || '0',
             name:(parts[1]||'Jogador').trim(),
-            isGK: gkFlag==='gr' || gkFlag==='gk' || gkFlag==='1' || gkFlag==='sim',
-            appearance:{...DEFAULT_PLAYER_APPEARANCE}
+            isGK: gkFlag==='gr' || gkFlag==='gk' || gkFlag==='1' || gkFlag==='sim'
           };
         });
-        if(players.length){ state.roster[tid].players = players; renderRosterModal(); toast('Escalação importada: '+players.length+' jogadores.'); }
+        if(players.length){
+          // At most one GK per team: keep only the first explicitly-flagged row; if none were
+          // flagged, default to whichever player is numbered 1.
+          let gkAssigned = false;
+          players.forEach(p=>{ if(p.isGK){ if(gkAssigned) p.isGK=false; else gkAssigned=true; } });
+          if(!gkAssigned){ const first = players.find(p=>String(p.num)==='1'); if(first) first.isGK = true; }
+          team.players = players;
+          renderRosterModal();
+          toast('Escalação importada: '+players.length+' jogadores.');
+        }
       };
       reader.readAsText(file);
     });
     block.querySelectorAll('.player-row').forEach(row=>{
       const pid = row.dataset.pid;
-      const p = state.roster[tid].players.find(x=>x.id===pid);
+      const p = team.players.find(x=>x.id===pid);
       row.querySelector('.p-num').addEventListener('input', e=>{ p.num = e.target.value; });
       row.querySelector('.p-name').addEventListener('input', e=>{ p.name = e.target.value; });
       row.querySelector('.p-pattern').addEventListener('change', e=>{
-        ensurePlayerAppearance(p, tid).pattern = e.target.value;
+        ensurePlayerAppearanceOverride(p, tid).pattern = e.target.value;
+        row.classList.add('has-override');
         row.querySelector('.p-color2').style.display = e.target.value==='vertical-stripes' ? '' : 'none';
+        renderTokens();
       });
-      row.querySelector('.p-color').addEventListener('input', e=>{ ensurePlayerAppearance(p, tid).primaryColor = e.target.value; });
-      row.querySelector('.p-color2').addEventListener('input', e=>{ ensurePlayerAppearance(p, tid).secondaryColor = e.target.value; });
-      row.querySelector('.p-gk').addEventListener('click', e=>{
-        p.isGK = !p.isGK;
-        e.currentTarget.classList.toggle('active', p.isGK);
+      row.querySelector('.p-color').addEventListener('input', e=>{
+        ensurePlayerAppearanceOverride(p, tid).primaryColor = e.target.value;
+        row.classList.add('has-override');
+        renderTokens();
+      });
+      row.querySelector('.p-color2').addEventListener('input', e=>{
+        ensurePlayerAppearanceOverride(p, tid).secondaryColor = e.target.value;
+        row.classList.add('has-override');
+        renderTokens();
+      });
+      row.querySelector('.p-reset-override').addEventListener('click', ()=>{
+        clearPlayerAppearanceOverride(p);
+        renderRosterModal();
+        renderTokens();
+      });
+      // Exclusive within the team — marking this player GK un-marks whichever player held the
+      // role before, so re-rendering the whole panel (not just this row) keeps both in sync.
+      row.querySelector('.p-gk').addEventListener('click', ()=>{
+        setGoalkeeper(tid, pid);
+        renderRosterModal();
+        renderTokens();
       });
       row.querySelector('.p-del').addEventListener('click', ()=>{
-        state.roster[tid].players = state.roster[tid].players.filter(x=>x.id!==pid);
+        team.players = team.players.filter(x=>x.id!==pid);
         renderRosterModal();
       });
     });
@@ -5538,10 +5729,14 @@ function formationCoords(formation, teamId){
     const px = isA ? x : (100-x);
     const p = team.players[i];
     // Slot 0 in every lineup above is the deepest position (the goalkeeper) — fall back to the
-    // GK color by slot when the roster doesn't have enough players to supply a real one.
-    const color = p ? resolvePlayerColor(teamId, p) : (i===0 ? GK_DEFAULT_COLOR : team.color);
-    const appearance = p ? resolvePlayerAppearance(teamId, p) : {pattern:'solid', primaryColor:color, secondaryColor:'#FFFFFF'};
-    out[teamId+'-'+i] = {x:px, y, teamId, num:p?p.num:(i+1), color, appearance};
+    // team's GK appearance by slot when the roster doesn't have enough players to supply a real
+    // one. `pid` is what makes resolveTokenAppearance() re-resolve this token's appearance live
+    // from the roster afterward (so a later team/GK appearance edit, or an override, applies to
+    // this token automatically) — omitted for the no-real-player fallback since there's no player
+    // to link to.
+    const appearance = p ? resolvePlayerAppearance(teamId, p) : (i===0 ? DEFAULT_GK_APPEARANCE[teamId] : DEFAULT_TEAM_APPEARANCE[teamId]);
+    const color = p ? resolvePlayerColor(teamId, p) : appearance.primaryColor;
+    out[teamId+'-'+i] = {x:px, y, teamId, num:p?p.num:(i+1), color, appearance, pid: p ? p.id : undefined};
   });
   return out;
 }
@@ -5582,8 +5777,9 @@ function renderTokens(){
     el.style.transform = `translate(-50%,-50%) rotate(${angle}deg) scale(${scale})`;
     if(kind==='ball') el.style.background = tk.color;
     if(kind==='player'){
-      el.style.background = tokenFillBackground(tk.appearance, tk.color);
-      el.classList.toggle('token-striped', !!(tk.appearance && tk.appearance.pattern==='vertical-stripes'));
+      const appearance = resolveTokenAppearance(tk);
+      el.style.background = tokenFillBackground(appearance, tk.color);
+      el.classList.toggle('token-striped', appearance.pattern==='vertical-stripes');
     }
     if(kind==='image') el.style.backgroundImage = `url(${tk.imageUrl})`;
     el.textContent = kind==='player' ? tk.num : '';
@@ -5645,7 +5841,7 @@ document.addEventListener('click', e=>{
 // reflects the current roster.
 function addPlayer(teamId, player){
   const id = teamId+'-p'+uid(); // uid()-suffixed so it never collides with formation ids (teamId+'-'+i)
-  tokens[id] = {x:50, y:50, teamId, num:player.num, color: resolvePlayerColor(teamId, player), appearance: resolvePlayerAppearance(teamId, player)};
+  tokens[id] = {x:50, y:50, teamId, num:player.num, color: resolvePlayerColor(teamId, player), appearance: resolvePlayerAppearance(teamId, player), pid: player.id};
   renderTokens();
 }
 function renderPlayerFlyout(){
@@ -6104,12 +6300,13 @@ function drawTokenToCanvas(ctx, canvas, tk){
     }
   } else {
     const r = kind==='ball' ? baseR*0.9 : baseR;
+    const appearance = kind==='player' ? resolveTokenAppearance(tk) : null;
     ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
     if(kind==='ball'){ ctx.fillStyle = '#fff'; ctx.fill(); }
-    else { fillPlayerToken(ctx, r, tk.appearance, tk.color); }
+    else { fillPlayerToken(ctx, r, appearance, tk.color); }
     ctx.lineWidth = Math.max(1, r*0.14); ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.stroke();
     if(kind==='player'){
-      const striped = tk.appearance && tk.appearance.pattern==='vertical-stripes';
+      const striped = appearance.pattern==='vertical-stripes';
       ctx.font = `700 ${Math.round(r*0.9)}px Inter, sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const label = String(tk.num||'');
