@@ -807,11 +807,12 @@
   .template-cat-list{display:flex; flex-direction:column; gap:4px; max-height:180px; overflow-y:auto;}
   .template-cat-row{
     display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:var(--radius-sm);
-    background:var(--panel-alt); border:1px solid var(--line); font-size:12.5px; cursor:pointer;
+    background:var(--panel-alt); border:1px solid var(--line); font-size:12.5px;
   }
-  .template-cat-row .sw{width:9px; height:9px; border-radius:50%; flex-shrink:0;}
-  .template-cat-label{flex:1;}
-  .template-cat-del{background:transparent; border:none; color:var(--muted); font-size:12px; padding:2px 4px;}
+  .template-cat-row input[type=color].tpl-cat-color{width:22px; height:22px; padding:1px; border-radius:5px; flex-shrink:0;}
+  .template-cat-row input.tpl-cat-label{flex:1; min-width:0; padding:4px 6px; font-size:12.5px;}
+  .template-cat-row input.tpl-cat-key{width:34px; flex:none; text-align:center; padding:4px 2px; font-size:12.5px;}
+  .template-cat-del{background:transparent; border:none; color:var(--muted); font-size:12px; padding:2px 4px; flex-shrink:0;}
   .template-cat-del:hover{color:var(--crimson);}
   .template-cat-add{display:flex; gap:6px;}
   .template-cat-add input[type=text]{flex:1;}
@@ -1476,6 +1477,28 @@ const DEFAULT_CATS = [
   {id:'c16', key:'o', label:'Fora de jogo', color:'#8A3F5C'},
   {id:'c17', key:'r', label:'Remate à baliza', color:'#C9A23F', countsToward:'c3'},
 ];
+// A small, visually distinct palette (the same spread DEFAULT_CATS itself uses) offered as a new
+// category's default color — picks the first entry not already in use so a run of newly created
+// categories doesn't default to the same shade every time; loops back once every option is taken,
+// since *a* reasonable color still beats none.
+const CATEGORY_COLOR_PALETTE = [
+  '#3F9142','#C1533D','#E2A63B','#4F8FC9','#D1495B','#D9C24C','#3FAF9A','#9B6FD1',
+  '#8993A1','#C98A3F','#E2793F','#3F6FA6','#7F5FA6','#4FA68F','#4FA6C9','#8A3F5C'
+];
+function pickDistinctCategoryColor(existingColors){
+  const used = new Set((existingColors||[]).filter(Boolean).map(c=>c.toLowerCase()));
+  const free = CATEGORY_COLOR_PALETTE.find(c => !used.has(c.toLowerCase()));
+  return free || CATEGORY_COLOR_PALETTE[used.size % CATEGORY_COLOR_PALETTE.length];
+}
+// Warns (doesn't block — the user may genuinely want to reassign a key) when a category's key
+// collides with another category in the SAME list, so a duplicate never happens silently. Template
+// categories (home screen) and a project's own categories are separate keyboard-shortcut scopes,
+// so each is checked against its own list only.
+function warnIfCategoryKeyTaken(list, key, ownId){
+  if(!key) return;
+  const clash = list.find(c => c.id!==ownId && c.key && c.key.toLowerCase()===key.toLowerCase());
+  if(clash) toast(`A tecla "${key.toUpperCase()}" já está atribuída à categoria "${clash.label}".`);
+}
 // Total occurrences of a category, folding in any OTHER category whose `countsToward` points at
 // it (e.g. "Remate à baliza" also counts as a "Remate") — used everywhere a category count is
 // shown (bars, report), so shots-on-target are never invisible from the shots total.
@@ -1631,6 +1654,24 @@ function listCategoryTemplates(){
   return seed;
 }
 function saveCategoryTemplates(list){ localStorage.setItem(CATEGORY_TEMPLATES_KEY, JSON.stringify(list)); }
+// The templates list (home screen) is the single source of truth for name/tecla/cor — a project's
+// own state.categories starts as a COPY of chosen templates (so a project keeps working offline of
+// template edits made mid-session, and can still have its own project-only categories), but is
+// resynced from the templates by id every time the project is opened, so an edit made on the home
+// screen reaches every project that uses that category without the user having to redo it per
+// project. Deliberately narrow: only label/key/color come from the template — isTeamPhase/isGoal/
+// countsToward/etc. are per-project semantics a template has no opinion on, and a category that
+// only exists inside this project (never a template, or since deleted from the templates list)
+// is left completely untouched.
+function migrateProjectCategoriesFromTemplates(){
+  const templates = listCategoryTemplates();
+  const byId = new Map(templates.map(t=>[t.id, t]));
+  state.categories.forEach(c=>{
+    const t = byId.get(c.id);
+    if(t){ c.label = t.label; c.key = t.key; c.color = t.color; }
+    if(!c.color) c.color = pickDistinctCategoryColor(state.categories.map(x=>x.color)); // legacy project, never had a color
+  });
+}
 
 let selectedTemplateCatIds = new Set();
 function updateTemplateCatSummary(){
@@ -1638,6 +1679,11 @@ function updateTemplateCatSummary(){
   document.getElementById('templateCatSummary').textContent =
     '🏷 Categorias a usar neste projeto' + (n ? ' — ' + n + ' selecionada' + (n===1?'':'s') : '');
 }
+// This list IS the single source of truth for category name/tecla/cor — editable directly here
+// (no separate "edit" step: label/key/color are live inputs, saved on every change) rather than
+// only offered as create/delete like before. A project's own category list (see renderCatsModal)
+// is a separate copy seeded from these at project-creation time, resynced from here by id whenever
+// a project is opened — see migrateProjectCategoriesFromTemplates().
 function renderTemplateCatList(){
   const templates = listCategoryTemplates();
   if(selectedTemplateCatIds.size === 0 && templates.length){
@@ -1645,19 +1691,33 @@ function renderTemplateCatList(){
   }
   const el = document.getElementById('templateCatList');
   el.innerHTML = templates.length ? templates.map(c => `
-    <label class="template-cat-row">
-      <input type="checkbox" data-id="${c.id}" ${selectedTemplateCatIds.has(c.id) ? 'checked' : ''}>
-      <span class="sw" style="background:${c.color}"></span>
-      <span class="template-cat-label">${escapeHtml(c.label)}</span>
-      <span class="mono" style="color:var(--muted); font-size:10px;">${escapeHtml(c.key||'')}</span>
+    <div class="template-cat-row" data-id="${c.id}">
+      <input type="checkbox" class="tpl-cat-check" data-id="${c.id}" ${selectedTemplateCatIds.has(c.id) ? 'checked' : ''} title="Usar neste novo projeto">
+      <input type="color" class="tpl-cat-color" value="${c.color}" title="Cor">
+      <input type="text" class="tpl-cat-label" value="${escapeHtml(c.label)}" placeholder="Nome">
+      <input type="text" class="tpl-cat-key mono" maxlength="1" value="${escapeHtml(c.key||'')}" placeholder="tecla" title="Tecla/atalho">
       <button type="button" class="template-cat-del" data-id="${c.id}" title="Remover categoria da lista">✕</button>
-    </label>
+    </div>
   `).join('') : '<p class="project-picker-empty">Sem categorias ainda — adiciona uma abaixo.</p>';
-  el.querySelectorAll('input[type=checkbox]').forEach(cb => {
+  el.querySelectorAll('.tpl-cat-check').forEach(cb => {
     cb.addEventListener('change', e => {
       if(e.target.checked) selectedTemplateCatIds.add(e.target.dataset.id);
       else selectedTemplateCatIds.delete(e.target.dataset.id);
       updateTemplateCatSummary();
+    });
+  });
+  el.querySelectorAll('.template-cat-row').forEach(row => {
+    const cid = row.dataset.id;
+    const c = templates.find(x => x.id === cid);
+    if(!c) return;
+    row.querySelector('.tpl-cat-color').addEventListener('input', e=>{ c.color = e.target.value; saveCategoryTemplates(templates); });
+    row.querySelector('.tpl-cat-label').addEventListener('input', e=>{ c.label = e.target.value; saveCategoryTemplates(templates); });
+    row.querySelector('.tpl-cat-key').addEventListener('input', e=>{
+      const key = e.target.value.trim().slice(0,1);
+      e.target.value = key;
+      warnIfCategoryKeyTaken(templates, key, cid);
+      c.key = key;
+      saveCategoryTemplates(templates);
     });
   });
   el.querySelectorAll('.template-cat-del').forEach(b => {
@@ -1669,6 +1729,8 @@ function renderTemplateCatList(){
     });
   });
   updateTemplateCatSummary();
+  // Next new category defaults to a color not already in the list, instead of always the same one.
+  document.getElementById('newTemplateCatColor').value = pickDistinctCategoryColor(templates.map(c=>c.color));
 }
 document.getElementById('btnToggleTemplateCat').addEventListener('click', () => {
   const body = document.getElementById('templateCatBody');
@@ -1683,6 +1745,7 @@ document.getElementById('btnAddTemplateCat').addEventListener('click', () => {
   const color = document.getElementById('newTemplateCatColor').value;
   const key = document.getElementById('newTemplateCatKey').value.trim().slice(0,1);
   const templates = listCategoryTemplates();
+  warnIfCategoryKeyTaken(templates, key, null);
   const newCat = { id:'tpl'+uid(), label, color, key };
   templates.push(newCat);
   saveCategoryTemplates(templates);
@@ -1965,6 +2028,7 @@ async function loadState(){
         if(c.label==='Escanteio') c.label = 'Canto';
         else if(c.label==='Gol') c.label = 'Golo';
       });
+      migrateProjectCategoriesFromTemplates();
       state.tags = parsed.tags || [];
       state.tags.forEach(t=>{ if(!t.freezes) t.freezes = []; });
       state.possession = parsed.possession || [];
@@ -2548,38 +2612,45 @@ function renderCatsModal(){
   el.innerHTML = `
     <div id="catEditList"></div>
     <button class="btn" id="btnAddCat" style="margin-top:8px;">+ Adicionar categoria</button>
-    <p style="color:var(--muted); font-size:12px; margin-top:10px;">Atalhos duplicados sobrescrevem uns aos outros — use teclas únicas (letras ou números). Dica: na aba de vídeo, pressionar uma tecla ainda não usada abre um criador rápido de categoria na hora.</p>
+    <p style="color:var(--muted); font-size:12px; margin-top:10px;">Usa teclas únicas (letras ou números) — se atribuíres uma tecla já usada por outra categoria, a app avisa-te. Dica: na aba de vídeo, pressionar uma tecla ainda não usada abre um criador rápido de categoria na hora.</p>
     <p style="color:var(--muted); font-size:12px; margin-top:6px;">Marca "fase de equipa" para comportamentos coletivos (ex.: organização ofensiva/defensiva, transição ofensiva/defensiva) — o relatório calcula o tempo médio e total dessas categorias em vez de só contar ocorrências, como faz para remates, passes ou lances individuais.</p>
     <p style="color:var(--muted); font-size:12px; margin-top:6px;">Marca "golo" para que marcar essa categoria some automaticamente ao placar do time do lance.</p>
   `;
   const list = el.querySelector('#catEditList');
+  // Color leads each row (matches the same order used on the home screen's category list) so the
+  // category/color/key association reads at a glance — no need to open anything to see a color.
+  // The former "também conta p/" select is gone from here (removed per request), but c.countsToward
+  // itself is untouched — categoryTagCount() and anything else already relying on it (e.g. the
+  // built-in "Remate à baliza" counting toward "Remate") keeps working exactly as before, there's
+  // just no UI left to create new such links.
   function draw(){
     list.innerHTML = state.categories.map(c=>`
       <div class="cat-edit-row" data-cid="${c.id}">
-        <input type="text" class="key-input" maxlength="1" value="${c.key}">
-        <input type="color" value="${c.color}">
-        <input type="text" value="${escapeHtml(c.label)}">
+        <input type="color" class="cat-color-input" value="${c.color}" title="Cor">
+        <input type="text" class="cat-label-input" value="${escapeHtml(c.label)}" placeholder="Nome">
+        <input type="text" class="key-input" maxlength="1" value="${c.key}" title="Tecla/atalho">
         <label class="cat-team-toggle" title="Fase/comportamento de equipa (organização ofensiva/defensiva, transições)">
           <input type="checkbox" class="cat-team-check" ${c.isTeamPhase?'checked':''}> equipa
         </label>
         <label class="cat-team-toggle" title="Marcar esta categoria soma ao placar do time do lance">
           <input type="checkbox" class="cat-goal-check" ${c.isGoal?'checked':''}> golo
         </label>
-        <select class="cat-countstoward-select" title="Marcar esta categoria também soma a outra (ex.: 'Remate à baliza' soma também a 'Remate')">
-          <option value="">também conta p/ —</option>
-          ${state.categories.filter(o=>o.id!==c.id).map(o=>`<option value="${o.id}" ${c.countsToward===o.id?'selected':''}>também conta p/ ${escapeHtml(o.label)}</option>`).join('')}
-        </select>
         <button class="btn icon cat-del">✕</button>
       </div>`).join('');
     list.querySelectorAll('.cat-edit-row').forEach(row=>{
       const cid = row.dataset.cid;
       const c = catById(cid);
-      row.querySelector('.key-input').addEventListener('input', e=>{ c.key = e.target.value.slice(0,1); saveState(); });
-      row.querySelector('input[type=color]').addEventListener('input', e=>{ c.color = e.target.value; saveState(); });
-      row.querySelector('input[type=text]:not(.key-input)').addEventListener('input', e=>{ c.label = e.target.value; saveState(); });
+      row.querySelector('.cat-color-input').addEventListener('input', e=>{ c.color = e.target.value; saveState(); });
+      row.querySelector('.cat-label-input').addEventListener('input', e=>{ c.label = e.target.value; saveState(); });
+      row.querySelector('.key-input').addEventListener('input', e=>{
+        const key = e.target.value.slice(0,1);
+        e.target.value = key;
+        warnIfCategoryKeyTaken(state.categories, key, cid);
+        c.key = key;
+        saveState();
+      });
       row.querySelector('.cat-team-check').addEventListener('change', e=>{ c.isTeamPhase = e.target.checked; saveState(); });
       row.querySelector('.cat-goal-check').addEventListener('change', e=>{ c.isGoal = e.target.checked; saveState(); });
-      row.querySelector('.cat-countstoward-select').addEventListener('change', e=>{ c.countsToward = e.target.value || null; saveState(); });
       row.querySelector('.cat-del').addEventListener('click', ()=>{
         state.categories = state.categories.filter(x=>x.id!==cid);
         draw();
@@ -2589,7 +2660,7 @@ function renderCatsModal(){
   }
   draw();
   el.querySelector('#btnAddCat').addEventListener('click', ()=>{
-    state.categories.push({id:'c'+uid(), key:'', label:'Nova categoria', color:'#8993A1', isTeamPhase:false});
+    state.categories.push({id:'c'+uid(), key:'', label:'Nova categoria', color:pickDistinctCategoryColor(state.categories.map(c=>c.color)), isTeamPhase:false});
     draw();
     saveState();
   });
@@ -4538,8 +4609,7 @@ function closeQuickCreateCategory(){
 }
 function openQuickCreateCategory(key){
   closeQuickCreateCategory();
-  const palette = ['#3F9142','#C1533D','#E2A63B','#4F8FC9','#D1495B','#D9C24C','#3FAF9A','#9B6FD1','#8993A1','#C98A3F'];
-  const color = palette[state.categories.length % palette.length];
+  const color = pickDistinctCategoryColor(state.categories.map(c=>c.color));
   const form = document.createElement('div');
   form.className='quick-cat-form';
   form.innerHTML = `
