@@ -113,15 +113,9 @@
     gap:0; background:var(--line); overflow:hidden;
   }
   .video-body.resizing{ transition:none; }
-  .video-body.focused{grid-template-columns:0px 0px 1fr 0px 0px;}
-  .video-body.focused .tag-sidebar, .video-body.focused .clip-sidebar, .video-body.focused .col-resizer{display:none;}
   .col-resizer{background:var(--line); cursor:col-resize; position:relative;}
   .col-resizer:hover, .col-resizer.dragging{background:var(--pitch);}
   .col-resizer::after{content:''; position:absolute; inset:0 -3px;}
-  /* min-width/min-height:0 override grid's default "never shrink below content size" — without
-     it, the video's own intrinsic size can keep this track from actually collapsing/expanding
-     right when .focused toggles, leaving the grid container's own background (var(--line), a
-     dark blue-grey) visible instead of the video filling the space. */
   .video-stage{background:var(--bg); display:flex; flex-direction:column; overflow:hidden; min-width:0; min-height:0;}
 
   /* Left: clips organized by category */
@@ -222,8 +216,47 @@
   .video-wrap .empty-state{color:var(--muted); text-align:center; padding:30px; max-width:340px;}
   .video-wrap .empty-state h3{color:var(--chalk); font-size:16px; margin-bottom:6px;}
   .video-wrap .empty-state p{font-size:13px; line-height:1.5;}
-  #videoEl{max-width:100%; max-height:100%; display:none;}
+  /* width/height:100% + object-fit:contain (not just max-width/max-height:100%, which only ever
+     caps growth) — a video smaller than its container needs to actively scale UP to fill it, which
+     only becomes visible/wrong once the container gets much bigger than the source resolution, as
+     it does in real fullscreen. Native, GPU-accelerated letterboxing — no extra JS sizing logic,
+     same decode pipeline either way. */
+  #videoEl{width:100%; height:100%; object-fit:contain; display:none;}
   #drawCanvas{position:absolute; top:0; left:0; cursor:pointer;}
+  /* Real fullscreen (Element.requestFullscreen on videoWrap — see btnFocusVideo below): the video
+     itself needs no fullscreen-specific CSS at all (max-width/height:100% inside a centered flex
+     box already letterboxes correctly at any size), only the playback bar + touchline need to
+     become an overlay instead of pushing the video into a smaller box. Entering fullscreen
+     re-parents the actual #playbackBar/#touchlineWrap elements (not copies — same nodes, same
+     listeners) into this wrapper; exiting moves them back to their normal in-flow position in
+     .video-stage. */
+  .video-wrap.fs-active .fs-overlay-controls{
+    position:absolute; left:0; right:0; bottom:0; z-index:80; display:flex; flex-direction:column;
+    background:linear-gradient(to top, rgba(8,10,13,.85) 0%, rgba(8,10,13,.55) 55%, rgba(8,10,13,0) 100%);
+    padding-top:28px; opacity:0; pointer-events:none; transition:opacity .25s ease;
+  }
+  .video-wrap.fs-active.fs-controls-visible .fs-overlay-controls{ opacity:1; pointer-events:auto; }
+  .fs-overlay-controls #playbackBar{ background:transparent; border:none; }
+  .fs-overlay-controls #touchlineWrap{ background:transparent; border:none; padding-bottom:16px; }
+  .fs-cat-indicator{
+    position:absolute; left:50%; bottom:118px; transform:translateX(-50%); z-index:85;
+    display:none; flex-direction:column; gap:6px; align-items:center; pointer-events:none;
+  }
+  .video-wrap.fs-active .fs-cat-indicator{ display:flex; }
+  .fs-cat-badge{
+    display:flex; align-items:center; gap:8px; background:rgba(15,18,23,.9);
+    border:1.5px solid var(--cat-color, var(--line)); border-radius:999px; padding:7px 16px 7px 11px;
+    font-size:12.5px; font-weight:700; color:#fff; letter-spacing:.2px;
+    box-shadow:0 6px 18px rgba(0,0,0,.45); animation:fs-badge-in .18s ease;
+  }
+  .fs-cat-badge.done{ border-color:#3F9142; }
+  .fs-cat-dot{ width:10px; height:10px; border-radius:50%; background:var(--cat-color,#fff); flex-shrink:0; animation:fs-badge-pulse 1.4s ease-in-out infinite; }
+  .fs-cat-badge.done .fs-cat-dot{
+    width:auto; height:auto; border-radius:0; background:transparent; color:#3F9142;
+    font-size:13px; font-weight:900; animation:none;
+  }
+  @keyframes fs-badge-in{ from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);} }
+  @keyframes fs-badge-pulse{ 0%,100%{opacity:1;} 50%{opacity:.35;} }
 
   .clip-edit-banner{
     display:flex; align-items:center; gap:10px; padding:4px 12px;
@@ -989,7 +1022,7 @@
           <div class="toolbar-sep"></div>
           <div style="flex:1;"></div>
           <button class="btn" id="btnModeStopwatch" title="Alternar para codificação sem vídeo (só cronômetro)">⏱ Sem vídeo</button>
-          <button class="btn icon" id="btnFocusVideo" title="Maximizar área de vídeo">⛶</button>
+          <button class="btn icon" id="btnFocusVideo" title="Ecrã inteiro">⛶</button>
         </div>
 
         <div class="clip-edit-banner" id="clipEditBanner" style="display:none;"></div>
@@ -1014,6 +1047,14 @@
             <video id="videoEl" playsinline muted></video>
             <canvas id="drawCanvas"></canvas>
           </div>
+
+          <!-- Fullscreen only: #playbackBar/#touchlineWrap get moved in here (see btnFocusVideo's
+               fullscreenchange handler) instead of being duplicated — this stays empty/inert the
+               rest of the time. -->
+          <div class="fs-overlay-controls" id="fsOverlayControls"></div>
+          <!-- Small "recording this category" badge(s) shown while a keyboard-driven clip is being
+               recorded in fullscreen — see handleCategoryTrigger()/showFsCatBadge(). -->
+          <div class="fs-cat-indicator" id="fsCatIndicator"></div>
 
           <div class="stopwatch-view" id="stopwatchView" style="display:none;">
             <div class="time mono" id="stopwatchDisplay">00:00:00</div>
@@ -2804,14 +2845,17 @@ function handleCategoryTrigger(catId){
     const startSec = Math.min(pending.inSec, endSec);
     const outSec = Math.max(pending.inSec, endSec);
     createTag(catId, undefined, {inSec:startSec, outSec:Math.max(outSec, startSec+0.2), time:startSec});
+    showFsCatBadge(cat, 'done');
   } else {
     pendingKeyClips[catId] = {inSec: currentTimeValue()};
     toast('A gravar corte de "'+cat.label+'"… prime outra vez para terminar.');
+    showFsCatBadge(cat, 'recording');
   }
   updateKeyRecordingIndicators();
 }
 function cancelPendingKeyClips(){
   if(!Object.keys(pendingKeyClips).length) return;
+  Object.keys(pendingKeyClips).forEach(catId => hideFsCatBadge(catId));
   pendingKeyClips = {};
   updateKeyRecordingIndicators();
   toast('Gravação de corte cancelada.');
@@ -2820,6 +2864,33 @@ function updateKeyRecordingIndicators(){
   document.querySelectorAll('#catGrid .cat-btn').forEach(b=>{
     b.classList.toggle('recording', !!pendingKeyClips[b.dataset.cid]);
   });
+}
+// Small floating badge(s) shown while a keyboard-driven clip is being recorded — only actually
+// visible while in fullscreen (see the .video-wrap.fs-active .fs-cat-indicator CSS rule), since
+// the sidebar's own .cat-btn.recording styling above already covers this outside fullscreen. Kept
+// keyed by category id (not a single shared badge) because the two-tap recording system already
+// supports several categories recording at once — collapsing them into one badge would silently
+// hide whichever one wasn't shown.
+function showFsCatBadge(cat, status){
+  const container = document.getElementById('fsCatIndicator');
+  let el = container.querySelector(`.fs-cat-badge[data-cid="${cat.id}"]`);
+  if(!el){
+    el = document.createElement('div');
+    el.className = 'fs-cat-badge';
+    el.dataset.cid = cat.id;
+    container.appendChild(el);
+  }
+  clearTimeout(el._hideTimer);
+  el.style.setProperty('--cat-color', cat.color);
+  el.classList.toggle('done', status==='done');
+  const statusText = status==='done' ? 'CORTE GUARDADO' : 'A GRAVAR';
+  const dotOrCheck = status==='done' ? '✓' : '';
+  el.innerHTML = `<span class="fs-cat-dot">${dotOrCheck}</span><span>${escapeHtml(cat.label.toUpperCase())} — ${statusText}</span>`;
+  if(status==='done') el._hideTimer = setTimeout(()=>el.remove(), 2200);
+}
+function hideFsCatBadge(catId){
+  const el = document.querySelector(`#fsCatIndicator .fs-cat-badge[data-cid="${catId}"]`);
+  if(el){ clearTimeout(el._hideTimer); el.remove(); }
 }
 
 // Finds a category by label (case-insensitive) or creates it — used by the toolbar's quick-tag
@@ -3464,17 +3535,58 @@ document.getElementById('btnMute').addEventListener('click', ()=>{
   document.getElementById('btnMute').textContent = videoEl.muted ? '🔇' : '🔊';
 });
 
-// "Maximizar" now does two things together: hides the side panels (more room for the video within
-// the window) AND — inside Electron — puts the actual OS window into real fullscreen (hides the
-// title bar/taskbar too), which is what people actually mean by "full screen".
-// Hides the side panels so the video gets the whole tab area. A real OS-level fullscreen
-// (BrowserWindow.setFullScreen) was tried here and reverted — on Windows it combined badly with
-// autoHideMenuBar and left the window rendering a blank frame with no reliable way back out short
-// of killing the process. This CSS-only version can't get anyone stuck.
-document.getElementById('btnFocusVideo').addEventListener('click', ()=>{
-  const body = document.querySelector('#tab-video .video-body');
-  const focused = body.classList.toggle('focused');
-  document.getElementById('btnFocusVideo').classList.toggle('active', focused);
+// Real fullscreen via the standard Fullscreen API (Element.requestFullscreen), not Electron's
+// BrowserWindow.setFullScreen (an OS-window-level main-process API, tried in an earlier version of
+// this feature and reverted — on Windows it combined badly with autoHideMenuBar and left the
+// window rendering a blank frame with no reliable way back out short of killing the process).
+// requestFullscreen() targets videoWrap itself rather than the video element: Chromium's own
+// default browser chrome for a *fullscreened <video>* would give native controls and no way to
+// keep our own overlay/keyboard shortcuts working, whereas fullscreening the wrapping DIV keeps
+// the video element (and the drawing canvas on top of it) exactly as they already render — same
+// decode pipeline, same hardware acceleration — while letting arbitrary custom overlay UI
+// (fsOverlayControls, fsCatIndicator) live inside the fullscreened element too.
+const btnFocusVideo = document.getElementById('btnFocusVideo');
+function isVideoFullscreen(){ return document.fullscreenElement === videoWrap; }
+btnFocusVideo.addEventListener('click', ()=>{
+  if(isVideoFullscreen()) document.exitFullscreen();
+  else videoWrap.requestFullscreen().catch(err => toast('Não foi possível entrar em ecrã inteiro: '+err.message));
+});
+let fsControlsHideTimer = null;
+function showFsControls(){
+  if(!isVideoFullscreen()) return;
+  videoWrap.classList.add('fs-controls-visible');
+  clearTimeout(fsControlsHideTimer);
+  fsControlsHideTimer = setTimeout(()=>videoWrap.classList.remove('fs-controls-visible'), 5000);
+}
+// mousemove is the ONLY thing that reveals the overlay controls — keyboard shortcuts (see the big
+// keydown handler further down) never check whether the bar is visible, so hiding it never
+// disables anything, it only hides the visual chrome.
+videoWrap.addEventListener('mousemove', showFsControls);
+// The single source of truth for entering/exiting: fires for every way fullscreen can end (this
+// button, Esc, the OS, a future dblclick handler...), so re-parenting the overlay controls and
+// resizing the canvas here — rather than inside the click handler above — keeps them correct no
+// matter how fullscreen state actually changed.
+document.addEventListener('fullscreenchange', ()=>{
+  const active = isVideoFullscreen();
+  btnFocusVideo.classList.toggle('active', active);
+  videoWrap.classList.toggle('fs-active', active);
+  const overlay = document.getElementById('fsOverlayControls');
+  const playbackBarEl = document.getElementById('playbackBar');
+  const touchlineWrapEl = document.getElementById('touchlineWrap');
+  if(active){
+    overlay.appendChild(playbackBarEl);
+    overlay.appendChild(touchlineWrapEl);
+    showFsControls();
+  } else {
+    clearTimeout(fsControlsHideTimer);
+    videoWrap.classList.remove('fs-controls-visible');
+    // Restore them to their normal in-flow spot in .video-stage, right after .video-wrap — the
+    // same position they started in (video-wrap, then playback-bar, then touchline-wrap).
+    videoWrap.insertAdjacentElement('afterend', touchlineWrapEl);
+    videoWrap.insertAdjacentElement('afterend', playbackBarEl);
+  }
+  // The video's actual rendered box just changed size drastically — the drawing-canvas overlay
+  // (shapes/annotations) needs to be resized/repositioned to match, same as any other resize.
   requestAnimationFrame(sizeDrawCanvas);
 });
 
