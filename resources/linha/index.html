@@ -605,7 +605,7 @@
   #tab-tactic{flex-direction:row;}
   .tactic-main{flex:1; display:flex; flex-direction:column; overflow:hidden;}
   .tactic-pitch-wrap{flex:1; position:relative; padding:14px; display:flex; align-items:center; justify-content:center; overflow:hidden;}
-  .tactic-pitch{position:relative; width:100%; max-width:900px; aspect-ratio:105/68;}
+  .tactic-pitch{position:relative; width:100%; max-width:900px; aspect-ratio:105/68; touch-action:none;}
   .tactic-pitch.box-mode{max-width:640px; aspect-ratio:680/375;}
   .tactic-pitch.depth-mode{max-width:900px; aspect-ratio:1050/640;}
   .tactic-pitch svg{width:100%; height:100%; display:block; border-radius:8px;}
@@ -931,10 +931,14 @@
 
   /* Compact toolbar: only mobile-toolbar-primary buttons show by default; #btnMobileTools reveals
      the rest (draw tools, zoom, posse, quick-tag, "Sem vídeo") as a wrapped panel instead of a
-     row permanently eating vertical space above the video. Same buttons/listeners either way. */
-  body.mobile-touch-ui .stage-toolbar{ flex-wrap:wrap; row-gap:6px; }
-  body.mobile-touch-ui .stage-toolbar > *:not(.mobile-toolbar-primary){ display:none; }
-  body.mobile-touch-ui .stage-toolbar.mobile-tools-open > *{ display:flex !important; }
+     row permanently eating vertical space above the video. Same buttons/listeners either way.
+     Scoped to #videoToolbar specifically, NOT the generic .stage-toolbar class — the Tactic Board
+     tab's own toolbar also uses .stage-toolbar, and a generic selector here was hiding its draw
+     tools/board-mode/undo/export buttons entirely under body.mobile-touch-ui (caught by the real-
+     touch tactic board test, not by inspection alone). */
+  body.mobile-touch-ui #videoToolbar{ flex-wrap:wrap; row-gap:6px; }
+  body.mobile-touch-ui #videoToolbar > *:not(.mobile-toolbar-primary){ display:none; }
+  body.mobile-touch-ui #videoToolbar.mobile-tools-open > *{ display:flex !important; }
 
   /* iPad / wide mobile viewport: closer to the desktop's own layout — the clip list gets a real
      side panel instead of a drawer, without duplicating any markup (same .clip-sidebar element,
@@ -3038,6 +3042,14 @@ function drawLocDot(){
   else dot.style.display='none';
 }
 function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+// Normalizes mouse vs touch coordinates: a TouchEvent carries its position in touches[0]/
+// changedTouches[0] instead of directly on the event. Used everywhere a mouse-drag interaction
+// (timeline, tactic board tokens/shapes) gets touch support added alongside it, so the drag math
+// itself never has to know which input type triggered it.
+function clientXY(e){
+  const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+  return t ? {x:t.clientX, y:t.clientY} : {x:e.clientX, y:e.clientY};
+}
 
 
 /* ===================================================================
@@ -6436,13 +6448,20 @@ function renderTokens(){
     const handle = document.createElement('div');
     handle.className='token-rotate-handle';
     handle.title='Arrasta para rodar';
-    handle.addEventListener('mousedown', e=>{
+    function startRotate(e){
       if(tTool!=='move') return;
       e.stopPropagation(); e.preventDefault();
       tRotateId = id;
-    });
+    }
+    handle.addEventListener('mousedown', startRotate);
+    handle.addEventListener('touchstart', startRotate, {passive:false});
     el.appendChild(handle);
-    el.addEventListener('mousedown', e=>{ if(tTool!=='move') return; tDragId=id; e.preventDefault(); });
+    function startDrag(e){ if(tTool!=='move') return; tDragId=id; e.preventDefault(); }
+    el.addEventListener('mousedown', startDrag);
+    // Apple Pencil on iPadOS Safari already dispatches regular touch events for basic drag/tap
+    // (pointer events only add pressure/tilt/hover, none of which this needs) — no pencil-specific
+    // handling required here or anywhere else in the tactic board.
+    el.addEventListener('touchstart', startDrag, {passive:false});
     el.addEventListener('wheel', e=>{
       if(tTool!=='move') return;
       e.preventDefault(); e.stopPropagation();
@@ -6547,14 +6566,14 @@ document.getElementById('fileTacticImage').addEventListener('change', e=>{
 });
 
 let tRotateId = null;
-tacticPitch.addEventListener('mousemove', e=>{
+function updateTacticPointerMove(clientX, clientY){
   if(tRotateId){
     const tk = tokens[tRotateId];
     const el = tacticPitch.querySelector('.token[data-id="'+tRotateId+'"]');
     if(tk && el){
       const rect = el.getBoundingClientRect();
       const cx = rect.left+rect.width/2, cy = rect.top+rect.height/2;
-      const deg = Math.atan2(e.clientY-cy, e.clientX-cx) * 180/Math.PI + 90;
+      const deg = Math.atan2(clientY-cy, clientX-cx) * 180/Math.PI + 90;
       tk.angle = deg;
       renderTokens();
     }
@@ -6562,32 +6581,52 @@ tacticPitch.addEventListener('mousemove', e=>{
   }
   if(tDragId){
     const r = tacticPitch.getBoundingClientRect();
-    const x = clamp(((e.clientX-r.left)/r.width)*100,0,100);
-    const y = clamp(((e.clientY-r.top)/r.height)*100,0,100);
+    const x = clamp(((clientX-r.left)/r.width)*100,0,100);
+    const y = clamp(((clientY-r.top)/r.height)*100,0,100);
     tokens[tDragId].x=x; tokens[tDragId].y=y;
     renderTokens();
     return;
   }
   if(tDrawing){
-    const p = tRelPt(e);
+    const p = tRelPtXY(clientX, clientY);
     redrawTactic();
     drawShapeOnCtx(tctx, tacticCanvas, {type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
   } else if(tZonePts.length){
     redrawTactic();
-    const pts = tZonePts.concat([tRelPt(e)]);
+    const pts = tZonePts.concat([tRelPtXY(clientX, clientY)]);
     drawShapeOnCtx(tctx, tacticCanvas, {type:'zone', points:pts, color:tColor, dashed:true});
   }
-});
+}
+tacticPitch.addEventListener('mousemove', e=>updateTacticPointerMove(e.clientX, e.clientY));
+tacticPitch.addEventListener('touchmove', e=>{
+  // Two fingers on the pitch means pinch-zoom/pan (see below) — a single-finger drag/draw handler
+  // reading touches[0] mid-pinch would fight the gesture, moving whatever token/shape happens to
+  // be under the first finger while the user is actually just trying to zoom.
+  if(e.touches.length > 1) return;
+  if(tRotateId || tDragId || tDrawing || tZonePts.length) e.preventDefault();
+  const p = clientXY(e);
+  updateTacticPointerMove(p.x, p.y);
+}, {passive:false});
 window.addEventListener('mouseup', ()=>{ tDragId=null; tRotateId=null; });
-window.addEventListener('mousemove', e=>{
+window.addEventListener('touchend', ()=>{ tDragId=null; tRotateId=null; });
+
+function updateTacticShapeDrag(clientX, clientY){
   if(!tacticShapeDragSession) return;
   const r = tacticPitch.getBoundingClientRect();
-  const dx = (e.clientX-tacticShapeDragSession.startX)/r.width;
-  const dy = (e.clientY-tacticShapeDragSession.startY)/r.height;
+  const dx = (clientX-tacticShapeDragSession.startX)/r.width;
+  const dy = (clientY-tacticShapeDragSession.startY)/r.height;
   applyShapeGeometry(tacticShapeDragSession.shape, tacticShapeDragSession.orig, dx, dy);
   redrawTactic();
-});
+}
+window.addEventListener('mousemove', e=>updateTacticShapeDrag(e.clientX, e.clientY));
+window.addEventListener('touchmove', e=>{
+  if(!tacticShapeDragSession) return;
+  e.preventDefault();
+  const p = clientXY(e);
+  updateTacticShapeDrag(p.x, p.y);
+}, {passive:false});
 window.addEventListener('mouseup', ()=>{ tacticShapeDragSession = null; });
+window.addEventListener('touchend', ()=>{ tacticShapeDragSession = null; });
 
 function setTacticTool(tool){
   const b = document.querySelector(`[data-ttool="${tool}"]`);
@@ -6605,7 +6644,10 @@ buildColorSwatches('tacticColorSwatches', c=>tColor=c);
 wireLineStyleGroup('tacticLineStyleGroup', v=>tLineStyle=v);
 
 let tDrawing=false, tStart=null, tZonePts=[];
-function tRelPt(e){ const r=tacticPitch.getBoundingClientRect(); return {x:(e.clientX-r.left)/r.width, y:(e.clientY-r.top)/r.height}; }
+function tRelPtXY(clientX, clientY){ const r=tacticPitch.getBoundingClientRect(); return {x:(clientX-r.left)/r.width, y:(clientY-r.top)/r.height}; }
+// Delegates to clientXY(e) so every existing call site (mousedown handlers throughout the tactic
+// board) transparently gains touch support without having to touch each one individually.
+function tRelPt(e){ const p = clientXY(e); return tRelPtXY(p.x, p.y); }
 
 function eraseTacticShapeAt(e){
   const p = tRelPt(e);
@@ -6620,29 +6662,34 @@ tacticCanvas.addEventListener('contextmenu', e=>{
   if(eraseTacticShapeAt(e)) redrawTactic();
 });
 let tErasing = false;
-tacticCanvas.addEventListener('mousedown', e=>{
+function startTacticCanvasInteraction(e){
   // A right-click fires its own mousedown (button 2) before the separate 'contextmenu' event that
   // actually erases below — without this check, whichever drawing tool was active would ALSO treat
   // it as a left-click and start a brand new shape at the same spot just erased from (same fix
-  // already applied to the video tab's drawCanvas).
-  if(e.button!==0) return;
+  // already applied to the video tab's drawCanvas). Touch/pen events have no .button at all — only
+  // a real mouse click can be a non-primary button, so this only ever filters mouse input.
+  if(e.type==='mousedown' && e.button!==0) return;
   if(tTool==='move'){
-    // Tokens (players/objects/images) are DOM elements and already drag via their own mousedown
-    // handlers — this is the equivalent for canvas-drawn text shapes, which have no such handle.
+    // Tokens (players/objects/images) are DOM elements and already drag via their own mousedown/
+    // touchstart handlers — this is the equivalent for canvas-drawn text shapes, which have no
+    // such handle.
     const p = tRelPt(e);
     const px = p.x*tacticCanvas.width, py = p.y*tacticCanvas.height;
+    const clientPt = clientXY(e);
     for(let i=tacticShapes.length-1;i>=0;i--){
       if(tacticShapes[i].type==='text' && shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){
-        tacticShapeDragSession = {shape:tacticShapes[i], startX:e.clientX, startY:e.clientY, orig:cloneShapeGeometry(tacticShapes[i])};
+        e.preventDefault();
+        tacticShapeDragSession = {shape:tacticShapes[i], startX:clientPt.x, startY:clientPt.y, orig:cloneShapeGeometry(tacticShapes[i])};
         break;
       }
     }
     return;
   }
-  if(tTool==='eraser'){ tErasing=true; if(eraseTacticShapeAt(e)) redrawTactic(); return; }
+  if(tTool==='eraser'){ e.preventDefault(); tErasing=true; if(eraseTacticShapeAt(e)) redrawTactic(); return; }
   const p = tRelPt(e);
-  if(tTool==='zone'){ tZonePts.push(p); return; }
+  if(tTool==='zone'){ e.preventDefault(); tZonePts.push(p); return; }
   if(tTool==='text'){
+    e.preventDefault();
     tacticShapes.push({type:'text', p, text:'', color:tColor, bold:true, italic:false, fontScale:1});
     redrawTactic();
     // Back to the move tool immediately — otherwise it stays armed and a follow-up double-click
@@ -6651,8 +6698,16 @@ tacticCanvas.addEventListener('mousedown', e=>{
     setTacticTool('move');
     return;
   }
+  e.preventDefault();
   tDrawing=true; tStart=p;
-});
+}
+tacticCanvas.addEventListener('mousedown', startTacticCanvasInteraction);
+tacticCanvas.addEventListener('touchstart', e=>{
+  // A second finger landing on the canvas mid-gesture means pinch-zoom, not "start a new shape
+  // with whichever finger touched first" — bail out entirely so the pinch handler (below) owns it.
+  if(e.touches.length > 1){ tDrawing=false; tZonePts=[]; tErasing=false; return; }
+  startTacticCanvasInteraction(e);
+}, {passive:false});
 // Double-click opens the shared rich editor panel (see the video-tab section above for the
 // definition of openTextEditPanel) — placement drops an empty placeholder box that reads
 // "double-click to edit", same flow as the video canvas.
@@ -6684,6 +6739,11 @@ tacticCanvas.addEventListener('mousemove', e=>{
   lastTacticHoverEvent = e;
   if(tErasing){ if(eraseTacticShapeAt(e)) redrawTactic(); }
 });
+tacticCanvas.addEventListener('touchmove', e=>{
+  if(!tErasing) return;
+  e.preventDefault();
+  if(eraseTacticShapeAt(e)) redrawTactic();
+}, {passive:false});
 function findVisibleTacticShapeAt(e){
   const p = tRelPt(e);
   const px = p.x*tacticCanvas.width, py = p.y*tacticCanvas.height;
@@ -6709,7 +6769,7 @@ tacticCanvas.addEventListener('dblclick', e=>{
     }
   }
 });
-window.addEventListener('mouseup', e=>{
+function finishTacticDrawing(e){
   if(tErasing){ tErasing=false; return; }
   if(!tDrawing) return;
   tDrawing=false;
@@ -6719,7 +6779,51 @@ window.addEventListener('mouseup', e=>{
     tacticShapes.push({type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
   }
   redrawTactic();
+}
+window.addEventListener('mouseup', finishTacticDrawing);
+window.addEventListener('touchend', finishTacticDrawing);
+
+/* ---------- Pitch pinch-zoom/pan (touch only — desktop has no two-finger gesture, nothing to
+   isolate here beyond "these listeners are touch events, which simply never fire without touch
+   hardware"). A pure CSS transform on .tactic-pitch itself — every existing relative-position
+   calculation (tRelPt, token drag, getBoundingClientRect()-based hit testing) keeps working
+   unmodified, since getBoundingClientRect() already reports the POST-transform box. ---------- */
+let tacticZoom = { scale:1, panX:0, panY:0 };
+let tacticPinch = null; // {startDist, startScale, startMid:{x,y}, startPanX, startPanY}
+function applyTacticZoom(){
+  tacticPitch.style.transform = `translate(${tacticZoom.panX}px, ${tacticZoom.panY}px) scale(${tacticZoom.scale})`;
+}
+function touchPairDist(t0, t1){ return Math.hypot(t1.clientX-t0.clientX, t1.clientY-t0.clientY); }
+function touchPairMid(t0, t1){ return { x:(t0.clientX+t1.clientX)/2, y:(t0.clientY+t1.clientY)/2 }; }
+tacticPitch.addEventListener('touchstart', e=>{
+  if(e.touches.length !== 2) return;
+  // A second finger landing means "start pinching," not "keep dragging/drawing with the first
+  // finger" — cancel whatever single-finger gesture might already be mid-flight.
+  tDragId=null; tRotateId=null; tDrawing=false; tZonePts=[]; tErasing=false; tacticShapeDragSession=null;
+  tacticPinch = {
+    startDist: touchPairDist(e.touches[0], e.touches[1]),
+    startScale: tacticZoom.scale,
+    startMid: touchPairMid(e.touches[0], e.touches[1]),
+    startPanX: tacticZoom.panX, startPanY: tacticZoom.panY
+  };
+}, {passive:false});
+tacticPitch.addEventListener('touchmove', e=>{
+  if(!tacticPinch || e.touches.length !== 2) return;
+  e.preventDefault();
+  const dist = touchPairDist(e.touches[0], e.touches[1]);
+  const mid = touchPairMid(e.touches[0], e.touches[1]);
+  tacticZoom.scale = clamp(tacticPinch.startScale * (dist/tacticPinch.startDist), 1, 3);
+  tacticZoom.panX = tacticPinch.startPanX + (mid.x - tacticPinch.startMid.x);
+  tacticZoom.panY = tacticPinch.startPanY + (mid.y - tacticPinch.startMid.y);
+  // Snapped back to a clean 1:1/no-pan state once zoomed all the way back out, instead of leaving
+  // it in some slightly-off-center resting position that only another pinch could fix.
+  if(tacticZoom.scale <= 1.01){ tacticZoom.scale = 1; tacticZoom.panX = 0; tacticZoom.panY = 0; }
+  applyTacticZoom();
+}, {passive:false});
+tacticPitch.addEventListener('touchend', e=>{
+  if(e.touches.length < 2) tacticPinch = null;
 });
+
 function redrawTactic(){
   tctx.clearRect(0,0,tacticCanvas.width, tacticCanvas.height);
   tacticShapes.forEach(s=>drawShapeOnCtx(tctx, tacticCanvas, s));

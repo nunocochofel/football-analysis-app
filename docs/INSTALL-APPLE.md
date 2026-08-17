@@ -82,11 +82,16 @@ explicar em vez de esconder:
 - **Exportação não funciona**: requer iOS/iPadOS 16.4 ou mais recente (suporte a WebCodecs). Em
   versões mais antigas, a app avisa que a exportação não está disponível em vez de falhar em
   silêncio.
-- **Quadro Tático ainda não tem interação por toque dedicada** (arrastar jogadores, pinch-zoom,
-  Apple Pencil) — está planeado para uma fase seguinte. O resto da app (vídeo, cortes, categorias,
-  timeline, ecrã inteiro, exportação) já está totalmente adaptado a toque.
 - **Vídeo não reproduz**: formatos comuns (MP4/H.264) funcionam sempre; formatos como HEVC/ProRes
   podem ter suporte variável consoante o modelo/versão do iOS.
+
+## Quadro Tático
+
+Totalmente utilizável por toque: arrasta jogadores/objetos para os mover, arrasta a pega para os
+rodar, belisca com dois dedos para aproximar/afastar o campo, arrasta com dois dedos para navegar.
+As ferramentas de desenho (linha, seta, zona, texto) desenham-se com o dedo tal como no rato do
+computador. O **Apple Pencil no iPad** funciona automaticamente nestas mesmas interações — não é
+preciso nenhuma configuração especial.
 
 ## Como atualizar
 

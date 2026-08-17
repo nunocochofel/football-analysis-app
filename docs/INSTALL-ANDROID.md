@@ -82,12 +82,16 @@ nativa do próprio Chrome (WebCodecs) — funciona de verdade, com limitações 
 - **Exportação não funciona**: requer um Chrome/Chromium razoavelmente recente (suporte a
   WebCodecs, Chrome 94+). Em versões mais antigas, a app avisa que a exportação não está
   disponível em vez de falhar em silêncio.
-- **Quadro Tático ainda não tem interação por toque dedicada** (arrastar jogadores, pinch-zoom) —
-  está planeado para uma fase seguinte. O resto da app (vídeo, cortes, categorias, timeline, ecrã
-  inteiro, exportação) já está totalmente adaptado a toque.
 - **Ecrãs e proporções muito diferentes** (telemóveis vs. tablets Android têm muita variedade):
   se algo parecer cortado ou mal dimensionado num aparelho específico, é útil reportares o
   modelo/tamanho de ecrã.
+
+## Quadro Tático
+
+Totalmente utilizável por toque: arrasta jogadores/objetos para os mover, arrasta a pega para os
+rodar, belisca com dois dedos para aproximar/afastar o campo, arrasta com dois dedos para navegar.
+As ferramentas de desenho (linha, seta, zona, texto) desenham-se com o dedo tal como no rato do
+computador.
 
 ## Como atualizar
 
