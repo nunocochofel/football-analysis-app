@@ -282,6 +282,27 @@
     width:auto; height:auto; border-radius:0; background:transparent; color:#3F9142;
     font-size:13px; font-weight:900; animation:none;
   }
+
+  /* Mobile always-visible category bar (#mobileCatBar, populated by renderCategoryButtonsInto() —
+     see renderCatGrid()). Lives inside #videoWrap and is ALWAYS an absolute bottom overlay on the
+     video — identically in normal mobile view and in real fullscreen (videoWrap is what actually
+     gets fullscreened), so this needs no .fs-active-specific variant at all. Deliberately NOT tied
+     to .fs-controls-visible (unlike .fs-overlay-controls above) — it must never disappear with the
+     auto-hiding transport controls (the "categorias sempre visíveis" requirement). Gated entirely
+     behind body.mobile-touch-ui (see PLATFORM DETECTION) — never shown on desktop regardless of
+     fullscreen state, touch hardware, or window size. */
+  body.mobile-touch-ui #mobileCatBar{
+    display:flex; flex-wrap:wrap; gap:8px; position:absolute; left:0; right:0; bottom:0; z-index:60;
+    padding:10px 12px calc(10px + var(--safe-bottom));
+    padding-left:calc(12px + var(--safe-left)); padding-right:calc(12px + var(--safe-right));
+    background:linear-gradient(to top, rgba(8,10,13,.88) 0%, rgba(8,10,13,.6) 60%, rgba(8,10,13,0) 100%);
+    max-height:34vh; overflow-y:auto;
+  }
+  body.mobile-touch-ui #mobileCatBar .cat-btn{
+    min-height:var(--touch-target); padding:10px 14px; font-size:13.5px; flex:1 1 auto; min-width:120px;
+  }
+  /* The "tecla X" hint is meaningless without a physical keyboard. */
+  body.mobile-touch-ui #mobileCatBar .cat-btn .key{ display:none; }
   @keyframes fs-badge-in{ from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);} }
   @keyframes fs-badge-pulse{ 0%,100%{opacity:1;} 50%{opacity:.35;} }
 
@@ -842,6 +863,88 @@
     .tactic-side{width:100%; border-left:none; border-top:1px solid var(--line);}
   }
 
+  /* ===================================================================
+     MOBILE/TABLET TOUCH LAYOUT — entirely scoped under body.mobile-touch-ui
+     (see PLATFORM DETECTION in the script below: only applied when
+     !isElectron() && a real mobile OS is detected — never on a narrow
+     Electron window, never on a touch-capable desktop browser). This is a
+     genuinely different layout, not a smaller version of the desktop grid:
+     the rule above (max-width:1100px) already handles a narrow DESKTOP
+     window by stacking three grid rows of content-driven height, which is
+     exactly what buries the video — that rule is untouched and still only
+     ever applies on its own to a narrow window running WITHOUT this class.
+     Here, .video-body becomes a flex column with exactly one growing
+     child (.video-stage — already flex:1 internally, unchanged from
+     desktop), and the two sidebars are taken out of flow entirely as
+     off-canvas drawers, so nothing but the video and its own compact
+     chrome can ever occupy vertical space by default.
+  =================================================================== */
+  body.mobile-touch-ui .video-body{
+    display:flex; flex-direction:column;
+  }
+  body.mobile-touch-ui .video-stage{ flex:1; min-height:0; }
+  body.mobile-touch-ui .col-resizer{ display:none; }
+
+  /* Off-canvas drawers — same drawer pattern as before, now correctly scoped so it can never
+     fire for a narrow Electron window (that stays on the max-width:1100px stacked fallback). */
+  body.mobile-touch-ui .clip-sidebar,
+  body.mobile-touch-ui .tag-sidebar{
+    position:fixed; top:0; bottom:0; width:86vw; max-width:340px; z-index:200; max-height:none;
+    transition:transform .28s cubic-bezier(.2,.8,.3,1); box-shadow:0 0 40px rgba(0,0,0,.5);
+    padding-top:var(--safe-top); padding-bottom:var(--safe-bottom);
+  }
+  body.mobile-touch-ui .clip-sidebar{ left:0; transform:translateX(-105%); border-right:1px solid var(--line); border-bottom:none; }
+  body.mobile-touch-ui .tag-sidebar{ right:0; transform:translateX(105%); border-left:1px solid var(--line); border-top:none; }
+  body.mobile-touch-ui .clip-sidebar.drawer-open,
+  body.mobile-touch-ui .tag-sidebar.drawer-open{ transform:translateX(0); }
+  body.mobile-touch-ui .drawer-backdrop{ display:none; position:fixed; inset:0; background:rgba(6,8,11,.55); z-index:190; }
+  body.mobile-touch-ui .drawer-backdrop.active{ display:block; }
+
+  /* Compact toolbar: only mobile-toolbar-primary buttons show by default; #btnMobileTools reveals
+     the rest (draw tools, zoom, posse, quick-tag, "Sem vídeo") as a wrapped panel instead of a
+     row permanently eating vertical space above the video. Same buttons/listeners either way. */
+  body.mobile-touch-ui .stage-toolbar{ flex-wrap:wrap; row-gap:6px; }
+  body.mobile-touch-ui .stage-toolbar > *:not(.mobile-toolbar-primary){ display:none; }
+  body.mobile-touch-ui .stage-toolbar.mobile-tools-open > *{ display:flex !important; }
+
+  /* iPad / wide mobile viewport: closer to the desktop's own layout — the clip list gets a real
+     side panel instead of a drawer, without duplicating any markup (same .clip-sidebar element,
+     just un-fixed and given a fixed width in flow). Declared after the drawer rules above so it
+     wins on equal specificity. tag-sidebar stays a drawer — categories are already always
+     reachable via #mobileCatBar; the rest (tempo de jogo, time/jogador) doesn't need permanent
+     space even on a tablet. */
+  @media (min-width:820px){
+    body.mobile-touch-ui .video-body{ flex-direction:row; }
+    body.mobile-touch-ui .clip-sidebar{
+      position:static; transform:none; width:auto; max-width:none; flex:0 0 280px;
+      box-shadow:none; border-right:1px solid var(--line);
+    }
+    body.mobile-touch-ui #btnOpenClipDrawer{ display:none; }
+  }
+
+  /* Phone landscape specifically (short viewport height — iPad landscape has plenty of height, so
+     the max-height ceiling keeps this from firing there): squeeze the compact chrome to give the
+     video as much of the limited height as possible. */
+  @media (orientation:landscape) and (max-height:500px){
+    body.mobile-touch-ui .stage-toolbar{ padding:3px 8px; }
+    body.mobile-touch-ui #mobileCatBar{ padding:6px 10px; max-height:26vh; gap:6px; }
+    body.mobile-touch-ui #mobileCatBar .cat-btn{ padding:6px 10px; font-size:12px; min-height:36px; min-width:96px; }
+    body.mobile-touch-ui .playback-bar{ padding:3px 10px; }
+    body.mobile-touch-ui .touchline-wrap{ padding:6px 12px 4px; }
+    /* The header (brand + tagline + tabs + 4 action buttons) is sized for a full desktop row —
+       on a short landscape phone screen it was eating a disproportionate share of the very
+       limited height (measured: ~40% of the video's share lost to it). Compact it hard here only
+       — portrait has plenty of height to spare, so it stays exactly as-is there. */
+    body.mobile-touch-ui #app-header{ padding:4px 10px; gap:8px; }
+    body.mobile-touch-ui .brand .sub{ display:none; }
+    body.mobile-touch-ui .brand h1{ font-size:13px; }
+    body.mobile-touch-ui .brand .mark{ width:16px; height:16px; }
+    body.mobile-touch-ui nav.tabs{ margin-left:4px; }
+    body.mobile-touch-ui nav.tabs button{ padding:5px 9px; font-size:11.5px; }
+    body.mobile-touch-ui .header-actions{ gap:4px; }
+    body.mobile-touch-ui .header-actions .btn{ padding:5px 8px; font-size:11.5px; }
+  }
+
   /* ---------- Project picker ---------- */
   #projectPicker{
     display:none; height:100vh; overflow-y:auto; align-items:flex-start; justify-content:center;
@@ -962,6 +1065,9 @@
   <section class="tab-panel active" id="tab-video">
     <div class="video-body">
 
+      <!-- Mobile only: tap-to-close overlay behind whichever sidebar drawer is open. -->
+      <div class="drawer-backdrop touch-only" id="drawerBackdrop"></div>
+
       <!-- Clips organized by category -->
       <aside class="clip-sidebar">
         <div class="clip-sidebar-head">
@@ -984,11 +1090,18 @@
 
       <div class="video-stage">
         <div class="stage-toolbar" id="videoToolbar">
-          <button class="btn primary" id="btnUploadVideo">▶ Carregar vídeo</button>
+          <!-- mobile-toolbar-primary: markers only, no logic — under body.mobile-touch-ui CSS
+               hides everything in this toolbar EXCEPT elements with this class, and #btnMobileTools
+               (below) reveals the rest as an overlay panel on tap. Desktop ignores this class
+               entirely (no matching CSS rule outside the mobile-touch-ui scope). -->
+          <!-- Mobile only: opens the SAME clip-sidebar as an off-canvas drawer instead of it being
+               permanently stacked above the video (see #drawerBackdrop / openDrawer() below). -->
+          <button class="btn icon mobile-toolbar-primary touch-only" id="btnOpenClipDrawer" title="Clipes">📋</button>
+          <button class="btn primary mobile-toolbar-primary" id="btnUploadVideo">▶ Carregar vídeo</button>
           <input type="file" id="fileVideo" accept="video/*,.mp4,.m4v,.mov,.webm,.mkv,.avi,.ogv,.wmv,.flv,.ts,.mts,.m2ts,.mxf,.mpg,.mpeg,.3gp,.vob" style="display:none">
           <div class="toolbar-sep"></div>
 
-          <div class="tool-flyout-wrap" id="toolFlyoutWrap">
+          <div class="tool-flyout-wrap mobile-toolbar-primary" id="toolFlyoutWrap">
             <button class="btn" id="toolFlyoutTrigger">🖊 Desenhar <span id="activeToolIcon">✋</span></button>
             <div class="tool-flyout" id="toolFlyout">
               <div class="tool-group">
@@ -1047,9 +1160,17 @@
             <button class="btn icon" data-qt="shottarget" title="Remate à baliza">🥅</button>
           </div>
           <div class="toolbar-sep"></div>
+          <!-- Mobile only: everything above this point except the marked mobile-toolbar-primary
+               buttons is hidden by default under body.mobile-touch-ui; this reveals it all as an
+               overlay panel instead of permanently eating vertical space above the video. -->
+          <button class="btn icon mobile-toolbar-primary touch-only" id="btnMobileTools" title="Mais ferramentas">🛠</button>
           <div style="flex:1;"></div>
           <button class="btn" id="btnModeStopwatch" title="Alternar para codificação sem vídeo (só cronômetro)">⏱ Sem vídeo</button>
-          <button class="btn icon" id="btnFocusVideo" title="Ecrã inteiro">⛶</button>
+          <!-- Mobile only: opens the SAME tag-sidebar (tempo de jogo, time/jogador, editar
+               categorias) as an off-canvas drawer — categorias em si já estão sempre visíveis na
+               #mobileCatBar, isto é só para o resto do painel. -->
+          <button class="btn icon mobile-toolbar-primary touch-only" id="btnOpenTagDrawer" title="Equipas e mais">🏷</button>
+          <button class="btn icon mobile-toolbar-primary" id="btnFocusVideo" title="Ecrã inteiro">⛶</button>
         </div>
 
         <div class="clip-edit-banner" id="clipEditBanner" style="display:none;"></div>
@@ -1082,6 +1203,16 @@
           <!-- Small "recording this category" badge(s) shown while a keyboard-driven clip is being
                recorded in fullscreen — see handleCategoryTrigger()/showFsCatBadge(). -->
           <div class="fs-cat-indicator" id="fsCatIndicator"></div>
+
+          <!-- Mobile only: always-visible category bar, populated by renderCategoryButtonsInto()
+               (see renderCatGrid()) — never a copy/move of #catGrid, its own independent render
+               target. Lives inside #videoWrap on purpose: requestFullscreen() targets videoWrap
+               itself, so this becomes part of the fullscreened element automatically, with no extra
+               fullscreen-entry/exit code needed. CSS alone decides whether it's an in-flow bar
+               (normal mobile view) or a bottom overlay (fullscreen) — and, critically, it is never
+               tied to .fs-controls-visible, so it never disappears with the auto-hiding transport
+               controls (see the "categorias sempre visíveis" requirement). -->
+          <div class="mobile-cat-bar touch-only" id="mobileCatBar"></div>
 
           <div class="stopwatch-view" id="stopwatchView" style="display:none;">
             <div class="time mono" id="stopwatchDisplay">00:00:00</div>
@@ -2819,14 +2950,24 @@ document.getElementById('halfToggle').addEventListener('click', e=>{
   b.classList.add('active');
 });
 
-function renderCatGrid(){
-  const el = document.getElementById('catGrid');
+// Shared by the desktop sidebar (#catGrid) AND the mobile always-visible bar (#mobileCatBar) —
+// one render function, two independent containers, never a shared/re-parented DOM node. Keeping
+// this parameterized (instead of hardcoding getElementById('catGrid')) is what lets the mobile bar
+// reuse the exact same category logic without ever touching the desktop's own #catGrid element.
+function renderCategoryButtonsInto(el){
+  if(!el) return;
   el.innerHTML = state.categories.map(c=>`
     <button class="cat-btn" data-cid="${c.id}" style="--cat-color:${c.color}">
       <span>${escapeHtml(c.label)}</span>
       <span class="key">tecla ${escapeHtml(c.key||'—')}</span>
     </button>`).join('');
   el.querySelectorAll('.cat-btn').forEach(b=>b.addEventListener('click', ()=>handleCategoryTrigger(b.dataset.cid)));
+}
+function renderCatGrid(){
+  renderCategoryButtonsInto(document.getElementById('catGrid'));
+  // touch-only element, harmless no-op via renderCategoryButtonsInto's null guard when absent —
+  // but it's always in the DOM now (see the new #mobileCatBar markup), just CSS-hidden on desktop.
+  renderCategoryButtonsInto(document.getElementById('mobileCatBar'));
   updateKeyRecordingIndicators();
 }
 
@@ -2943,7 +3084,10 @@ function cancelPendingKeyClips(){
   toast('Gravação de corte cancelada.');
 }
 function updateKeyRecordingIndicators(){
-  document.querySelectorAll('#catGrid .cat-btn').forEach(b=>{
+  // Not scoped to #catGrid alone anymore — #mobileCatBar renders the same buttons from the same
+  // renderCategoryButtonsInto() call, and both need their "recording" state to stay in sync with
+  // the one shared pendingKeyClips map, regardless of which one the user actually tapped/pressed.
+  document.querySelectorAll('.cat-btn').forEach(b=>{
     b.classList.toggle('recording', !!pendingKeyClips[b.dataset.cid]);
   });
 }
@@ -3703,6 +3847,31 @@ function setupColResizer(resizerEl, side){
 setupColResizer(document.getElementById('colResizerLeft'), 'left');
 setupColResizer(document.getElementById('colResizerRight'), 'right');
 
+/* ---------- Mobile-only: sidebar drawers + compact toolbar (both purely additive — CSS gates
+   their actual effect behind body.mobile-touch-ui; the listeners below are harmless no-ops on
+   desktop since the classes they toggle never match anything under desktop CSS). ---------- */
+function closeDrawers(){
+  document.querySelector('.clip-sidebar').classList.remove('drawer-open');
+  document.querySelector('.tag-sidebar').classList.remove('drawer-open');
+  document.getElementById('drawerBackdrop').classList.remove('active');
+}
+function openDrawer(which){
+  closeDrawers();
+  document.querySelector(which==='clip' ? '.clip-sidebar' : '.tag-sidebar').classList.add('drawer-open');
+  document.getElementById('drawerBackdrop').classList.add('active');
+}
+document.getElementById('btnOpenClipDrawer').addEventListener('click', ()=>openDrawer('clip'));
+document.getElementById('btnOpenTagDrawer').addEventListener('click', ()=>openDrawer('tag'));
+document.getElementById('drawerBackdrop').addEventListener('click', closeDrawers);
+// Picking a clip or marking a category from inside a drawer naturally means "I'm done with it" —
+// closing it automatically means never having to also hunt for a close button afterwards.
+document.getElementById('catTree').addEventListener('click', e=>{ if(e.target.closest('.clip-row-head')) closeDrawers(); });
+document.getElementById('catGrid').addEventListener('click', e=>{ if(e.target.closest('.cat-btn')) closeDrawers(); });
+
+document.getElementById('btnMobileTools').addEventListener('click', ()=>{
+  document.getElementById('videoToolbar').classList.toggle('mobile-tools-open');
+});
+
 /* ---------- Zoom (view + optional bake into the export of the selected clip) ---------- */
 let currentZoom = {scale:1, panX:0, panY:0};
 const zoomLayer = document.getElementById('videoZoomLayer');
@@ -3834,19 +4003,35 @@ touchline.addEventListener('click', e=>{
 let draggingPlayhead = false;
 playheadEl.style.pointerEvents = 'auto';
 playheadEl.style.cursor = 'grab';
-playheadEl.addEventListener('mousedown', e=>{
+function startPlayheadDrag(e){
   if(mode!=='video' || !videoEl.duration) return;
   draggingPlayhead = true;
   playheadEl.style.cursor = 'grabbing';
   e.preventDefault();
-});
+}
+playheadEl.addEventListener('mousedown', startPlayheadDrag);
+playheadEl.addEventListener('touchstart', startPlayheadDrag, {passive:false});
 window.addEventListener('mousemove', e=>{
   if(!draggingPlayhead || !videoEl.duration) return;
   const r = touchline.getBoundingClientRect();
   const pct = clamp((e.clientX-r.left)/r.width,0,1)*100;
   videoEl.currentTime = pctToTime(pct);
 });
+// clientXY(e): a TouchEvent carries its position in touches[0]/changedTouches[0] instead of
+// directly on the event — this is the only place that distinction matters, so it's inlined here
+// rather than adding a new top-level helper for one call site.
+window.addEventListener('touchmove', e=>{
+  if(!draggingPlayhead || !videoEl.duration) return;
+  e.preventDefault();
+  const t = e.touches[0]; if(!t) return;
+  const r = touchline.getBoundingClientRect();
+  const pct = clamp((t.clientX-r.left)/r.width,0,1)*100;
+  videoEl.currentTime = pctToTime(pct);
+}, {passive:false});
 window.addEventListener('mouseup', ()=>{
+  if(draggingPlayhead){ draggingPlayhead=false; playheadEl.style.cursor='grab'; }
+});
+window.addEventListener('touchend', ()=>{
   if(draggingPlayhead){ draggingPlayhead=false; playheadEl.style.cursor='grab'; }
 });
 // "Nice" step sizes (seconds) used to label the timeline, from sub-second
@@ -3976,14 +4161,17 @@ function beginTrimDrag(edge, e){
   const clip = state.tags.find(t => t.id === trimWindow.clipId);
   if(!clip) return;
   e.stopPropagation(); e.preventDefault();
+  const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
   const r = touchline.getBoundingClientRect();
-  const pct = clamp((e.clientX-r.left)/r.width, 0, 1)*100;
+  const pct = clamp((clientX-r.left)/r.width, 0, 1)*100;
   trimDrag = { edge, startInSec:clip.inSec, startOutSec:clip.outSec, startCursorTime: pctToTime(pct) };
 }
 document.querySelectorAll('.trim-handle').forEach(h => {
   h.addEventListener('mousedown', e => beginTrimDrag(h.dataset.edge, e));
+  h.addEventListener('touchstart', e => beginTrimDrag(h.dataset.edge, e), {passive:false});
 });
 document.getElementById('trimRangeBody').addEventListener('mousedown', e => beginTrimDrag('body', e));
+document.getElementById('trimRangeBody').addEventListener('touchstart', e => beginTrimDrag('body', e), {passive:false});
 
 // If a drag pushes the in/out point close to the edge of the currently
 // visible window, grow the window in that direction so dragging can keep
@@ -4005,12 +4193,12 @@ function expandTrimWindowIfNeeded(clip){
   if(changed) renderTouchlineTicks();
 }
 
-window.addEventListener('mousemove', e => {
+function updateTrimDrag(clientX){
   if(!trimDrag || !trimWindow) return;
   const clip = state.tags.find(t => t.id === trimWindow.clipId);
   if(!clip){ trimDrag = null; return; }
   const r = touchline.getBoundingClientRect();
-  const pct = clamp((e.clientX-r.left)/r.width, 0, 1)*100;
+  const pct = clamp((clientX-r.left)/r.width, 0, 1)*100;
   const cursorTime = pctToTime(pct);
   if(trimDrag.edge==='in'){
     clip.inSec = clamp(cursorTime, 0, clip.outSec-0.2);
@@ -4036,8 +4224,18 @@ window.addEventListener('mousemove', e => {
   // re-rendered live as that span changes — otherwise it visually drifts out of sync with
   // the clip bar it's supposed to mirror while you're mid-drag.
   renderShapeTimeline();
-});
+}
+window.addEventListener('mousemove', e => updateTrimDrag(e.clientX));
+window.addEventListener('touchmove', e => {
+  if(!trimDrag) return;
+  const t = e.touches[0]; if(!t) return;
+  e.preventDefault();
+  updateTrimDrag(t.clientX);
+}, {passive:false});
 window.addEventListener('mouseup', () => {
+  if(trimDrag){ trimDrag = null; saveState(); }
+});
+window.addEventListener('touchend', () => {
   if(trimDrag){ trimDrag = null; saveState(); }
 });
 

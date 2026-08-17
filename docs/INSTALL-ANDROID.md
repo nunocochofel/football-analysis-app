@@ -52,11 +52,11 @@ Botão "Carregar vídeo" — abre o seletor de ficheiros do Android.
 
 ## Utilização fullscreen
 
-Botão de ecrã inteiro nos controlos de vídeo. **Nota honesta sobre o estado atual**: a app já
-está instalável e funcional no Android com um layout adaptado ao ecrã; as interações específicas
-para toque (categorias sempre visíveis em ecrã inteiro, gestos, timeline tátil) estão a ser
-implementadas numa fase seguinte de desenvolvimento — ainda não estão todas disponíveis nesta
-versão.
+Botão de ecrã inteiro nos controlos de vídeo. O vídeo ocupa o ecrã e as categorias permanecem
+**sempre visíveis** por cima do vídeo, mesmo depois de os controlos normais (play, timeline)
+desaparecerem ao fim de uns segundos sem interação — toca no vídeo para os fazeres reaparecer.
+Tocar numa categoria inicia um corte; toca outra vez na mesma para terminar — tudo sem sair do
+ecrã inteiro.
 
 ## Problemas comuns
 
@@ -65,6 +65,9 @@ versão.
   PWAs.
 - **Exportação de vídeo indisponível**: nesta versão, exportar cortes para ficheiro ainda só
   funciona no Windows/Mac. Uma exportação real para Android está planeada para uma fase seguinte.
+- **Quadro Tático ainda não tem interação por toque dedicada** (arrastar jogadores, pinch-zoom) —
+  está planeado para uma fase seguinte. O resto da app (vídeo, cortes, categorias, timeline, ecrã
+  inteiro) já está totalmente adaptado a toque.
 - **Ecrãs e proporções muito diferentes** (telemóveis vs. tablets Android têm muita variedade):
   se algo parecer cortado ou mal dimensionado num aparelho específico, é útil reportares o
   modelo/tamanho de ecrã.

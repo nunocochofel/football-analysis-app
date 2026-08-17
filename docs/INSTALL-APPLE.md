@@ -51,11 +51,11 @@ Botão "Carregar vídeo" — abre o seletor de ficheiros do iOS (Fotos, Ficheiro
 
 ## Utilização fullscreen
 
-Botão de ecrã inteiro nos controlos de vídeo. **Nota honesta sobre o estado atual**: a app já
-está instalável e funcional no iPhone/iPad com um layout adaptado ao ecrã; as interações
-específicas para toque (categorias sempre visíveis em ecrã inteiro, gestos, timeline tátil) estão
-a ser implementadas numa fase seguinte de desenvolvimento — ainda não estão todas disponíveis
-nesta versão.
+Botão de ecrã inteiro (⛶) nos controlos de vídeo. O vídeo ocupa o ecrã e as categorias
+permanecem **sempre visíveis** por cima do vídeo, mesmo depois de os controlos normais (play,
+timeline) desaparecerem ao fim de uns segundos sem interação — toca no vídeo para os fazeres
+reaparecer. Tocar numa categoria inicia um corte; toca outra vez na mesma para terminar — tudo
+sem sair do ecrã inteiro.
 
 ## Problemas comuns
 
@@ -65,6 +65,9 @@ nesta versão.
   funciona no Windows/Mac (usa o motor FFmpeg da aplicação de ambiente de trabalho). Uma
   exportação real para iPhone/iPad/Android está planeada para uma fase seguinte — não existe
   ainda, e preferimos não simular uma funcionalidade que não está pronta.
+- **Quadro Tático ainda não tem interação por toque dedicada** (arrastar jogadores, pinch-zoom,
+  Apple Pencil) — está planeado para uma fase seguinte. O resto da app (vídeo, cortes, categorias,
+  timeline, ecrã inteiro) já está totalmente adaptado a toque.
 - **Vídeo não reproduz**: formatos comuns (MP4/H.264) funcionam sempre; formatos como HEVC/ProRes
   podem ter suporte variável consoante o modelo/versão do iOS.
 
