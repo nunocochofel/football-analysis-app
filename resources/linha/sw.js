@@ -3,12 +3,17 @@
 // directly via file://, where service workers don't run anyway, so this file has zero effect on
 // the desktop app even if something went wrong here.
 //
-// Cache-first for the app shell (this is what makes "Add to Home Screen" count as an installable,
-// offline-capable PWA on both iOS Safari and Android Chrome — an install prompt without a service
-// worker isn't a real PWA install on Android). Bump CACHE_NAME to invalidate old caches on a new
-// release; anything not explicitly listed here (video files, project data — all in-memory or
-// IndexedDB/localStorage, never fetched through this worker) is left alone.
-const CACHE_NAME = 'linha-shell-v1';
+// Two different strategies for two different kinds of files:
+//  - index.html (the actual app code, changes on every release): NETWORK-FIRST, falling back to
+//    cache only when offline. A pure cache-first strategy (the original version of this file) left
+//    installed PWAs permanently stuck on whatever index.html happened to be cached at install time
+//    — the cache only ever gets refreshed when sw.js's OWN bytes change enough for the browser to
+//    notice a new service worker, which index.html edits alone never trigger. Network-first fixes
+//    that: every load gets the latest deployed code whenever there's a connection, with the cached
+//    copy only used as an offline fallback — while still keeping "installable, works offline" true.
+//  - manifest.json/icons (static, rarely change): CACHE-FIRST, same as before — no reason to hit
+//    the network for something that's essentially immutable between releases.
+const CACHE_NAME = 'linha-shell-v2';
 const SHELL_FILES = ['./index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -23,10 +28,28 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+function isAppShellDocument(url){
+  return url.pathname.endsWith('/') || url.pathname.endsWith('/index.html');
+}
+
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return; // let Google Fonts etc. go straight to network
+
+  if (event.request.mode === 'navigate' || isAppShellDocument(url)) {
+    event.respondWith(
+      fetch(event.request)
+        .then((fresh) => {
+          const copy = fresh.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          return fresh;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then((cached) => cached || fetch(event.request))
   );
