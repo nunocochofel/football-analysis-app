@@ -73,7 +73,8 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "${name}-setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -93,7 +94,8 @@
       "icon": "build/icon.png",
       "category": "public.app-category.sports",
       "identity": null,
-      "x64ArchFiles": "**/{ffmpeg-static,ffprobe-static}/**"
+      "x64ArchFiles": "**/{ffmpeg-static,ffprobe-static}/**",
+      "artifactName": "${name}-${version}.${ext}"
     }
   }
 }
