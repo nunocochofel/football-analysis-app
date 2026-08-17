@@ -19,6 +19,16 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: npm run build
-      - run: npx electron-builder --win --publish always
+      # Build only — no --publish. See build-mac.yml for why: electron-builder's built-in GitHub
+      # publisher has a real, reproduced bug where multiple artifacts race to create the release
+      # for a brand-new tag and only one ever wins, instead of falling back to the existing one.
+      - run: npx electron-builder --win
+      - uses: softprops/action-gh-release@v2
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml

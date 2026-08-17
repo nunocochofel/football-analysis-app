@@ -19,6 +19,21 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: npm run build
-      - run: npx electron-builder --mac --publish always
+      # Build only — no --publish. electron-builder's built-in GitHub publisher has a real bug
+      # when multiple artifacts (dmg + blockmap + latest-mac.yml) all race to create the release
+      # for a brand-new tag at once: every artifact's upload task independently tries to CREATE
+      # the release, only one can ever win that race, and the rest fail hard with a 422 instead of
+      # falling back to "release already exists, just upload to it" — confirmed by direct
+      # reproduction (multiple clean reruns, with and without a pre-existing release, all failed
+      # identically). softprops/action-gh-release below is a dedicated, widely-used action that
+      # correctly finds-or-creates the release for the tag once, then uploads every file — no race.
+      - run: npx electron-builder --mac
+      - uses: softprops/action-gh-release@v2
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/*.dmg
+            dist/*.dmg.blockmap
+            dist/latest-mac.yml
