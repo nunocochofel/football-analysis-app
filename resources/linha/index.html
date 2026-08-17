@@ -2,8 +2,20 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <title>LINHA — Análise de Vídeo de Futebol</title>
+<!-- PWA scaffolding — the ONLY way to install this app on iPhone/iPad/Android without an app-store
+     account (see docs/INSTALL-APPLE.md / docs/INSTALL-ANDROID.md). Entirely inert under Electron:
+     the desktop app loads this file via loadFile() (file://), never fetches manifest.json for
+     install purposes, and sw.js is only ever registered when !isElectron() (see the script below). -->
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="LINHA">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#10141A">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="icon" href="./icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -23,8 +35,15 @@
     --radius:10px;
     --radius-sm:6px;
     --shadow:0 8px 24px rgba(0,0,0,.35);
+    --safe-top:env(safe-area-inset-top,0px);
+    --safe-bottom:env(safe-area-inset-bottom,0px);
+    --safe-left:env(safe-area-inset-left,0px);
+    --safe-right:env(safe-area-inset-right,0px);
+    /* Minimum comfortable touch target (Apple HIG: 44pt) — only consumed by mobile-touch-ui-scoped
+       rules (Phase 2), defined here so it exists regardless of load order. */
+    --touch-target:44px;
   }
-  *{box-sizing:border-box;}
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0;padding:0;}
   body{
     background:var(--bg);
@@ -33,10 +52,18 @@
     font-size:14px;
     -webkit-font-smoothing:antialiased;
     height:100vh;
+    height:100dvh; /* iOS Safari's 100vh includes the address bar and jumps as it shows/hides; dvh tracks the real visible height. Desktop Chromium (Electron) treats this identically to 100vh — no behavior change there. */
     overflow:hidden;
     display:flex;
     flex-direction:column;
+    overscroll-behavior:none; /* stops iOS's rubber-band page bounce from fighting our own scroll containers; a no-op on desktop, which never rubber-bands in the first place */
   }
+  /* Set once at boot by isMobileUI() below (see PLATFORM DETECTION) — the ONE gate every
+     touch/mobile-only affordance in this file is scoped under. isMobileUI() is false whenever
+     isElectron() is true, unconditionally — so nothing behind this class can ever appear in the
+     desktop app, regardless of what any touch/UA heuristic reports. See Phase 2 for the rules
+     that actually use this class; Phase 1 only establishes the gate itself. */
+  body:not(.mobile-touch-ui) .touch-only{display:none !important;}
   .mono{font-family:'IBM Plex Mono',monospace;}
   h1,h2,h3{font-family:'Space Grotesk',sans-serif;margin:0;}
   button{font-family:inherit;cursor:pointer;}
@@ -1495,6 +1522,61 @@
 <script>
 (function(){
 "use strict";
+
+/* ===================================================================
+   PLATFORM DETECTION
+   isElectron() (defined further below, callable here via function hoisting) is the ONE thing
+   every touch/mobile code path is allowed to treat as an absolute gate: Electron cannot run on
+   iPhone/iPad/Android at all, so that signal can never be spoofed by touch-capable desktop
+   hardware or a narrow window — unlike a touch/pointer heuristic, which CAN misfire on a
+   touchscreen Windows laptop (the actual mechanism behind the v0.8.35 desktop regression, where
+   isTouchDevice() alone gated a DOM mutation shared with desktop). isMobileUI() below folds
+   isElectron() in as a hard short-circuit: once it's true, nothing past this point can return
+   true, full stop, regardless of what any UA/touch heuristic reports.
+=================================================================== */
+// Real device/OS signals, not touch capability — a touchscreen Windows laptop opening this in a
+// browser should get the SAME layout as a mouse-only desktop, not the phone UI (touch ≠ mobile).
+// iPad reports as "Macintosh" in the UA string once running Safari 13+ (Apple's own doing, for
+// desktop-class site compatibility) — maxTouchPoints is what actually distinguishes a real iPad
+// from a Mac.
+function isIPad(){
+  return /iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+}
+function isIPhone(){ return /iPhone|iPod/.test(navigator.userAgent); }
+function isAndroid(){ return /Android/.test(navigator.userAgent); }
+// Android has no iPadOS-style UA masquerading — Chrome on an Android tablet keeps "Android" in the
+// UA and simply omits "Mobile" (present on phones); the classic screen-size heuristic is a
+// reasonable fallback for the ambiguous case (e.g. a small "compact" tablet).
+function isAndroidTablet(){
+  return isAndroid() && (!/Mobile/.test(navigator.userAgent) || Math.min(window.screen.width, window.screen.height) >= 600);
+}
+function isAndroidPhone(){ return isAndroid() && !isAndroidTablet(); }
+function getPlatformProfile(){
+  if(isIPad()) return 'ipad';
+  if(isIPhone()) return 'iphone';
+  if(isAndroidTablet()) return 'android-tablet';
+  if(isAndroidPhone()) return 'android-phone';
+  return 'desktop';
+}
+// THE gate. Every touch/mobile-only render path, event listener registration, and CSS class in
+// this file must be reachable only through this function (directly, or via the mobile-touch-ui
+// body class it sets below) — never through a touch/pointer heuristic alone. isElectron() being
+// true makes this unconditionally false, so the v0.8.35 regression class is now structurally
+// impossible here, not just unlikely.
+function isMobileUI(){
+  return !isElectron() && getPlatformProfile() !== 'desktop';
+}
+if(isMobileUI()){
+  document.body.classList.add('mobile-touch-ui');
+  document.body.classList.add('platform-'+getPlatformProfile());
+}
+// Installability on Android requires a registered service worker; iOS Safari's "Add to Home
+// Screen" doesn't strictly require one but treats the result as a more real PWA (offline shell,
+// update handling) with one. Electron loads this file via file:// and never needs any of it —
+// gated so the desktop app never even attempts registration.
+if(!isElectron() && 'serviceWorker' in navigator){
+  window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(()=>{}); });
+}
 
 /* ===================================================================
    STATE
