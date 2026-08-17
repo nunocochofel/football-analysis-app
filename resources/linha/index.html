@@ -311,26 +311,52 @@
   body.mobile-touch-ui #videoWrap > .stopwatch-view{
     flex:1 1 auto; min-width:0; min-height:0;
   }
+  /* Small always-visible toggle, docked right at the edge where the category panel meets the
+     video — a flex sibling between them, so it never needs absolute positioning and its position
+     is correct automatically whether the panel is open or collapsed. */
+  body.mobile-touch-ui .panel-collapse-btn{
+    flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+    width:28px; min-height:var(--touch-target); background:var(--panel-alt); border:none;
+    color:var(--muted); font-size:14px; cursor:pointer;
+  }
+  body.mobile-touch-ui .panel-collapse-btn:active{ background:var(--panel); color:var(--chalk); }
   body.mobile-touch-ui #mobileCatBar{
-    display:flex; flex-direction:row; flex-wrap:nowrap; flex:0 0 auto; gap:8px;
-    overflow-x:auto; overflow-y:hidden; max-height:22vh;
-    padding:8px calc(8px + var(--safe-right)) calc(8px + var(--safe-bottom)) calc(8px + var(--safe-left));
+    display:flex; flex-direction:row; flex-wrap:nowrap; gap:6px;
+    /* Portrait strip: a proportional SHARE of the viewport height, never a fixed pixel value —
+       clamp() keeps it from ever eating more than ~20% even on a very tall phone, while staying
+       usable (min 56px) on a short one. Preferred value tightened to 9vh (was 12vh): the row's
+       real content (one line of touch-target buttons + padding) only needs ~56-60px, so 12vh left
+       10-20px of pure empty vertical space on common phone heights that the video should get
+       instead. */
+    flex:0 0 clamp(56px, 9vh, 84px);
+    overflow-x:auto; overflow-y:hidden;
+    padding:6px calc(6px + var(--safe-right)) calc(6px + var(--safe-bottom)) calc(6px + var(--safe-left));
     background:var(--panel); border-top:1px solid var(--line);
+    transition:flex-basis .22s ease, padding .22s ease;
   }
   body.mobile-touch-ui #mobileCatBar .cat-btn{
-    min-height:var(--touch-target); padding:10px 14px; font-size:13.5px; flex:0 0 auto; min-width:120px;
+    min-height:var(--touch-target); padding:8px 12px; font-size:13px; flex:0 0 auto; min-width:108px;
   }
   /* The "tecla X" hint is meaningless without a physical keyboard. */
   body.mobile-touch-ui #mobileCatBar .cat-btn .key{ display:none; }
+  /* Collapsed: truly ~0, not a narrow leftover strip — only the toggle button stays visible. */
+  body.mobile-touch-ui #videoWrap.cats-collapsed #mobileCatBar{
+    flex-basis:0; padding-top:0; padding-bottom:0; border-top:none; overflow:hidden;
+  }
   @media (min-width:640px), (orientation:landscape){
     body.mobile-touch-ui #videoWrap{ flex-direction:row; }
     body.mobile-touch-ui #mobileCatBar{
-      flex-direction:column; flex-wrap:nowrap; width:180px; flex:0 0 180px; max-height:none;
+      flex-direction:column; flex-wrap:nowrap;
+      /* Proportional to viewport WIDTH here instead of height — same reasoning, never a rigid px. */
+      flex:0 0 clamp(120px, 16vw, 170px);
       overflow-x:hidden; overflow-y:auto;
       padding:10px calc(10px + var(--safe-right)) calc(10px + var(--safe-bottom)) 10px;
       border-top:none; border-left:1px solid var(--line);
     }
     body.mobile-touch-ui #mobileCatBar .cat-btn{ width:100%; min-width:0; }
+    body.mobile-touch-ui #videoWrap.cats-collapsed #mobileCatBar{
+      flex-basis:0; padding-left:0; padding-right:0; border-left:none;
+    }
   }
   @keyframes fs-badge-in{ from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);} }
   @keyframes fs-badge-pulse{ 0%,100%{opacity:1;} 50%{opacity:.35;} }
@@ -915,17 +941,22 @@
   body.mobile-touch-ui .col-resizer{ display:none; }
 
   /* Off-canvas drawers — same drawer pattern as before, now correctly scoped so it can never
-     fire for a narrow Electron window (that stays on the max-width:1100px stacked fallback). */
+     fire for a narrow Electron window (that stays on the max-width:1100px stacked fallback).
+     .tactic-side (Quadro Tático's formations/config panel) added as a third target — same
+     mechanism (DRAWER_TARGETS.tactic), not a new interaction model. */
   body.mobile-touch-ui .clip-sidebar,
-  body.mobile-touch-ui .tag-sidebar{
+  body.mobile-touch-ui .tag-sidebar,
+  body.mobile-touch-ui .tactic-side{
     position:fixed; top:0; bottom:0; width:86vw; max-width:340px; z-index:200; max-height:none;
     transition:transform .28s cubic-bezier(.2,.8,.3,1); box-shadow:0 0 40px rgba(0,0,0,.5);
     padding-top:var(--safe-top); padding-bottom:var(--safe-bottom);
   }
   body.mobile-touch-ui .clip-sidebar{ left:0; transform:translateX(-105%); border-right:1px solid var(--line); border-bottom:none; }
-  body.mobile-touch-ui .tag-sidebar{ right:0; transform:translateX(105%); border-left:1px solid var(--line); border-top:none; }
+  body.mobile-touch-ui .tag-sidebar,
+  body.mobile-touch-ui .tactic-side{ right:0; transform:translateX(105%); border-left:1px solid var(--line); border-top:none; }
   body.mobile-touch-ui .clip-sidebar.drawer-open,
-  body.mobile-touch-ui .tag-sidebar.drawer-open{ transform:translateX(0); }
+  body.mobile-touch-ui .tag-sidebar.drawer-open,
+  body.mobile-touch-ui .tactic-side.drawer-open{ transform:translateX(0); }
   body.mobile-touch-ui .drawer-backdrop{ display:none; position:fixed; inset:0; background:rgba(6,8,11,.55); z-index:190; }
   body.mobile-touch-ui .drawer-backdrop.active{ display:block; }
 
@@ -939,6 +970,39 @@
   body.mobile-touch-ui #videoToolbar{ flex-wrap:wrap; row-gap:6px; }
   body.mobile-touch-ui #videoToolbar > *:not(.mobile-toolbar-primary){ display:none; }
   body.mobile-touch-ui #videoToolbar.mobile-tools-open > *{ display:flex !important; }
+  /* Narrow phones: text labels on the primary-row buttons ("Carregar vídeo", "Desenhar") push the
+     row past one line, wrapping it to two and stealing vertical space the video should get instead
+     (measured: 83px for a wrapped 2-line toolbar vs ~40px for one line). Icon-only here, full label
+     still shown on tablet/landscape where there's width to spare. */
+  @media (max-width:639px) and (orientation:portrait){
+    body.mobile-touch-ui #videoToolbar .btn-label{ display:none; }
+    body.mobile-touch-ui #videoToolbar .mobile-toolbar-primary.btn,
+    body.mobile-touch-ui #videoToolbar #toolFlyoutTrigger{ padding:7px 9px; }
+  }
+
+  /* Same "essential + [⋯]" pattern, this time for the Quadro Tático's own toolbar (#tacticToolbar
+     — the id it needed and didn't have, which is exactly why the generic .stage-toolbar selector
+     above couldn't safely target it before). */
+  body.mobile-touch-ui #tacticToolbar{ flex-wrap:wrap; row-gap:6px; }
+  body.mobile-touch-ui #tacticToolbar > *:not(.mobile-toolbar-primary){ display:none; }
+  body.mobile-touch-ui #tacticToolbar.mobile-tools-open > *{ display:flex !important; }
+
+  /* Quadro Tático: the pitch is the dominant element, same principle as the video tab — .tactic-
+     main (pitch + toolbar) is flex:1, .tactic-side becomes a drawer (phone) or a collapsible
+     column (tablet, see the ≥820px block further below), never a full-width block requiring
+     scroll (the bug the reference screenshot showed: .tactic-side was rendering as the entire
+     visible page, campo pushed off-screen, via the pre-existing generic max-width:1100px
+     fallback — this replaces that fallback specifically under body.mobile-touch-ui). */
+  body.mobile-touch-ui #tab-tactic{ flex-direction:row; }
+  body.mobile-touch-ui .tactic-main{ flex:1; min-width:0; }
+
+  /* Flyouts (draw tool color/style groups excluded — those stay inline in the toolbar) must never
+     spill past the viewport edge and force horizontal scroll — the other issue the screenshot
+     showed. Anchored to the right instead of the left when there isn't room to grow rightward. */
+  body.mobile-touch-ui .tool-flyout{ max-width:calc(100vw - 20px); }
+  @media (max-width:480px){
+    body.mobile-touch-ui .tool-flyout{ left:auto; right:0; }
+  }
 
   /* iPad / wide mobile viewport: closer to the desktop's own layout — the clip list gets a real
      side panel instead of a drawer, without duplicating any markup (same .clip-sidebar element,
@@ -946,13 +1010,30 @@
      wins on equal specificity. tag-sidebar stays a drawer — categories are already always
      reachable via #mobileCatBar; the rest (tempo de jogo, time/jogador) doesn't need permanent
      space even on a tablet. */
-  @media (min-width:820px){
+  /* Hidden below the tablet breakpoint by default — the ≥820px block below turns it back on.
+     Declared BEFORE that block (not after) so source order lets the media query win the tie on a
+     wide viewport, instead of this unconditional rule shadowing it. */
+  body.mobile-touch-ui .panel-collapse-btn#btnToggleClipPanel{ display:none; }
+  /* min-height guard: large modern phones in landscape (e.g. 863x360) are >=820px wide but only
+     ~360px tall — width alone would wrongly classify them as "tablet" and open a static clip
+     column, eating width a landscape phone can't spare. Real tablets, portrait or landscape,
+     always clear ~500px of height too (measured: iPad landscape 834px, Galaxy Tab S9 landscape
+     640px vs. phone-landscape profiles topping out around 480px). */
+  @media (min-width:820px) and (min-height:500px){
     body.mobile-touch-ui .video-body{ flex-direction:row; }
     body.mobile-touch-ui .clip-sidebar{
-      position:static; transform:none; width:auto; max-width:none; flex:0 0 280px;
+      position:static; transform:none; width:auto; max-width:none;
+      /* Proportional, not a rigid pixel width — video (flex:1 in .video-stage) always gets
+         whatever's left over. */
+      flex:0 0 clamp(180px, 20vw, 240px);
       box-shadow:none; border-right:1px solid var(--line);
+      transition:flex-basis .22s ease;
     }
     body.mobile-touch-ui #btnOpenClipDrawer{ display:none; }
+    body.mobile-touch-ui .panel-collapse-btn#btnToggleClipPanel{ display:flex; }
+    body.mobile-touch-ui .video-body.clips-collapsed .clip-sidebar{
+      flex-basis:0; border-right:none; overflow:hidden;
+    }
   }
 
   /* Phone landscape specifically (short viewport height — iPad landscape has plenty of height, so
@@ -961,24 +1042,33 @@
   @media (orientation:landscape) and (max-height:500px){
     body.mobile-touch-ui .stage-toolbar{ padding:3px 8px; }
     /* Categories are a side column here (the min-width:640px/orientation:landscape query above
-       already applies), not a height-constrained strip — only trim their own padding/font, no
-       max-height needed since they no longer compete with the video for vertical space at all. */
-    body.mobile-touch-ui #mobileCatBar{ width:150px; flex-basis:150px; padding:6px calc(6px + var(--safe-right)) 6px 6px; gap:6px; }
+       already applies) — a tighter clamp() than the general column rule, since a short landscape
+       phone has less width to spare too, not just height. Still proportional, never a fixed px. */
+    body.mobile-touch-ui #mobileCatBar{ flex-basis:clamp(96px, 14vw, 140px); padding:6px calc(6px + var(--safe-right)) 6px 6px; gap:6px; }
     body.mobile-touch-ui #mobileCatBar .cat-btn{ padding:7px 10px; font-size:12px; min-height:36px; }
     body.mobile-touch-ui .playback-bar{ padding:3px 10px; }
     body.mobile-touch-ui .touchline-wrap{ padding:6px 12px 4px; }
-    /* The header (brand + tagline + tabs + 4 action buttons) is sized for a full desktop row —
-       on a short landscape phone screen it was eating a disproportionate share of the very
-       limited height (measured: ~40% of the video's share lost to it). Compact it hard here only
-       — portrait has plenty of height to spare, so it stays exactly as-is there. */
-    body.mobile-touch-ui #app-header{ padding:4px 10px; gap:8px; }
-    body.mobile-touch-ui .brand .sub{ display:none; }
+  }
+
+  /* Header: sized for a full desktop row by default — on mobile this now applies broadly (not
+     just short landscape, as before), since the [⋯] overflow toggle below means the header only
+     ever needs to fit "brand + tabs + Projetos + ⋯" at once, regardless of orientation. */
+  body.mobile-touch-ui #app-header{ padding:6px 10px; gap:8px; flex-wrap:nowrap; }
+  body.mobile-touch-ui .brand .sub{ display:none; }
+  body.mobile-touch-ui .brand h1{ font-size:14px; }
+  body.mobile-touch-ui .brand .mark{ width:18px; height:18px; }
+  body.mobile-touch-ui nav.tabs{ margin-left:4px; overflow-x:auto; }
+  body.mobile-touch-ui nav.tabs button{ padding:6px 10px; font-size:12px; white-space:nowrap; }
+  body.mobile-touch-ui .header-actions{ gap:4px; }
+  body.mobile-touch-ui .header-actions .btn{ padding:6px 9px; font-size:12px; white-space:nowrap; }
+  /* The 3 less-used buttons stay out of the header entirely until [⋯] is tapped — same
+     mobile-toolbar-primary/mobile-tools-open idea as the video toolbar, applied to the header. */
+  body.mobile-touch-ui .header-actions .header-secondary{ display:none; }
+  body.mobile-touch-ui .header-actions.header-open .header-secondary{ display:inline-flex; }
+  @media (orientation:landscape) and (max-height:500px){
+    body.mobile-touch-ui #app-header{ padding:4px 10px; }
     body.mobile-touch-ui .brand h1{ font-size:13px; }
     body.mobile-touch-ui .brand .mark{ width:16px; height:16px; }
-    body.mobile-touch-ui nav.tabs{ margin-left:4px; }
-    body.mobile-touch-ui nav.tabs button{ padding:5px 9px; font-size:11.5px; }
-    body.mobile-touch-ui .header-actions{ gap:4px; }
-    body.mobile-touch-ui .header-actions .btn{ padding:5px 8px; font-size:11.5px; }
   }
 
   /* ---------- Project picker ---------- */
@@ -1087,22 +1177,33 @@
     <button data-tab="tactic">Quadro Tático</button>
     <button data-tab="stats">Estatísticas</button>
   </nav>
-  <div class="header-actions">
+  <div class="header-actions" id="headerActions">
     <button class="btn" id="btnBackToProjects" title="Voltar à lista de projetos">← Projetos</button>
-    <button class="btn" id="btnInfo" title="Tutorial — como usar a app">📖 Tutorial</button>
-    <button class="btn" id="btnRoster">⚙ Times &amp; categorias</button>
-    <button class="btn danger" id="btnReset">Reiniciar dados</button>
+    <!-- Mobile only: Tutorial/Times & categorias/Reiniciar dados are used far less often than
+         "← Projetos" — tucked behind this toggle instead of always taking header width. Marker
+         class only, no logic; same mobile-toolbar-primary/mobile-tools-open pattern already used
+         for the video toolbar, just a differently-named pair of classes for a differently-shaped
+         "3 buttons behind a toggle" case. -->
+    <button class="btn icon header-more-btn touch-only" id="btnHeaderMore" title="Mais opções" aria-label="Mais opções">⋯</button>
+    <button class="btn header-secondary" id="btnInfo" title="Tutorial — como usar a app">📖 Tutorial</button>
+    <button class="btn header-secondary" id="btnRoster">⚙ Times &amp; categorias</button>
+    <button class="btn danger header-secondary" id="btnReset">Reiniciar dados</button>
   </div>
 </header>
 
 <main id="app-main" style="display:none;">
 
+  <!-- Mobile only: tap-to-close overlay behind whichever sidebar drawer is open. Lives directly
+       under #app-main, NOT inside a .tab-panel — .tab-panel sections not currently active get
+       display:none, which would also unrender (and make unclickable) a position:fixed backdrop
+       nested inside one, breaking backdrop-tap-to-close for any drawer opened from a different
+       tab (e.g. .tactic-side's drawer while on the Tactic tab, since this element used to live
+       inside #tab-video). -->
+  <div class="drawer-backdrop touch-only" id="drawerBackdrop"></div>
+
   <!-- ===================== VIDEO TAB ===================== -->
   <section class="tab-panel active" id="tab-video">
     <div class="video-body">
-
-      <!-- Mobile only: tap-to-close overlay behind whichever sidebar drawer is open. -->
-      <div class="drawer-backdrop touch-only" id="drawerBackdrop"></div>
 
       <!-- Clips organized by category -->
       <aside class="clip-sidebar">
@@ -1122,6 +1223,12 @@
         </div>
       </aside>
 
+      <!-- Tablet only (≥820px, see CSS): collapse toggle for the clip column, which at that width
+           becomes a real in-flow panel instead of a drawer. Hidden at narrower widths, where the
+           existing #btnOpenClipDrawer toolbar button already serves this purpose via the drawer
+           mechanism instead. -->
+      <button class="panel-collapse-btn touch-only" id="btnToggleClipPanel" title="Clipes" aria-label="Mostrar/esconder clipes">☰</button>
+
       <div class="col-resizer" id="colResizerLeft" title="Arrasta para redimensionar"></div>
 
       <div class="video-stage">
@@ -1133,12 +1240,12 @@
           <!-- Mobile only: opens the SAME clip-sidebar as an off-canvas drawer instead of it being
                permanently stacked above the video (see #drawerBackdrop / openDrawer() below). -->
           <button class="btn icon mobile-toolbar-primary touch-only" id="btnOpenClipDrawer" title="Clipes">📋</button>
-          <button class="btn primary mobile-toolbar-primary" id="btnUploadVideo">▶ Carregar vídeo</button>
+          <button class="btn primary mobile-toolbar-primary" id="btnUploadVideo" aria-label="Carregar vídeo">▶<span class="btn-label"> Carregar vídeo</span></button>
           <input type="file" id="fileVideo" accept="video/*,.mp4,.m4v,.mov,.webm,.mkv,.avi,.ogv,.wmv,.flv,.ts,.mts,.m2ts,.mxf,.mpg,.mpeg,.3gp,.vob" style="display:none">
           <div class="toolbar-sep"></div>
 
           <div class="tool-flyout-wrap mobile-toolbar-primary" id="toolFlyoutWrap">
-            <button class="btn" id="toolFlyoutTrigger">🖊 Desenhar <span id="activeToolIcon">✋</span></button>
+            <button class="btn" id="toolFlyoutTrigger" aria-label="Desenhar">🖊<span class="btn-label"> Desenhar</span> <span id="activeToolIcon">✋</span></button>
             <div class="tool-flyout" id="toolFlyout">
               <div class="tool-group">
                 <button class="tool-btn active" data-tool="none" title="Ponteiro — clique pausa/inicia o vídeo, arrasta move a imagem quando há zoom">✋</button>
@@ -1240,14 +1347,18 @@
                recorded in fullscreen — see handleCategoryTrigger()/showFsCatBadge(). -->
           <div class="fs-cat-indicator" id="fsCatIndicator"></div>
 
-          <!-- Mobile only: always-visible category bar, populated by renderCategoryButtonsInto()
-               (see renderCatGrid()) — never a copy/move of #catGrid, its own independent render
-               target. Lives inside #videoWrap on purpose: requestFullscreen() targets videoWrap
-               itself, so this becomes part of the fullscreened element automatically, with no extra
-               fullscreen-entry/exit code needed. CSS alone decides whether it's an in-flow bar
-               (normal mobile view) or a bottom overlay (fullscreen) — and, critically, it is never
-               tied to .fs-controls-visible, so it never disappears with the auto-hiding transport
-               controls (see the "categorias sempre visíveis" requirement). -->
+          <!-- Mobile only: category panel, populated by renderCategoryButtonsInto() (see
+               renderCatGrid()) — never a copy/move of #catGrid, its own independent render target.
+               Lives inside #videoWrap on purpose: requestFullscreen() targets videoWrap itself, so
+               this becomes part of the fullscreened element automatically, identically in and out
+               of fullscreen — no separate fullscreen CSS needed. Never tied to .fs-controls-visible
+               (a completely separate rule chain), so it never disappears with the auto-hiding
+               transport controls — collapsing it is always an explicit tap on the button below, not
+               automatic. Real flex sibling of the video content (never position:absolute) — beside
+               or below the video, never on top of its pixels. The toggle button is a SEPARATE
+               element (not inside #mobileCatBar, which gets its innerHTML replaced on every
+               re-render) so it survives category list re-renders untouched. -->
+          <button class="panel-collapse-btn touch-only" id="btnToggleCatPanel" title="Categorias" aria-label="Mostrar/esconder categorias">🏷</button>
           <div class="mobile-cat-bar touch-only" id="mobileCatBar"></div>
 
           <div class="stopwatch-view" id="stopwatchView" style="display:none;">
@@ -1339,7 +1450,10 @@
   <!-- ===================== TACTIC TAB ===================== -->
   <section class="tab-panel" id="tab-tactic">
     <div class="tactic-main">
-      <div class="stage-toolbar">
+      <div class="stage-toolbar" id="tacticToolbar">
+        <!-- Mobile only: opens .tactic-side (formations + config) as a drawer/collapsible column —
+             same DRAWER_TARGETS.tactic mechanism as the clip/tag drawers, no new interaction model. -->
+        <button class="btn icon mobile-toolbar-primary touch-only" id="btnOpenTacticDrawer" title="Formações e configuração">🗂</button>
         <div class="tool-flyout-wrap" id="boardModeFlyoutWrap">
           <button class="btn" id="boardModeBtn">Campo Inteiro ▾</button>
           <div class="tool-flyout" id="boardModeFlyout">
@@ -1350,12 +1464,12 @@
           </div>
         </div>
         <div class="toolbar-sep"></div>
-        <button class="tool-btn" data-ttool="move" title="Mover jogadores">✋</button>
-        <button class="tool-btn" data-ttool="line" title="Linha">╱</button>
-        <button class="tool-btn" data-ttool="arrow" title="Seta">➔</button>
-        <button class="tool-btn" data-ttool="zone" title="Zona">▱</button>
-        <button class="tool-btn" data-ttool="text" title="Texto">🔤</button>
-        <button class="tool-btn" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (o botão direito também apaga, com qualquer ferramenta)">🧹</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="move" title="Mover jogadores">✋</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="line" title="Linha">╱</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="arrow" title="Seta">➔</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="zone" title="Zona">▱</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="text" title="Texto">🔤</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (o botão direito também apaga, com qualquer ferramenta)">🧹</button>
         <div class="toolbar-sep"></div>
         <div id="tacticColorSwatches" style="display:flex; gap:6px;"></div>
         <div class="toolbar-sep"></div>
@@ -1365,8 +1479,11 @@
           <button class="tool-btn" data-lstyle="dotted" title="Linha pontilhada">┈</button>
         </div>
         <div class="toolbar-sep"></div>
-        <button class="btn icon" id="btnTacticUndo" title="Desfazer">↶</button>
+        <button class="btn icon mobile-toolbar-primary" id="btnTacticUndo" title="Desfazer">↶</button>
         <button class="btn icon" id="btnTacticClear" title="Limpar desenhos">✕</button>
+        <!-- Mobile only: reveals color swatches/line-style/clear/+Objeto/+Jogador/+Imagem/export —
+             same mobile-toolbar-primary/mobile-tools-open pattern as #videoToolbar. -->
+        <button class="btn icon mobile-toolbar-primary touch-only" id="btnTacticMoreTools" title="Mais ferramentas">⋯</button>
         <div class="toolbar-sep"></div>
         <div class="tool-flyout-wrap" id="objectFlyoutWrap">
           <button class="btn">+ Objeto</button>
@@ -3751,7 +3868,13 @@ videoEl.addEventListener('timeupdate', ()=>{ if(currentPossessionEntry()) render
 // though nothing about the video itself changed. Replicating the browser's own "contain" math
 // here keeps the canvas pixel-for-pixel aligned with the video at any size.
 function sizeDrawCanvas(){
-  const r = videoWrap.getBoundingClientRect();
+  // .video-zoom-layer (not #videoWrap) is the video's actual display box — on desktop the two are
+  // numerically identical (video-zoom-layer fills 100% of videoWrap, its only relevant content),
+  // so this is a no-op there; on mobile #videoWrap now also contains the category panel as a real
+  // flex sibling (see PLATFORM DETECTION / #mobileCatBar), so videoWrap's own rect is wider than
+  // just the video — measuring the wrong box would size/position this drawing overlay across both
+  // the video AND the category panel instead of just the video.
+  const r = document.getElementById('videoZoomLayer').getBoundingClientRect();
   const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
   let w = r.width, h = r.height, left = 0, top = 0;
   if(vw && vh && r.width && r.height){
@@ -3905,14 +4028,17 @@ setupColResizer(document.getElementById('colResizerRight'), 'right');
 /* ---------- Mobile-only: sidebar drawers + compact toolbar (both purely additive — CSS gates
    their actual effect behind body.mobile-touch-ui; the listeners below are harmless no-ops on
    desktop since the classes they toggle never match anything under desktop CSS). ---------- */
+// which -> {selector, cls}: 'clip'/'tag' are the video tab's sidebars (existing); 'tactic' is the
+// Tactic Board's own side panel (formations/config) — same drawer mechanism, just a third target,
+// so no new interaction model to build, only a third entry in this lookup.
+const DRAWER_TARGETS = { clip: '.clip-sidebar', tag: '.tag-sidebar', tactic: '.tactic-side' };
 function closeDrawers(){
-  document.querySelector('.clip-sidebar').classList.remove('drawer-open');
-  document.querySelector('.tag-sidebar').classList.remove('drawer-open');
+  Object.values(DRAWER_TARGETS).forEach(sel => document.querySelector(sel)?.classList.remove('drawer-open'));
   document.getElementById('drawerBackdrop').classList.remove('active');
 }
 function openDrawer(which){
   closeDrawers();
-  document.querySelector(which==='clip' ? '.clip-sidebar' : '.tag-sidebar').classList.add('drawer-open');
+  document.querySelector(DRAWER_TARGETS[which])?.classList.add('drawer-open');
   document.getElementById('drawerBackdrop').classList.add('active');
 }
 document.getElementById('btnOpenClipDrawer').addEventListener('click', ()=>openDrawer('clip'));
@@ -3925,6 +4051,35 @@ document.getElementById('catGrid').addEventListener('click', e=>{ if(e.target.cl
 
 document.getElementById('btnMobileTools').addEventListener('click', ()=>{
   document.getElementById('videoToolbar').classList.toggle('mobile-tools-open');
+});
+
+// Category panel collapse (video tab): a real flex sibling shrinking to ~0, never an overlay —
+// works identically in and out of fullscreen since #videoWrap is the fullscreened element either
+// way. Explicit tap only — never auto-collapses, unlike the transport controls' inactivity timer.
+// drawCanvas (the video's own drawing overlay) is sized in actual canvas pixels by
+// sizeDrawCanvas(), which normally only runs on a window 'resize' event — a CSS flex-basis
+// transition on a sibling panel doesn't fire that event, so without this the canvas would keep
+// its stale (pre-collapse) pixel size and visually spill outside the video's new, larger box
+// (caught by the real-touch test: it made the canvas intercept clicks meant for the toggle
+// button next to it). Delayed past the .22s CSS transition so it measures the SETTLED layout,
+// not a mid-animation size.
+function resizeCanvasesAfterPanelToggle(){ setTimeout(() => { sizeDrawCanvas(); sizeTacticCanvas(); }, 260); }
+document.getElementById('btnToggleCatPanel').addEventListener('click', ()=>{
+  document.getElementById('videoWrap').classList.toggle('cats-collapsed');
+  resizeCanvasesAfterPanelToggle();
+});
+// Clip panel collapse (tablet ≥820px only — see CSS): same real-flex-sibling shrink-to-zero
+// pattern, just targeting .video-body/.clip-sidebar instead of #videoWrap/#mobileCatBar.
+document.getElementById('btnToggleClipPanel').addEventListener('click', ()=>{
+  document.querySelector('.video-body').classList.toggle('clips-collapsed');
+  resizeCanvasesAfterPanelToggle();
+});
+document.getElementById('btnHeaderMore').addEventListener('click', ()=>{
+  document.getElementById('headerActions').classList.toggle('header-open');
+});
+document.getElementById('btnOpenTacticDrawer').addEventListener('click', ()=>openDrawer('tactic'));
+document.getElementById('btnTacticMoreTools').addEventListener('click', ()=>{
+  document.getElementById('tacticToolbar').classList.toggle('mobile-tools-open');
 });
 
 /* ---------- Zoom (view + optional bake into the export of the selected clip) ---------- */
