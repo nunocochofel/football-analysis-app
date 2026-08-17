@@ -51,27 +51,45 @@ Botão "Carregar vídeo" — abre o seletor de ficheiros do iOS (Fotos, Ficheiro
 
 ## Utilização fullscreen
 
-Botão de ecrã inteiro (⛶) nos controlos de vídeo. O vídeo ocupa o ecrã e as categorias
-permanecem **sempre visíveis** por cima do vídeo, mesmo depois de os controlos normais (play,
-timeline) desaparecerem ao fim de uns segundos sem interação — toca no vídeo para os fazeres
-reaparecer. Tocar numa categoria inicia um corte; toca outra vez na mesma para terminar — tudo
-sem sair do ecrã inteiro.
+Botão de ecrã inteiro (⛶) nos controlos de vídeo. O vídeo ocupa o máximo de espaço possível e as
+categorias ficam numa **coluna ao lado** (nunca por cima do vídeo), sempre visíveis, mesmo depois
+de os controlos normais (play, timeline) desaparecerem ao fim de uns segundos sem interação — toca
+no vídeo para os fazeres reaparecer. Tocar numa categoria inicia um corte; toca outra vez na mesma
+para terminar — tudo sem sair do ecrã inteiro.
+
+## Exportação de vídeo
+
+Podes selecionar cortes (individualmente ou "Exportar tudo"), ver o progresso e cancelar, tal como
+no Windows/Mac. Como não existe FFmpeg num browser, a exportação no iPhone/iPad usa uma tecnologia
+nativa do próprio Safari (WebCodecs) — funciona de verdade, mas com limitações reais que preferimos
+explicar em vez de esconder:
+
+- **Sem som**: o ficheiro exportado tem só vídeo, sem áudio, nesta versão.
+- **Mantém o ecrã aceso durante a exportação** (não é preciso fazeres nada — a app pede isso
+  automaticamente), mas se **mudares de app** o iOS pode pausar/abrandar a exportação — é uma
+  limitação do próprio sistema operativo com páginas em segundo plano, não desta app. Mantém o
+  Safari em primeiro plano até a exportação terminar.
+- Quando terminar, aparece um botão **"Transferir"** (e "Partilhar", se o dispositivo suportar) em
+  vez de "Abrir" — não há acesso direto ao sistema de ficheiros num browser, por isso a gravação
+  usa o mecanismo normal de downloads do iOS.
+- **"Juntar num só vídeo"** (combinar vários cortes num único ficheiro) ainda não está disponível
+  no iPhone/iPad — os cortes individuais exportam-se na mesma.
 
 ## Problemas comuns
 
 - **Não aparece a opção "Adicionar ao Ecrã Principal"**: confirma que estás a usar o Safari (não
   o Chrome nem outro browser) — é uma limitação da Apple, não contornável.
-- **Exportação de vídeo indisponível**: nesta versão, exportar cortes para ficheiro ainda só
-  funciona no Windows/Mac (usa o motor FFmpeg da aplicação de ambiente de trabalho). Uma
-  exportação real para iPhone/iPad/Android está planeada para uma fase seguinte — não existe
-  ainda, e preferimos não simular uma funcionalidade que não está pronta.
+- **Exportação não funciona**: requer iOS/iPadOS 16.4 ou mais recente (suporte a WebCodecs). Em
+  versões mais antigas, a app avisa que a exportação não está disponível em vez de falhar em
+  silêncio.
 - **Quadro Tático ainda não tem interação por toque dedicada** (arrastar jogadores, pinch-zoom,
   Apple Pencil) — está planeado para uma fase seguinte. O resto da app (vídeo, cortes, categorias,
-  timeline, ecrã inteiro) já está totalmente adaptado a toque.
+  timeline, ecrã inteiro, exportação) já está totalmente adaptado a toque.
 - **Vídeo não reproduz**: formatos comuns (MP4/H.264) funcionam sempre; formatos como HEVC/ProRes
   podem ter suporte variável consoante o modelo/versão do iOS.
 
 ## Como atualizar
 
 Como é uma PWA, atualiza-se sozinha: da próxima vez que abrires a app com internet, recebe
-automaticamente a versão mais recente publicada — não há nada para fazeres manualmente.
+automaticamente a versão mais recente publicada — não precisas de remover e voltar a instalar, o
+ícone continua exatamente onde está.

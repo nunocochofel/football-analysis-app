@@ -52,22 +52,39 @@ Botão "Carregar vídeo" — abre o seletor de ficheiros do Android.
 
 ## Utilização fullscreen
 
-Botão de ecrã inteiro nos controlos de vídeo. O vídeo ocupa o ecrã e as categorias permanecem
-**sempre visíveis** por cima do vídeo, mesmo depois de os controlos normais (play, timeline)
-desaparecerem ao fim de uns segundos sem interação — toca no vídeo para os fazeres reaparecer.
-Tocar numa categoria inicia um corte; toca outra vez na mesma para terminar — tudo sem sair do
-ecrã inteiro.
+Botão de ecrã inteiro nos controlos de vídeo. O vídeo ocupa o máximo de espaço possível e as
+categorias ficam numa **coluna ao lado** (nunca por cima do vídeo), sempre visíveis, mesmo depois
+de os controlos normais (play, timeline) desaparecerem ao fim de uns segundos sem interação — toca
+no vídeo para os fazeres reaparecer. Tocar numa categoria inicia um corte; toca outra vez na mesma
+para terminar — tudo sem sair do ecrã inteiro.
+
+## Exportação de vídeo
+
+Podes selecionar cortes (individualmente ou "Exportar tudo"), ver o progresso e cancelar, tal como
+no Windows/Mac. Como não existe FFmpeg num browser, a exportação no Android usa uma tecnologia
+nativa do próprio Chrome (WebCodecs) — funciona de verdade, com limitações reais:
+
+- **Sem som**: o ficheiro exportado tem só vídeo, sem áudio, nesta versão.
+- **Mantém o ecrã aceso durante a exportação** (a app pede isso automaticamente), mas se
+  **mudares de app** o Android pode pausar/abrandar a exportação — é uma limitação do próprio
+  sistema operativo com páginas em segundo plano, não desta app. Mantém o Chrome/a app em primeiro
+  plano até a exportação terminar.
+- Quando terminar, aparece um botão **"Transferir"** (e "Partilhar", se o dispositivo suportar) —
+  a gravação usa o mecanismo normal de downloads do Android.
+- **"Juntar num só vídeo"** ainda não está disponível no Android — os cortes individuais
+  exportam-se na mesma.
 
 ## Problemas comuns
 
 - **Não aparece a opção "Instalar aplicação"**: confirma que estás a usar o Chrome (ou outro
   browser Chromium) atualizado; alguns browsers ou versões antigas não suportam instalação de
   PWAs.
-- **Exportação de vídeo indisponível**: nesta versão, exportar cortes para ficheiro ainda só
-  funciona no Windows/Mac. Uma exportação real para Android está planeada para uma fase seguinte.
+- **Exportação não funciona**: requer um Chrome/Chromium razoavelmente recente (suporte a
+  WebCodecs, Chrome 94+). Em versões mais antigas, a app avisa que a exportação não está
+  disponível em vez de falhar em silêncio.
 - **Quadro Tático ainda não tem interação por toque dedicada** (arrastar jogadores, pinch-zoom) —
   está planeado para uma fase seguinte. O resto da app (vídeo, cortes, categorias, timeline, ecrã
-  inteiro) já está totalmente adaptado a toque.
+  inteiro, exportação) já está totalmente adaptado a toque.
 - **Ecrãs e proporções muito diferentes** (telemóveis vs. tablets Android têm muita variedade):
   se algo parecer cortado ou mal dimensionado num aparelho específico, é útil reportares o
   modelo/tamanho de ecrã.
@@ -75,4 +92,5 @@ ecrã inteiro.
 ## Como atualizar
 
 Como é uma PWA, atualiza-se sozinha: da próxima vez que abrires a app com internet, recebe
-automaticamente a versão mais recente publicada — não há nada para fazeres manualmente.
+automaticamente a versão mais recente publicada — não precisas de remover e voltar a instalar, o
+ícone continua exatamente onde está.
