@@ -2,10 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
 <title>LINHA — Análise de Vídeo de Futebol</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Vendored locally (not a CDN) so the app stays fully self-contained/offline-capable — only
+     used by the web/PWA clip-export fallback (see exportClipFramesWeb below); Electron never
+     touches this, it has native ffmpeg instead. Source: https://www.npmjs.com/package/mp4-muxer,
+     see vendor/mp4-muxer.LICENSE.txt. -->
+<script src="./vendor/mp4-muxer.js" defer></script>
 <style>
   :root{
     --bg:#10141A;
@@ -23,8 +31,15 @@
     --radius:10px;
     --radius-sm:6px;
     --shadow:0 8px 24px rgba(0,0,0,.35);
+    --safe-top:env(safe-area-inset-top,0px);
+    --safe-bottom:env(safe-area-inset-bottom,0px);
+    --safe-left:env(safe-area-inset-left,0px);
+    --safe-right:env(safe-area-inset-right,0px);
+    /* Minimum comfortable touch target (Apple HIG: 44pt) — used by mobile-only rules further down
+       to enlarge buttons/handles without changing their visual size on desktop. */
+    --touch-target:44px;
   }
-  *{box-sizing:border-box;}
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0;padding:0;}
   body{
     background:var(--bg);
@@ -33,10 +48,15 @@
     font-size:14px;
     -webkit-font-smoothing:antialiased;
     height:100vh;
+    height:100dvh; /* iOS Safari's 100vh includes the address bar and jumps as it shows/hides; dvh tracks the real visible height */
     overflow:hidden;
     display:flex;
     flex-direction:column;
+    overscroll-behavior:none; /* stop iOS's rubber-band page bounce from fighting our own scroll containers */
   }
+  /* Set once at boot by isTouchDevice() below — gates mobile-only affordances (persistent
+     category bar, larger tap targets, off-canvas drawers) without a separate mobile build. */
+  body:not(.touch-device) .touch-only{display:none !important;}
   .mono{font-family:'IBM Plex Mono',monospace;}
   h1,h2,h3{font-family:'Space Grotesk',sans-serif;margin:0;}
   button{font-family:inherit;cursor:pointer;}
@@ -257,6 +277,28 @@
   }
   @keyframes fs-badge-in{ from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);} }
   @keyframes fs-badge-pulse{ 0%,100%{opacity:1;} 50%{opacity:.35;} }
+
+  /* Touch fullscreen's always-on category bar (item 9 in the request this implements: "AS
+     CATEGORIAS DEVEM PERMANECER VISÍVEIS" — deliberately has NO opacity/pointer-events tie to
+     .fs-controls-visible, unlike .fs-overlay-controls above, so it never disappears with the
+     transport controls). --fs-mobile-cats-h is kept in sync with this element's real rendered
+     height by a ResizeObserver (see the fullscreenchange handler) so the transport bar/timeline
+     stack cleanly above it instead of overlapping, however many categories wrap onto however many
+     rows — no hardcoded height guess.
+  */
+  .fs-mobile-cats{
+    display:none; position:absolute; left:0; right:0; bottom:0; z-index:82;
+    padding:10px 12px calc(10px + var(--safe-bottom)); padding-left:calc(12px + var(--safe-left)); padding-right:calc(12px + var(--safe-right));
+    background:linear-gradient(to top, rgba(8,10,13,.82) 0%, rgba(8,10,13,.5) 70%, rgba(8,10,13,0) 100%);
+  }
+  .video-wrap.fs-active.fs-mobile-active .fs-mobile-cats{ display:block; }
+  .video-wrap.fs-active.fs-mobile-active .fs-overlay-controls{ bottom:var(--fs-mobile-cats-h,0px); }
+  .video-wrap.fs-active.fs-mobile-active .fs-cat-indicator{ bottom:calc(118px + var(--fs-mobile-cats-h,0px)); }
+  .fs-mobile-cats .cat-grid{
+    grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:8px;
+    max-height:30vh; overflow-y:auto;
+  }
+  .fs-mobile-cats .cat-btn{ min-height:var(--touch-target); padding:10px 12px; font-size:13.5px; }
 
   .clip-edit-banner{
     display:flex; align-items:center; gap:10px; padding:4px 12px;
@@ -814,6 +856,41 @@
     #tab-tactic{flex-direction:column;}
     .tactic-side{width:100%; border-left:none; border-top:1px solid var(--line);}
   }
+  /* Phone-width portrait: stacking both sidebars above/below the video (the >1100px rule above)
+     would leave almost no room for the video itself — the one thing item 2 of the mobile request
+     says must never happen ("vídeo sempre visível e funcional" is priority #1). Both sidebars
+     become slide-in drawers instead, off-screen by default, toggled by the two buttons added to
+     the toolbar below — same sidebar markup/content/listeners, just repositioned, not duplicated.
+     iPhone landscape and iPad (both comfortably wider than this) keep the >1100px stacked layout
+     above, which already gives enough room without needing drawers. */
+  /* iPhone landscape specifically (short viewport height, not caught by the width-based rules
+     above — iPad landscape has plenty of height too, so max-height keeps this from firing there).
+     Outside fullscreen, the toolbar/playback-bar/touchline take permanent vertical space that a
+     short landscape screen can't spare much of; in fullscreen this doesn't matter at all since
+     those same elements are already an overlay with no reserved space (see .fs-active above). */
+  @media (orientation:landscape) and (max-height:500px){
+    .stage-toolbar{padding:3px 8px; flex-wrap:nowrap; overflow-x:auto;}
+    .playback-bar{padding:3px 10px;}
+    .touchline-wrap{padding:8px 12px 6px;}
+  }
+  .drawer-toggle{display:none;}
+  @media (max-width:600px){
+    .drawer-toggle{display:inline-flex;}
+    .video-body{grid-template-columns:1fr; grid-template-rows:1fr; display:flex; position:relative;}
+    .clip-sidebar, .tag-sidebar{
+      position:fixed; top:0; bottom:0; width:86vw; max-width:340px; z-index:200; max-height:none;
+      transition:transform .28s cubic-bezier(.2,.8,.3,1); box-shadow:0 0 40px rgba(0,0,0,.5);
+      padding-top:var(--safe-top); padding-bottom:var(--safe-bottom);
+    }
+    .clip-sidebar{ left:0; transform:translateX(-105%); border-right:1px solid var(--line); }
+    .tag-sidebar{ right:0; transform:translateX(105%); border-left:1px solid var(--line); }
+    .clip-sidebar.drawer-open, .tag-sidebar.drawer-open{ transform:translateX(0); }
+    .video-stage{ width:100%; }
+    .drawer-backdrop{
+      display:none; position:fixed; inset:0; background:rgba(6,8,11,.55); z-index:190;
+    }
+    .drawer-backdrop.active{ display:block; }
+  }
 
   /* ---------- Project picker ---------- */
   #projectPicker{
@@ -934,6 +1011,8 @@
   <!-- ===================== VIDEO TAB ===================== -->
   <section class="tab-panel active" id="tab-video">
     <div class="video-body">
+      <!-- Phone-portrait drawers only (max-width:600px) — tap to close whichever sidebar drawer is open. -->
+      <div class="drawer-backdrop" id="drawerBackdrop"></div>
 
       <!-- Clips organized by category -->
       <aside class="clip-sidebar">
@@ -957,6 +1036,11 @@
 
       <div class="video-stage">
         <div class="stage-toolbar" id="videoToolbar">
+          <!-- Only actually visible under the max-width:600px drawer rules below (a plain CSS
+               media query — a narrow desktop window gets the same drawer behavior as a phone, not
+               gated by touch capability) — opens the SAME clip-sidebar as a slide-in drawer instead
+               of duplicating its content. -->
+          <button class="btn icon drawer-toggle" id="btnOpenClipDrawer" title="Clipes">☰</button>
           <button class="btn primary" id="btnUploadVideo">▶ Carregar vídeo</button>
           <input type="file" id="fileVideo" accept="video/*,.mp4,.m4v,.mov,.webm,.mkv,.avi,.ogv,.wmv,.flv,.ts,.mts,.m2ts,.mxf,.mpg,.mpeg,.3gp,.vob" style="display:none">
           <div class="toolbar-sep"></div>
@@ -1023,6 +1107,7 @@
           <div style="flex:1;"></div>
           <button class="btn" id="btnModeStopwatch" title="Alternar para codificação sem vídeo (só cronômetro)">⏱ Sem vídeo</button>
           <button class="btn icon" id="btnFocusVideo" title="Ecrã inteiro">⛶</button>
+          <button class="btn icon drawer-toggle" id="btnOpenTagDrawer" title="Categorias e equipas">🏷</button>
         </div>
 
         <div class="clip-edit-banner" id="clipEditBanner" style="display:none;"></div>
@@ -1052,8 +1137,13 @@
                fullscreenchange handler) instead of being duplicated — this stays empty/inert the
                rest of the time. -->
           <div class="fs-overlay-controls" id="fsOverlayControls"></div>
-          <!-- Small "recording this category" badge(s) shown while a keyboard-driven clip is being
-               recorded in fullscreen — see handleCategoryTrigger()/showFsCatBadge(). -->
+          <!-- Touch fullscreen only: #catGrid (the SAME category buttons from the sidebar, not a
+               copy) gets moved in here so a cut can be started/stopped by tap without a physical
+               keyboard. Deliberately separate from fs-overlay-controls above — this one must NEVER
+               auto-hide (see the "obrigatório" requirement on the category bar staying visible). -->
+          <div class="fs-mobile-cats touch-only" id="fsMobileCats"></div>
+          <!-- Small "recording this category" badge(s) shown while a keyboard- or tap-driven clip
+               is being recorded in fullscreen — see handleCategoryTrigger()/showFsCatBadge(). -->
           <div class="fs-cat-indicator" id="fsCatIndicator"></div>
 
           <div class="stopwatch-view" id="stopwatchView" style="display:none;">
@@ -1495,6 +1585,34 @@
 <script>
 (function(){
 "use strict";
+
+/* ===================================================================
+   DEVICE DETECTION (mobile/tablet touch adaptation)
+   One shared codebase for desktop + iPhone/iPad: nothing here forks into a
+   separate app or duplicates logic — it only toggles a body class that CSS
+   and a handful of call sites check to decide between a mouse-first control
+   (e.g. keyboard shortcuts) and its touch-first equivalent (e.g. the
+   persistent fullscreen category bar further down).
+=================================================================== */
+// maxTouchPoints alone would also flag a touch-enabled desktop monitor as
+// "mobile" — combined with coarse/no-hover pointer it reliably means an
+// actual finger/stylus is the PRIMARY input, which is what the touch-only UI
+// (bigger tap targets, always-on category bar) should key off, not just
+// "a touchscreen happens to exist".
+function isTouchDevice(){
+  const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  return hasTouch && coarse;
+}
+if(isTouchDevice()) document.body.classList.add('touch-device');
+// iPad reports as "Macintosh" in the UA string once running Safari 13+ (Apple's own doing, to get
+// desktop-class sites) — maxTouchPoints is what actually distinguishes a real iPad from a Mac.
+function isIPad(){
+  return /iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+}
+function isIPhone(){ return /iPhone|iPod/.test(navigator.userAgent); }
+if(isIPad()) document.body.classList.add('ipad-device');
+if(isIPhone()) document.body.classList.add('iphone-device');
 
 /* ===================================================================
    STATE
@@ -2772,6 +2890,15 @@ function drawLocDot(){
   else dot.style.display='none';
 }
 function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+// Normalizes mouse vs touch coordinates: a TouchEvent carries its position in touches[0]/
+// changedTouches[0] instead of directly on the event, and mobile Safari does not reliably
+// synthesize the mousemove/mouseup pair for a drag gesture on a plain (non-form-control) element.
+// Every existing mouse-drag interaction (playhead, trim handles, column resizers...) gets touch
+// support through this one helper instead of a parallel touch-specific implementation per site.
+function clientXY(e){
+  const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+  return t ? {x:t.clientX, y:t.clientY} : {x:e.clientX, y:e.clientY};
+}
 
 
 /* ===================================================================
@@ -3566,6 +3693,11 @@ videoWrap.addEventListener('mousemove', showFsControls);
 // button, Esc, the OS, a future dblclick handler...), so re-parenting the overlay controls and
 // resizing the canvas here — rather than inside the click handler above — keeps them correct no
 // matter how fullscreen state actually changed.
+// Keeps --fs-mobile-cats-h (used by the CSS above to stack the transport bar/indicator above the
+// category bar without overlap) equal to the category bar's REAL rendered height — it changes with
+// however many categories exist and how they wrap, so a hardcoded offset would drift out of sync.
+let fsMobileCatsObserver = null;
+let catGridOriginalParent = null, catGridOriginalNext = null;
 document.addEventListener('fullscreenchange', ()=>{
   const active = isVideoFullscreen();
   btnFocusVideo.classList.toggle('active', active);
@@ -3573,10 +3705,27 @@ document.addEventListener('fullscreenchange', ()=>{
   const overlay = document.getElementById('fsOverlayControls');
   const playbackBarEl = document.getElementById('playbackBar');
   const touchlineWrapEl = document.getElementById('touchlineWrap');
+  const mobileCatsEl = document.getElementById('fsMobileCats');
+  const catGridEl = document.getElementById('catGrid');
   if(active){
     overlay.appendChild(playbackBarEl);
     overlay.appendChild(touchlineWrapEl);
     showFsControls();
+    // Touch devices have no physical keyboard for category shortcuts, so the category grid moves
+    // into its own always-visible overlay instead — same buttons, same handleCategoryTrigger()
+    // click handlers already wired in renderCatGrid(), not a second implementation.
+    if(isTouchDevice()){
+      catGridOriginalParent = catGridEl.parentElement;
+      catGridOriginalNext = catGridEl.nextSibling;
+      mobileCatsEl.appendChild(catGridEl);
+      videoWrap.classList.add('fs-mobile-active');
+      if(window.ResizeObserver){
+        fsMobileCatsObserver = new ResizeObserver(entries=>{
+          videoWrap.style.setProperty('--fs-mobile-cats-h', Math.round(entries[0].contentRect.height)+'px');
+        });
+        fsMobileCatsObserver.observe(mobileCatsEl);
+      }
+    }
   } else {
     clearTimeout(fsControlsHideTimer);
     videoWrap.classList.remove('fs-controls-visible');
@@ -3584,6 +3733,14 @@ document.addEventListener('fullscreenchange', ()=>{
     // same position they started in (video-wrap, then playback-bar, then touchline-wrap).
     videoWrap.insertAdjacentElement('afterend', touchlineWrapEl);
     videoWrap.insertAdjacentElement('afterend', playbackBarEl);
+    if(videoWrap.classList.contains('fs-mobile-active')){
+      videoWrap.classList.remove('fs-mobile-active');
+      videoWrap.style.removeProperty('--fs-mobile-cats-h');
+      if(fsMobileCatsObserver){ fsMobileCatsObserver.disconnect(); fsMobileCatsObserver = null; }
+      // Put catGrid back exactly where it lived in the sidebar.
+      if(catGridOriginalNext) catGridOriginalParent.insertBefore(catGridEl, catGridOriginalNext);
+      else if(catGridOriginalParent) catGridOriginalParent.appendChild(catGridEl);
+    }
   }
   // The video's actual rendered box just changed size drastically — the drawing-canvas overlay
   // (shapes/annotations) needs to be resized/repositioned to match, same as any other resize.
@@ -3620,6 +3777,25 @@ function setupColResizer(resizerEl, side){
 }
 setupColResizer(document.getElementById('colResizerLeft'), 'left');
 setupColResizer(document.getElementById('colResizerRight'), 'right');
+
+/* ---------- Phone-portrait sidebar drawers (max-width:600px — see the CSS above) ---------- */
+function closeDrawers(){
+  document.querySelector('.clip-sidebar').classList.remove('drawer-open');
+  document.querySelector('.tag-sidebar').classList.remove('drawer-open');
+  document.getElementById('drawerBackdrop').classList.remove('active');
+}
+function openDrawer(which){
+  closeDrawers();
+  document.querySelector(which==='clip' ? '.clip-sidebar' : '.tag-sidebar').classList.add('drawer-open');
+  document.getElementById('drawerBackdrop').classList.add('active');
+}
+document.getElementById('btnOpenClipDrawer').addEventListener('click', ()=>openDrawer('clip'));
+document.getElementById('btnOpenTagDrawer').addEventListener('click', ()=>openDrawer('tag'));
+document.getElementById('drawerBackdrop').addEventListener('click', closeDrawers);
+// Picking a clip or marking a category is naturally "I'm done with the drawer" — closing it
+// automatically means never having to also hunt for a close button after a normal tap.
+document.getElementById('catTree').addEventListener('click', e=>{ if(e.target.closest('.clip-row-head')) closeDrawers(); });
+document.getElementById('catGrid').addEventListener('click', e=>{ if(e.target.closest('.cat-btn')) closeDrawers(); });
 
 /* ---------- Zoom (view + optional bake into the export of the selected clip) ---------- */
 let currentZoom = {scale:1, panX:0, panY:0};
@@ -3752,19 +3928,31 @@ touchline.addEventListener('click', e=>{
 let draggingPlayhead = false;
 playheadEl.style.pointerEvents = 'auto';
 playheadEl.style.cursor = 'grab';
-playheadEl.addEventListener('mousedown', e=>{
+function startPlayheadDrag(e){
   if(mode!=='video' || !videoEl.duration) return;
   draggingPlayhead = true;
   playheadEl.style.cursor = 'grabbing';
   e.preventDefault();
-});
+}
+playheadEl.addEventListener('mousedown', startPlayheadDrag);
+playheadEl.addEventListener('touchstart', startPlayheadDrag, {passive:false});
 window.addEventListener('mousemove', e=>{
   if(!draggingPlayhead || !videoEl.duration) return;
   const r = touchline.getBoundingClientRect();
   const pct = clamp((e.clientX-r.left)/r.width,0,1)*100;
   videoEl.currentTime = pctToTime(pct);
 });
+window.addEventListener('touchmove', e=>{
+  if(!draggingPlayhead || !videoEl.duration) return;
+  e.preventDefault();
+  const r = touchline.getBoundingClientRect();
+  const pct = clamp((clientXY(e).x-r.left)/r.width,0,1)*100;
+  videoEl.currentTime = pctToTime(pct);
+}, {passive:false});
 window.addEventListener('mouseup', ()=>{
+  if(draggingPlayhead){ draggingPlayhead=false; playheadEl.style.cursor='grab'; }
+});
+window.addEventListener('touchend', ()=>{
   if(draggingPlayhead){ draggingPlayhead=false; playheadEl.style.cursor='grab'; }
 });
 // "Nice" step sizes (seconds) used to label the timeline, from sub-second
@@ -3895,13 +4083,15 @@ function beginTrimDrag(edge, e){
   if(!clip) return;
   e.stopPropagation(); e.preventDefault();
   const r = touchline.getBoundingClientRect();
-  const pct = clamp((e.clientX-r.left)/r.width, 0, 1)*100;
+  const pct = clamp((clientXY(e).x-r.left)/r.width, 0, 1)*100;
   trimDrag = { edge, startInSec:clip.inSec, startOutSec:clip.outSec, startCursorTime: pctToTime(pct) };
 }
 document.querySelectorAll('.trim-handle').forEach(h => {
   h.addEventListener('mousedown', e => beginTrimDrag(h.dataset.edge, e));
+  h.addEventListener('touchstart', e => beginTrimDrag(h.dataset.edge, e), {passive:false});
 });
 document.getElementById('trimRangeBody').addEventListener('mousedown', e => beginTrimDrag('body', e));
+document.getElementById('trimRangeBody').addEventListener('touchstart', e => beginTrimDrag('body', e), {passive:false});
 
 // If a drag pushes the in/out point close to the edge of the currently
 // visible window, grow the window in that direction so dragging can keep
@@ -3923,12 +4113,12 @@ function expandTrimWindowIfNeeded(clip){
   if(changed) renderTouchlineTicks();
 }
 
-window.addEventListener('mousemove', e => {
+function updateTrimDrag(clientX){
   if(!trimDrag || !trimWindow) return;
   const clip = state.tags.find(t => t.id === trimWindow.clipId);
   if(!clip){ trimDrag = null; return; }
   const r = touchline.getBoundingClientRect();
-  const pct = clamp((e.clientX-r.left)/r.width, 0, 1)*100;
+  const pct = clamp((clientX-r.left)/r.width, 0, 1)*100;
   const cursorTime = pctToTime(pct);
   if(trimDrag.edge==='in'){
     clip.inSec = clamp(cursorTime, 0, clip.outSec-0.2);
@@ -3954,8 +4144,17 @@ window.addEventListener('mousemove', e => {
   // re-rendered live as that span changes — otherwise it visually drifts out of sync with
   // the clip bar it's supposed to mirror while you're mid-drag.
   renderShapeTimeline();
-});
+}
+window.addEventListener('mousemove', e => updateTrimDrag(e.clientX));
+window.addEventListener('touchmove', e => {
+  if(!trimDrag) return;
+  e.preventDefault();
+  updateTrimDrag(clientXY(e).x);
+}, {passive:false});
 window.addEventListener('mouseup', () => {
+  if(trimDrag){ trimDrag = null; saveState(); }
+});
+window.addEventListener('touchend', () => {
   if(trimDrag){ trimDrag = null; saveState(); }
 });
 
@@ -5105,14 +5304,18 @@ function getExportVideoEl(){
   document.body.appendChild(exportVideoEl);
   return exportVideoEl;
 }
-let exportVideoLoadedPath = null;
+let exportVideoLoadedKey = null;
 function ensureExportVideoLoaded(){
   const el = getExportVideoEl();
-  const path = currentPlaybackPath;
-  if(!path) return Promise.reject(new Error('Sem vídeo carregado.'));
-  if(exportVideoLoadedPath === path && el.readyState >= 1) return Promise.resolve(el);
+  const path = currentPlaybackPath; // Electron: real filesystem path.
+  const file = currentVideoFile; // Web: File object from the browser's own file picker/input.
+  // Whichever one is actually set identifies "what's currently loaded" — the two loading
+  // strategies (loadVideoFromElectronPath vs loadVideoFile) always set exactly one of them.
+  const key = path || file;
+  if(!key) return Promise.reject(new Error('Sem vídeo carregado.'));
+  if(exportVideoLoadedKey === key && el.readyState >= 1) return Promise.resolve(el);
   return new Promise((resolve, reject) => {
-    const onReady = () => { cleanup(); exportVideoLoadedPath = path; resolve(el); };
+    const onReady = () => { cleanup(); exportVideoLoadedKey = key; resolve(el); };
     const onErr = () => { cleanup(); reject(new Error('Não foi possível carregar o vídeo para exportação.')); };
     function cleanup(){
       el.removeEventListener('loadedmetadata', onReady);
@@ -5120,7 +5323,9 @@ function ensureExportVideoLoaded(){
     }
     el.addEventListener('loadedmetadata', onReady);
     el.addEventListener('error', onErr);
-    el.src = 'file:///' + path.replace(/\\/g,'/').split('/').map(encodeURIComponent).join('/');
+    el.src = path
+      ? 'file:///' + path.replace(/\\/g,'/').split('/').map(encodeURIComponent).join('/')
+      : URL.createObjectURL(file);
     el.load();
   });
 }
@@ -5428,7 +5633,10 @@ async function enqueueForExport(tags, options){
       status: 'waiting', progress: 0, error: null, outputPath: null,
       cancelRequested: false, jobId: null
     };
-    const cachedPath = exportCache[cacheKey];
+    // exportCache only ever holds real filesystem paths (written by the Electron IPC path below),
+    // so on web there's never a hit here — every web export re-runs WebCodecs. Fine: there's no
+    // filesystem to check against anyway, and re-encoding a short clip is cheap.
+    const cachedPath = isElectron() ? exportCache[cacheKey] : null;
     if(cachedPath && await window.api.fileExists(cachedPath)){
       item.status = 'done';
       item.progress = 100;
@@ -5485,6 +5693,65 @@ async function processExportQueue(){
   maybeStartCombinedExport();
 }
 
+// Web/PWA-only clip export: Electron's native ffmpeg pipeline doesn't exist outside Electron at
+// all — there's no ffmpeg-in-a-browser — so this is a genuinely different encode pipeline, not the
+// same thing running somewhere else: WebCodecs VideoEncoder feeding a vendored MP4 muxer (see
+// vendor/mp4-muxer.js), instead of a spawned ffmpeg process. It reuses the EXACT SAME captured JPEG
+// frames from captureClipFrames() that the Electron path also uses — only what happens to them
+// AFTER capture differs. Deliberately video-only for now (no audio track): muxing an audio track
+// too is real additional work (AudioEncoder, a second encode pass synced to the same timestamps)
+// that hasn't been built and tested yet — shipping silent video and disclosing that plainly beats
+// pretending this already has full parity with the desktop export.
+async function encodeClipFramesWeb(frames, fps, quality, onProgress, isCancelled){
+  if(typeof VideoEncoder === 'undefined' || typeof Mp4Muxer === 'undefined'){
+    throw new Error('Este navegador não suporta exportação de vídeo (requer WebCodecs: Safari 16.4+/iOS 16.4+, Chrome 94+, Edge 94+).');
+  }
+  // Frame dimensions aren't tracked separately from the JPEG bytes — decode the first one to find
+  // out, same as the browser has to do to draw any of them anyway.
+  const firstBitmap = await createImageBitmap(new Blob([frames[0]], {type:'image/jpeg'}));
+  const width = firstBitmap.width, height = firstBitmap.height;
+  firstBitmap.close();
+
+  const muxer = new Mp4Muxer.Muxer({
+    target: new Mp4Muxer.ArrayBufferTarget(),
+    video: { codec:'avc', width, height, frameRate: fps },
+    fastStart: 'in-memory'
+  });
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: (e) => console.error('VideoEncoder error:', e)
+  });
+  const BITRATE_BY_QUALITY = { high: 8_000_000, balanced: 5_000_000, small: 2_500_000 };
+  // avc1.640028 = H.264 High profile, level 4.0 — decodes in hardware on essentially everything
+  // that has WebCodecs at all, including iOS, while still giving reasonable quality/bitrate headroom.
+  encoder.configure({
+    codec: 'avc1.640028', width, height,
+    bitrate: BITRATE_BY_QUALITY[quality] || BITRATE_BY_QUALITY.balanced,
+    framerate: fps
+  });
+
+  try{
+    const frameDurationUs = Math.round(1_000_000/fps);
+    for(let i=0; i<frames.length; i++){
+      if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
+      const bitmap = await createImageBitmap(new Blob([frames[i]], {type:'image/jpeg'}));
+      const videoFrame = new VideoFrame(bitmap, { timestamp: i*frameDurationUs, duration: frameDurationUs });
+      bitmap.close();
+      encoder.encode(videoFrame, { keyFrame: i % (fps*2) === 0 }); // a keyframe every ~2s, not just the first
+      videoFrame.close();
+      if(onProgress) onProgress(Math.round((i/frames.length)*100));
+      // The encoder queues frames internally — yield occasionally so a long clip doesn't feel like
+      // it blocked the tab for its whole duration (progress UI, the cancel check above...).
+      if(i % 8 === 0) await new Promise(r=>setTimeout(r,0));
+    }
+    await encoder.flush();
+  } finally {
+    encoder.close();
+  }
+  muxer.finalize();
+  return new Blob([muxer.target.buffer], {type:'video/mp4'});
+}
+
 // Runs an item's capture phase (serialized — shares the one hidden <video> element) and returns
 // {tail: <promise for its encode phase>}. The tail promise is wrapped in a plain object rather
 // than returned directly: an async function that `return`s a promise has its OWN promise adopt
@@ -5532,14 +5799,28 @@ async function beginExportItem(item){
     if(item.cancelRequested) throw new Error(EXPORT_CANCELLED);
     item.progress = 50;
     renderExportQueuePanel();
-    return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, false, async () =>
-      window.api.exportClipFrames({
-        frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
-        audioInSec: tag.inSec, audioOutSec: tag.outSec,
-        folderPath: item.options.destFolder, filename: item.filename,
-        resolution: item.options.resolution, quality: item.options.quality, jobId: item.jobId
-      })
-    ) };
+    // Electron: hand frames to the native ffmpeg pipeline via IPC, same as always. Web/PWA: no
+    // ffmpeg exists outside Electron at all, so this is the WebCodecs path instead — same captured
+    // frames, different encoder. Either way runExportEncode() below treats it as an opaque
+    // "produce the final file" step; item.outputPath ends up being a real filesystem path in
+    // Electron, or just this item's filename (for display) on web, with the actual video kept in
+    // item.webBlob for the panel's download/share button to use.
+    return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, false, async () => {
+      if(isElectron()){
+        return window.api.exportClipFrames({
+          frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
+          audioInSec: tag.inSec, audioOutSec: tag.outSec,
+          folderPath: item.options.destFolder, filename: item.filename,
+          resolution: item.options.resolution, quality: item.options.quality, jobId: item.jobId
+        });
+      }
+      const blob = await encodeClipFramesWeb(frames, CLIP_EXPORT_FPS, item.options.quality, pct => {
+        item.progress = 50 + Math.round(pct*0.5);
+        renderExportQueuePanel();
+      }, () => item.cancelRequested);
+      item.webBlob = blob;
+      return item.filename;
+    }) };
   }catch(err){
     finishExportItemWithError(item, err);
     return null;
@@ -5604,7 +5885,9 @@ function cancelExportItemForced(id){
     item.status = 'cancelled';
   }else if(item.status === 'processing'){
     item.cancelRequested = true;
-    if(item.jobId) window.api.cancelExport(item.jobId);
+    // On web there's no ffmpeg process to reach — encodeClipFramesWeb polls item.cancelRequested
+    // (via isCancelled()) itself, same as the capture loop already does either way.
+    if(item.jobId && isElectron()) window.api.cancelExport(item.jobId);
   }
   renderExportQueuePanel();
 }
@@ -5658,6 +5941,13 @@ async function maybeStartCombinedExport(){
     options._combinedDone = true;
     const clipPaths = items.filter(i => i.status === 'done' && i.outputPath).map(i => i.outputPath);
     if(clipPaths.length < 2) continue; // nothing meaningful to join
+    // Combining relies on ffmpeg concatenation (window.api.concatClips), which only exists in
+    // Electron — there's no equivalent web/WebCodecs path yet. The individual clips already
+    // exported fine either way, so this only skips the extra "one combined file" step.
+    if(!isElectron()){
+      toast('Juntar num só vídeo ainda não está disponível na versão web — os clipes individuais foram exportados na mesma.');
+      continue;
+    }
     const outputPath = `${options.destFolder}/Compilado_${Date.now()}.mp4`.replace(/\\/g,'/');
     try{
       await window.api.concatClips({ clipPaths, outputPath });
@@ -5685,23 +5975,37 @@ function updateExportAllButtonLabel(){
 let exportDialogTags = [];
 function openExportDialog(tags){
   if(!tags.length){ toast('Sem clipes selecionados para exportar.'); return; }
-  if(!isElectron()){ toast('A exportação de vídeo requer a aplicação instalada (não funciona num browser comum).'); return; }
+  // Electron always has ffmpeg. On web there's no ffmpeg at all, but WebCodecs (VideoEncoder)
+  // covers the same ground for a plain clip export — only genuinely unsupported browsers (no
+  // WebCodecs) are blocked here, not "web" as a category.
+  if(!isElectron() && typeof VideoEncoder === 'undefined'){
+    toast('Este navegador não suporta exportação de vídeo (requer Safari 16.4+/iOS 16.4+, Chrome 94+ ou Edge 94+).');
+    return;
+  }
   if(!videoEl.duration){ toast('Carrega um vídeo primeiro.'); return; }
   exportDialogTags = tags;
   document.getElementById('exportDialogCount').textContent = tags.length+' corte(s) selecionado(s).';
   const combineRow = document.getElementById('exportCombineRow');
-  combineRow.style.display = tags.length > 1 ? '' : 'none';
+  // Combining relies on ffmpeg concat (Electron-only, no web equivalent yet) — don't offer a
+  // checkbox that would silently no-op on web.
+  combineRow.style.display = (tags.length > 1 && isElectron()) ? '' : 'none';
   openModal('exportDialog');
 }
 
 document.getElementById('btnExportDialogStart').addEventListener('click', async () => {
   closeModal('exportDialog');
-  const destFolder = await window.api.selectExportFolder();
-  if(!destFolder) return;
+  // Electron: a real destination folder, chosen up front via a native dialog. Web: there's no
+  // filesystem to pick ahead of time at all — the browser's own download/share flow handles
+  // "where does the file go" at save time instead, so this step is simply skipped.
+  let destFolder = null;
+  if(isElectron()){
+    destFolder = await window.api.selectExportFolder();
+    if(!destFolder) return;
+  }
   const options = {
     resolution: document.getElementById('exportResolution').value,
     quality: document.getElementById('exportQuality').value,
-    combineIntoOne: exportDialogTags.length > 1 && document.getElementById('exportCombine').checked,
+    combineIntoOne: isElectron() && exportDialogTags.length > 1 && document.getElementById('exportCombine').checked,
     destFolder
   };
   const tags = exportDialogTags.slice();
@@ -5758,7 +6062,11 @@ function renderExportQueuePanel(){
       ${item.status==='processing' || item.status==='waiting' ? `<div class="export-queue-item-bar"><div class="export-queue-item-bar-fill" style="width:${item.progress}%"></div></div>` : ''}
       ${item.status==='error' ? `<p class="export-queue-item-error">${escapeHtml(item.error||'')}</p>` : ''}
       <div class="export-queue-item-actions">
-        ${item.status==='done' ? `<button class="btn" data-qact="open" data-qid="${item.id}">Abrir</button>` : ''}
+        ${item.status==='done' && item.webBlob ? `
+          ${(typeof navigator.share==='function' && typeof navigator.canShare==='function') ? `<button class="btn" data-qact="share" data-qid="${item.id}">Partilhar</button>` : ''}
+          <button class="btn" data-qact="download" data-qid="${item.id}">Transferir</button>
+        ` : ''}
+        ${item.status==='done' && !item.webBlob ? `<button class="btn" data-qact="open" data-qid="${item.id}">Abrir</button>` : ''}
         ${item.status==='error' ? `<button class="btn" data-qact="retry" data-qid="${item.id}">Tentar novamente</button>` : ''}
         ${(item.status==='waiting'||item.status==='processing') ? `<button class="btn danger" data-qact="cancel" data-qid="${item.id}">Cancelar</button>` : ''}
       </div>
@@ -5774,6 +6082,26 @@ document.getElementById('exportQueueItems').addEventListener('click', e => {
   else if(btn.dataset.qact==='open'){
     const item = exportQueue.find(i=>i.id===id);
     if(item && item.outputPath) window.api.showItemInFolder(item.outputPath);
+  }
+  else if(btn.dataset.qact==='download'){
+    const item = exportQueue.find(i=>i.id===id);
+    if(!item || !item.webBlob) return;
+    // No filesystem access in a browser — the standard way to "save" a Blob is a throwaway
+    // <a download> click. Revoke the object URL right after; the browser has already queued
+    // the download by then, so this doesn't race the save.
+    const url = URL.createObjectURL(item.webBlob);
+    const a = document.createElement('a');
+    a.href = url; a.download = item.filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  else if(btn.dataset.qact==='share'){
+    const item = exportQueue.find(i=>i.id===id);
+    if(!item || !item.webBlob) return;
+    const file = new File([item.webBlob], item.filename, { type: 'video/mp4' });
+    if(navigator.canShare({ files: [file] })){
+      navigator.share({ files: [file], title: item.filename }).catch(() => {});
+    }
   }
 });
 document.getElementById('btnCancelAllExports').addEventListener('click', cancelAllExports);
@@ -6546,6 +6874,10 @@ function computeExportFrames(scenes, fps, holdMs, tweenMs){
 async function exportTacticVideo(format){
   const scenes = activeScenesArray();
   if(!scenes.length){ toast('Nenhuma cena guardada para exportar.'); return; }
+  // Bug fix: this used to call straight into window.api with no guard, throwing an ugly
+  // "window.api is undefined" in a plain browser/PWA instead of the same friendly message the
+  // main clip-export dialog already shows in that situation (see openExportDialog above).
+  if(!isElectron()){ toast('A exportação de vídeo do Quadro Tático requer a aplicação instalada (não funciona num browser comum).'); return; }
   const savePath = await window.api.saveTacticExport(format);
   if(!savePath) return;
   toast('A preparar exportação…');
