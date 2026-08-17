@@ -27,7 +27,9 @@ jobs:
       # reproduction (multiple clean reruns, with and without a pre-existing release, all failed
       # identically). softprops/action-gh-release below is a dedicated, widely-used action that
       # correctly finds-or-creates the release for the tag once, then uploads every file — no race.
-      - run: npx electron-builder --mac
+      # --publish never: package.json has a "publish" config block, so electron-builder tries to
+      # auto-publish even without --publish always — it needs to be told explicitly not to.
+      - run: npx electron-builder --mac --publish never
       - uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
