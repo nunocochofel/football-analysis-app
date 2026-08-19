@@ -3,8 +3,12 @@ import { join } from 'path'
 import { autoUpdater } from 'electron-updater'
 import { registerIpcHandlers } from './ipc'
 import { initDatabase } from './db'
+import type { LiveSession } from './liveIngest'
 
 let mainWindow: BrowserWindow | null = null
+// Set once registerIpcHandlers() runs (see app.whenReady() below) — kept here purely so
+// 'before-quit' can stop any in-progress RTMP ingest; unrelated to mainWindow's own lifecycle.
+let liveSession: LiveSession | null = null
 // Mirrors the renderer's export queue (see project:setExportsActive in ipc.ts) purely so the
 // 'close' handler below knows whether to warn before letting the window go — a full quit
 // destroys the renderer, which is where clip capture happens (video decode only exists in a
@@ -132,7 +136,7 @@ function setupAutoUpdate(): void {
 app.whenReady().then(async () => {
   try {
     await initDatabase()
-    registerIpcHandlers(
+    liveSession = registerIpcHandlers(
       () => mainWindow,
       (active) => {
         exportsActive = active
@@ -168,6 +172,15 @@ app.on('render-process-gone', (_event, _webContents, details) => {
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err)
   dialog.showErrorBox('Erro inesperado', String(err.stack || err.message))
+})
+
+// Best-effort, not blocking: an in-progress RTMP ingest has its own ffmpeg child process that
+// would otherwise survive the app quitting (an orphaned process still connected to the RTMP
+// source). Unlike the export-in-progress warning above, this doesn't prompt the user first —
+// killing a live PREVIEW session loses nothing durable (no file has been written yet in this
+// phase), so there's nothing worth interrupting quit to ask about.
+app.on('before-quit', () => {
+  liveSession?.stop('manual').catch((err) => console.error('[live] erro ao parar no quit:', err))
 })
 
 app.on('window-all-closed', () => {

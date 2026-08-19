@@ -18,12 +18,18 @@ import {
   type ExportQuality
 } from './ffmpeg'
 import * as q from './db/queries'
-import type { ExportTacticFramesRequest } from '../shared/types'
+import { LiveSession } from './liveIngest'
+import { startLiveFromInput } from './liveInput'
+import { exportLiveClip } from './liveClip'
+import type { ExportTacticFramesRequest, LiveEvent, LiveStartRequest } from '../shared/types'
 
+// Returned so index.ts can stop any in-progress RTMP ingest on app quit (see the 'before-quit'
+// handler there) — kept as a plain return value rather than a module-level singleton so a future
+// test can construct its own registerIpcHandlers() call with an isolated session.
 export function registerIpcHandlers(
   getWindow: () => BrowserWindow | null,
   onExportsActiveChange: (active: boolean) => void
-): void {
+): LiveSession {
   // File dialogs
   ipcMain.handle('dialog:openVideo', async () => {
     const win = getWindow()
@@ -315,4 +321,50 @@ export function registerIpcHandlers(
   ipcMain.handle('db:createShape', (_e, shape: Parameters<typeof q.createShape>[0]) => q.createShape(shape))
   ipcMain.handle('db:listShapesForEvent', (_e, eventId: number) => q.listShapesForEvent(eventId))
   ipcMain.handle('db:deleteShape', (_e, id: number) => q.deleteShape(id))
+
+  // LIVE (Fase 1: RTMP; +YouTube LIVE as an experimental test source) — see liveIngest.ts
+  // (untouched, the actual ffmpeg/HTTP engine) and liveInput.ts (the thin RTMP/YouTube dispatch
+  // in front of it). Pushed state/stream-info/log/error events reach the renderer over a single
+  // 'live:event' channel (mirrors the video:transcodeProgress/video:exportProgress pattern
+  // already used above: one channel, a typed payload per kind, instead of one IPC channel per
+  // event kind).
+  const liveEmit = (event: LiveEvent): void => {
+    getWindow()?.webContents.send('live:event', event)
+  }
+  const liveSession = new LiveSession(liveEmit)
+  ipcMain.handle('live:start', (_e, req: LiveStartRequest) => startLiveFromInput(req, liveSession, liveEmit))
+  ipcMain.handle('live:stop', () => liveSession.stop('manual'))
+
+  // Fase LIVE 3 — clip export straight from the ring buffer (see liveClip.ts). inMs/outMs are
+  // wall-clock milliseconds (the same basis LiveBuffer's own segments are indexed by — the
+  // renderer converts videoEl.currentTime to this via its LiveTimeline anchor before calling this,
+  // see resources/linha/index.html). Reuses the exact same 'video:exportProgress' channel/jobId
+  // convention as video:exportClipDirect, so the existing export queue panel needs no changes to
+  // show progress/errors for a LIVE clip.
+  ipcMain.handle(
+    'live:exportClip',
+    async (
+      e,
+      args: {
+        inMs: number
+        outMs: number
+        outputPath?: string
+        folderPath?: string
+        filename?: string
+        resolution: ExportResolution
+        quality: ExportQuality
+        jobId: string
+      }
+    ) => {
+      const buffer = liveSession.getLiveBuffer()
+      if (!buffer) throw new Error('Não existe uma sessão LIVE em curso para exportar este corte.')
+      const outputPath = args.outputPath ?? join(args.folderPath as string, args.filename as string)
+      await exportLiveClip(buffer, args.inMs, args.outMs, outputPath, args.resolution, args.quality, args.jobId, (percent) => {
+        e.sender.send('video:exportProgress', { jobId: args.jobId, percent })
+      })
+      return outputPath
+    }
+  )
+
+  return liveSession
 }

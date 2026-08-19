@@ -67,3 +67,49 @@ export interface ExportTacticFramesRequest {
   outputPath: string
   format: 'mp4' | 'gif'
 }
+
+// LIVE (Fase 1) — RTMP ingest via ffmpeg, Desktop/Electron only. See src/main/liveIngest.ts.
+export type LiveState = 'disconnected' | 'connecting' | 'live' | 'error' | 'stopping'
+
+// 'youtube' added for the experimental YouTube LIVE test source — see src/main/liveInput.ts. Not
+// a new engine: both source types converge on the same LiveSession (liveIngest.ts, unmodified)
+// once a usable stream URL exists, so this type only ever affects WHICH url ffmpeg ends up
+// reading, never the states above or the ffmpeg/HTTP machinery itself.
+export type LiveSourceType = 'rtmp' | 'youtube'
+
+export interface LiveStartRequest {
+  sourceType: LiveSourceType
+  url: string
+}
+
+export interface LiveStreamInfo {
+  width: number | null
+  height: number | null
+  fps: number | null
+  videoCodec: string | null
+  audioCodec: string | null
+  // Fase LIVE 2 — the exact MSE `codecs` parameter (e.g. "avc1.64001f,mp4a.40.2"), derived from the
+  // real init segment's avcC box (see src/main/mp4Boxes.ts), not guessed — ffmpeg is invoked with
+  // -c:v copy, so the actual profile/level is whatever the source encoded. null until the init
+  // segment has been assembled.
+  mseCodecs: string | null
+}
+
+// A tagged union so the renderer can switch on `event.type` without a separate event name per
+// concern — mirrors the existing video:transcodeProgress/video:exportProgress pattern (one
+// channel, payload carries the specifics) rather than inventing N new IPC channels for N event
+// kinds.
+export type LiveEvent =
+  | { type: 'state'; state: LiveState }
+  | { type: 'streamInfo'; info: LiveStreamInfo }
+  // Fase LIVE 2: a BASE url (e.g. http://127.0.0.1:PORT/live) — the renderer's MSE driver appends
+  // /init.mp4 and /segments/:id itself. No longer a single playable <video src>.
+  | { type: 'url'; url: string }
+  // Fase LIVE 2 — one new fragment has been captured into the ring buffer and is now fetchable at
+  // `${baseUrl}/segments/${id}`. liveEdgeMs/oldestMs are the CURRENT window bounds (both move
+  // forward together as the window slides), in the same wall-clock-ms basis as startMs/endMs —
+  // see the module-level comment in liveIngest.ts about why wall-clock receipt time, not PTS, is
+  // this phase's timeline basis.
+  | { type: 'segment'; id: number; startMs: number; endMs: number; liveEdgeMs: number; oldestMs: number }
+  | { type: 'log'; line: string } // curated (throttled) diagnostic line, for an optional on-screen log — full detail always goes to the main process console regardless
+  | { type: 'error'; message: string }

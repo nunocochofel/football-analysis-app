@@ -3,6 +3,8 @@ import type {
   DrawingShape,
   EventRecord,
   ExportTacticFramesRequest,
+  LiveEvent,
+  LiveStartRequest,
   Match,
   Player,
   TagCategory,
@@ -115,7 +117,27 @@ const api = {
 
   onAutoUpdateStatus: (cb: (message: string) => void): void => {
     ipcRenderer.on('autoUpdate:status', (_e, message: string) => cb(message))
-  }
+  },
+
+  // LIVE (Fase 1, Desktop/Electron only) — see src/main/liveIngest.ts/liveInput.ts.
+  liveStart: (req: LiveStartRequest): Promise<void> => ipcRenderer.invoke('live:start', req),
+  liveStop: (): Promise<void> => ipcRenderer.invoke('live:stop'),
+  onLiveEvent: (cb: (event: LiveEvent) => void): void => {
+    ipcRenderer.on('live:event', (_e, event: LiveEvent) => cb(event))
+  },
+  // Fase LIVE 3 — see src/main/liveClip.ts. Mirrors exportClipDirect's shape/naming exactly
+  // (inMs/outMs instead of inSec/outSec — wall-clock ms, the basis LiveBuffer indexes by) so the
+  // renderer's export queue can treat it as a drop-in alternative for tag.live clips.
+  exportLiveClip: (args: {
+    inMs: number
+    outMs: number
+    outputPath?: string
+    folderPath?: string
+    filename?: string
+    resolution: 'original' | '1080p' | '720p'
+    quality: 'high' | 'balanced' | 'small'
+    jobId: string
+  }): Promise<string> => ipcRenderer.invoke('live:exportClip', args)
 }
 
 export type FootballApi = typeof api

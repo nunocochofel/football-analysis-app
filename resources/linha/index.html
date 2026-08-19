@@ -204,6 +204,58 @@
   }
   .tool-flyout-wrap:hover .tool-flyout, .tool-flyout.pinned{display:flex;}
 
+  /* LIVE (Fase 1, Desktop/Electron only). Base rule unconditionally display:none — same reasoning
+     as .token-hit-area/.fs-exit-btn in earlier phases: this must be completely inert on Mobile/
+     PWA/Touch even if some future edit forgot an explicit isElectron() guard somewhere, not merely
+     hidden. Only body.electron-app (set once at boot, see the isElectron() gate near
+     PLATFORM DETECTION) ever reveals it. */
+  #liveFlyoutWrap, #btnLiveOpen{ display:none; }
+  body.electron-app #liveFlyoutWrap{ display:block; position:relative; }
+  body.electron-app #btnLiveOpen{ display:inline-flex; }
+  .live-panel{ width:280px; }
+  .live-panel-row{ display:flex; align-items:center; gap:8px; }
+  .live-panel-row label{ font-size:11px; color:var(--muted); white-space:nowrap; }
+  .live-source-row{ gap:14px; }
+  .live-source-row label{ display:flex; align-items:center; gap:5px; cursor:pointer; font-size:12px; color:var(--chalk); }
+  .live-experimental-badge{
+    font-size:9px; font-weight:700; letter-spacing:.03em; text-transform:uppercase;
+    background:var(--panel-alt); color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:1px 6px;
+  }
+  .live-panel-row input[type=text]{
+    flex:1; min-width:0; background:var(--panel-alt); border:1px solid var(--line); border-radius:var(--radius-sm);
+    color:var(--chalk); padding:6px 8px; font-size:12px; font-family:'IBM Plex Mono', monospace;
+  }
+  .live-status{
+    font-size:10px; font-weight:700; letter-spacing:.04em; padding:3px 7px; border-radius:999px;
+    background:var(--panel-alt); color:var(--muted); white-space:nowrap; margin-left:auto;
+  }
+  .live-status.is-connecting{ color:var(--amber); }
+  .live-status.is-live{ background:#3F9142; color:#08110A; }
+  .live-status.is-error{ background:var(--crimson); color:#fff; }
+  .live-panel-info{ font-size:11px; color:var(--muted); font-family:'IBM Plex Mono', monospace; }
+  .live-panel-error{ font-size:11px; color:var(--crimson); }
+  .live-panel-log{
+    font-size:10px; color:var(--muted); font-family:'IBM Plex Mono', monospace; max-height:60px;
+    overflow-y:auto; white-space:pre-wrap; word-break:break-all; border-top:1px solid var(--line); padding-top:4px;
+  }
+  .live-panel-log:empty{ display:none; }
+
+  /* Fase LIVE 2 — buffer temporal: live edge / delay / Go Live. */
+  .live-buffer-row{ gap:8px; }
+  .live-edge-bar{
+    position:relative; flex:1; height:10px; border-radius:999px; background:var(--panel-alt);
+    border:1px solid var(--line); cursor:pointer; overflow:hidden;
+  }
+  .live-edge-bar-fill{ position:absolute; inset:0; background:linear-gradient(90deg, var(--line), #3F9142 100%); opacity:.35; }
+  .live-edge-bar-playhead{
+    position:absolute; top:-2px; width:10px; height:14px; margin-left:-5px; left:0%;
+    background:var(--chalk); border-radius:3px; box-shadow:0 0 0 1px var(--panel);
+  }
+  .live-delay{ font-size:10px; color:var(--muted); font-family:'IBM Plex Mono', monospace; white-space:nowrap; }
+  .live-delay.at-edge{ color:#3F9142; }
+  #btnGoLive{ font-size:10px; padding:3px 8px; white-space:nowrap; }
+  #btnGoLive.at-edge{ background:#3F9142; color:#08110A; border-color:#3F9142; }
+
   .zoom-control{display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted);}
   .zoom-control input[type=range]{width:90px;}
   .zoom-control .mono{color:var(--chalk); width:36px;}
@@ -288,6 +340,42 @@
     font-size:13px; font-weight:900; animation:none;
   }
 
+  /* Mobile fullscreen exit control (see enterMobileFullscreen()/exitMobileFullscreen() further
+     below): real Fullscreen API sessions get a native OS-level way out (Escape on desktop, a
+     system gesture on Android) even though #btnFocusVideo itself becomes visually unreachable
+     once fullscreen covers the screen (it lives in #videoToolbar, a sibling of #videoWrap, not a
+     descendant — pre-existing, unrelated to mobile). The CSS-only fallback used on iOS/iPadOS
+     Safari has NO such native exit at all, so this button is the only way out there — it must
+     never be allowed to end up unreachable. Hidden by default (base rule, applies everywhere);
+     shown only under body.mobile-touch-ui while .fs-active is set, following the exact same
+     auto-hide opacity/pointer-events timing as the rest of .fs-overlay-controls so it appears and
+     disappears in lockstep with the transport bar instead of behaving inconsistently. */
+  .fs-exit-btn{ display:none; }
+  body.mobile-touch-ui #videoWrap.fs-active .fs-exit-btn{
+    display:flex; align-items:center; justify-content:center;
+    position:absolute; top:calc(10px + var(--safe-top)); right:calc(10px + var(--safe-right)); z-index:90;
+    width:36px; height:36px; border-radius:50%; padding:0;
+    background:rgba(15,18,23,.75); border:1px solid rgba(255,255,255,.25); color:#fff; font-size:16px;
+    opacity:0; pointer-events:none; transition:opacity .25s ease;
+  }
+  body.mobile-touch-ui #videoWrap.fs-active.fs-controls-visible .fs-exit-btn{ opacity:1; pointer-events:auto; }
+
+  /* CSS-only fullscreen fallback for platforms where Element.requestFullscreen() on an arbitrary
+     element is unsupported or unreliable (confirmed: iOS/iPadOS Safari only supports fullscreen on
+     a real <video> via webkitEnterFullscreen, a native player that would replace our own video +
+     drawing canvas + category UI entirely — unusable here). Applied by activateFallbackFullscreen()
+     only after requestFullscreen() has been tried and verified NOT to have actually taken effect
+     (never assumed from feature-detection alone). .video-wrap already has position:relative and
+     display:flex — position:fixed here simply lifts it out of the normal flex-item flow and pins
+     it to the true viewport; every child (video-zoom-layer, #mobileCatBar, .fs-overlay-controls)
+     keeps using its existing flex sizing/collapse CSS completely unchanged, so this needed zero
+     changes anywhere else in the mobile video layout. The opaque #000 background (inherited from
+     the base .video-wrap rule) fully occludes #app-header/toolbar/tabs behind it — no need to
+     hide them individually, same visual result real Fullscreen API's top-layer gives for free. */
+  body.mobile-touch-ui #videoWrap.mobile-fs-fallback{
+    position:fixed; inset:0; width:100vw; height:100dvh; z-index:300; margin:0;
+  }
+
   /* Mobile always-visible category bar (#mobileCatBar, populated by renderCategoryButtonsInto() —
      see renderCatGrid()). Lives inside #videoWrap so it's automatically part of the fullscreened
      element too (video|categories stays IDENTICAL in and out of fullscreen — no separate fullscreen
@@ -318,10 +406,19 @@
     flex:0 0 auto; display:flex; align-items:center; justify-content:center;
     width:28px; min-height:var(--touch-target); background:var(--panel-alt); border:none;
     color:var(--muted); font-size:14px; cursor:pointer;
+    /* Above .fs-overlay-controls (z-index:80, position:absolute;bottom:0 spanning the WHOLE
+       #videoWrap including the space this button/the category strip occupy below the video in
+       portrait) — without this, real-touch testing found the button completely unreachable
+       whenever the auto-hiding transport controls were visible: opaque and clickable on top,
+       silently swallowing every tap meant for this toggle. Categories are deliberately independent
+       of the transport bar's auto-hide (see #mobileCatBar below), so their own toggle must never
+       be at the mercy of it either. */
+    position:relative; z-index:81;
   }
   body.mobile-touch-ui .panel-collapse-btn:active{ background:var(--panel); color:var(--chalk); }
   body.mobile-touch-ui #mobileCatBar{
     display:flex; flex-direction:row; flex-wrap:nowrap; gap:6px;
+    position:relative; z-index:81; /* same reasoning as .panel-collapse-btn above */
     /* Portrait strip: a proportional SHARE of the viewport height, never a fixed pixel value —
        clamp() keeps it from ever eating more than ~20% even on a very tall phone, while staying
        usable (min 56px) on a short one. Preferred value tightened to 9vh (was 12vh): the row's
@@ -720,6 +817,37 @@
   .token-rotate-handle:active{cursor:grabbing;}
   .token-rotate-handle::before{
     content:''; position:absolute; left:50%; top:100%; width:1px; height:9px; background:rgba(236,239,242,.5); transform:translateX(-50%);
+  }
+  /* Enlarges the rotate handle's own touch target well past its 9px visual size, mobile only —
+     ::after is free here (::before already renders the little indicator stick above). Desktop
+     mouse users have pixel-precise pointers and don't need this; keeping it mobile-only also
+     avoids shrinking the gap between the handle and the token's own (also enlarged) hit-area. */
+  body.mobile-touch-ui .token-rotate-handle::after{
+    content:''; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:22px; height:22px; border-radius:50%;
+  }
+  /* Invisible touch-only hit-area, appended as a real child in renderTokens() (see startDrag()) —
+     NOT a pseudo-element, because several token kinds (ball/goal/minigoal/cone) already use
+     ::before/::after for their own visual art and a generic .token::after would collide with
+     those. Offset DOWN from the token's true center (not perfectly centered) and capped at a more
+     modest size than a first attempt used — real-touch testing (CDP-dispatched touchstart, not
+     elementFromPoint()) found that Chromium's real touch hit-testing considers a finger-sized
+     RADIUS around the actual touch point, not a single pixel: with a fully-centered, larger hit-
+     area here AND the rotate handle's own enlarged zone only ~18px away, touches dead in the
+     token's center were sometimes resolved to the handle instead, because both enlarged zones fell
+     within that radius simultaneously and the browser's own disambiguation picked between them
+     unpredictably. Shifting this zone away from the handle (which sits above the token) removes
+     the overlap instead of trying to out-guess that heuristic. Hidden entirely outside
+     body.mobile-touch-ui — desktop mouse precision doesn't need a bigger target, and this must
+     never make two close-together tokens harder to pick individually with a mouse. */
+  /* display:none as an unconditional base rule (not just outside mobile-touch-ui): .token uses
+     display:flex, so an un-positioned real DOM child would become an actual flex item there,
+     competing with the token's own text (jersey number) for layout space — on desktop this element
+     must be completely inert, never merely invisible. */
+  .token-hit-area{ display:none; }
+  body.mobile-touch-ui .token-hit-area{
+    display:block; position:absolute; top:calc(50% + 7px); left:50%; transform:translate(-50%,-50%);
+    width:40px; height:40px; border-radius:50%;
   }
   .token-facing{
     position:absolute; top:-3px; left:50%; width:0; height:0; transform:translateX(-50%);
@@ -1242,6 +1370,48 @@
           <button class="btn icon mobile-toolbar-primary touch-only" id="btnOpenClipDrawer" title="Clipes">📋</button>
           <button class="btn primary mobile-toolbar-primary" id="btnUploadVideo" aria-label="Carregar vídeo">▶<span class="btn-label"> Carregar vídeo</span></button>
           <input type="file" id="fileVideo" accept="video/*,.mp4,.m4v,.mov,.webm,.mkv,.avi,.ogv,.wmv,.flv,.ts,.mts,.m2ts,.mxf,.mpg,.mpeg,.3gp,.vob" style="display:none">
+          <!-- LIVE (Fase 1, Desktop/Electron only — see .live-panel/#btnLiveOpen CSS: base
+               display:none, only shown under body.electron-app, mirroring how mobile-only
+               elements are gated the opposite way). Nowhere near the video/export engine —
+               this only ever changes what videoEl.src points to, exactly like loadVideoFile vs
+               loadVideoFromElectronPath already do for the two existing local-file strategies. -->
+          <div class="tool-flyout-wrap" id="liveFlyoutWrap">
+            <button class="btn" id="btnLiveOpen">🔴 <span id="liveBtnLabel">LIVE</span></button>
+            <div class="tool-flyout live-panel" id="livePanel">
+              <!-- YouTube LIVE: fonte experimental de teste (ver src/main/liveInput.ts) — o RTMP
+                   continua a ser a fonte "a sério"; isto só existe para testar o motor LIVE sem
+                   depender de teres uma fonte Veo/RTMP disponível. -->
+              <div class="live-panel-row live-source-row">
+                <label><input type="radio" name="liveSourceType" value="rtmp" id="liveSourceRtmp" checked> RTMP</label>
+                <label><input type="radio" name="liveSourceType" value="youtube" id="liveSourceYoutube"> YouTube LIVE <span class="live-experimental-badge">experimental</span></label>
+              </div>
+              <div class="live-panel-row">
+                <label for="liveUrl" id="liveUrlLabel">URL RTMP</label>
+                <input type="text" id="liveUrl" placeholder="rtmp://..." autocomplete="off" spellcheck="false">
+              </div>
+              <div class="live-panel-row">
+                <button class="btn primary" id="btnLiveConnect">Ligar</button>
+                <button class="btn danger" id="btnLiveStop" style="display:none;">Parar</button>
+                <span class="live-status" id="liveStatusLabel">DISCONNECTED</span>
+              </div>
+              <div class="live-panel-info" id="liveStreamInfoLabel"></div>
+              <!-- Fase LIVE 2 — buffer temporal: só faz sentido mostrar isto uma vez em LIVE, por
+                   isso fica escondido por omissão e só aparece via setLiveStatusUI(). #liveEdgeBar
+                   é apenas visual (não um <input type=range> — o seek real acontece por clique
+                   na barra de vídeo/teclado, ver liveSeekTo()); a posição do "○" nela reflete
+                   playbackPosition dentro de [oldestMs, liveEdgeMs]. -->
+              <div class="live-panel-row live-buffer-row" id="liveBufferRow" style="display:none;">
+                <div class="live-edge-bar" id="liveEdgeBar" title="Arrasta para recuar dentro do buffer LIVE">
+                  <div class="live-edge-bar-fill" id="liveEdgeBarFill"></div>
+                  <div class="live-edge-bar-playhead" id="liveEdgeBarPlayhead"></div>
+                </div>
+                <span class="live-delay" id="liveDelayLabel">Delay: 0s</span>
+                <button class="btn" id="btnGoLive">● LIVE</button>
+              </div>
+              <div class="live-panel-error" id="liveErrorLabel" style="display:none;"></div>
+              <div class="live-panel-log" id="liveLogLabel" title="Últimas linhas de diagnóstico do ffmpeg/yt-dlp"></div>
+            </div>
+          </div>
           <div class="toolbar-sep"></div>
 
           <div class="tool-flyout-wrap mobile-toolbar-primary" id="toolFlyoutWrap">
@@ -1343,6 +1513,11 @@
                fullscreenchange handler) instead of being duplicated — this stays empty/inert the
                rest of the time. -->
           <div class="fs-overlay-controls" id="fsOverlayControls"></div>
+          <!-- Mobile only: the ONLY way out of the CSS fallback fullscreen (see
+               activateFallbackFullscreen() — iOS/iPadOS Safari has no native Fullscreen API exit
+               gesture to fall back on there, unlike real fullscreen). Lives inside #videoWrap so it
+               stays part of whichever fullscreen mode is active, real or fallback. -->
+          <button class="btn icon fs-exit-btn" id="btnExitMobileFullscreen" title="Sair de ecrã inteiro" aria-label="Sair de ecrã inteiro">✕</button>
           <!-- Small "recording this category" badge(s) shown while a keyboard-driven clip is being
                recorded in fullscreen — see handleCategoryTrigger()/showFsCatBadge(). -->
           <div class="fs-cat-indicator" id="fsCatIndicator"></div>
@@ -1853,6 +2028,14 @@ function isMobileUI(){
 if(isMobileUI()){
   document.body.classList.add('mobile-touch-ui');
   document.body.classList.add('platform-'+getPlatformProfile());
+}
+// LIVE (Fase 1) gate — mirrors the mobile-touch-ui pattern above, inverted: Desktop/Electron-only
+// UI (the "LIVE" panel) stays base-hidden (see its CSS) unless this class is present, so it can
+// never render or wire up its listeners on Mobile/PWA/Touch even if some future edit forgets an
+// explicit isElectron() check somewhere — the same structural-gate reasoning already used for
+// mobile-only elements, just for the opposite platform.
+if(isElectron()){
+  document.body.classList.add('electron-app');
 }
 // Installability on Android requires a registered service worker; iOS Safari's "Add to Home
 // Screen" doesn't strictly require one but treats the result as a more real PWA (offline shell,
@@ -3192,8 +3375,15 @@ function createTag(catId, forceTeamId, overrideRange){
   const teamId = forceTeamId!=null
     ? forceTeamId
     : (activePlayerId ? activeTeam : (state.roster[activeTeam].players.length ? activeTeam : null));
+  // Fase LIVE 3: a marcação criada durante o LIVE tem inSec/outSec no domínio de tempo do MSE
+  // (videoEl.currentTime), não wall-clock — só significativo dentro desta MESMA sessão LIVE (ver
+  // wallClockForMediaTime()/liveTimelinePoints mais abaixo, usados apenas no momento de exportar).
+  // Marcada aqui, na criação, porque é o único momento em que sabemos com certeza qual era a
+  // estratégia de reprodução ativa — beginExportItem() lê este campo depois, sem ter de adivinhar.
+  const isLiveTag = videoEl.dataset.strategy === 'live';
   const tag = {
     id:uid(),
+    createdAt: Date.now(),
     time: t,
     inSec: overrideRange ? overrideRange.inSec : Math.max(0, t - DEFAULT_PRE_ROLL),
     outSec: overrideRange ? overrideRange.outSec : t + DEFAULT_POST_ROLL,
@@ -3204,6 +3394,7 @@ function createTag(catId, forceTeamId, overrideRange){
     x: pendingLoc ? pendingLoc.x : null,
     y: pendingLoc ? pendingLoc.y : null,
     mode: mode,
+    live: isLiveTag,
     shapes: [],
     zoom: null,
     freezes: [],
@@ -3599,6 +3790,230 @@ async function openElectronVideoPath(originalPath){
   loadVideoFromElectronPath(playPath, originalPath);
 }
 
+// LIVE (Fase LIVE 2, Desktop/Electron only) — third loading strategy, parallel to
+// loadVideoFromElectronPath (local file) and loadVideoFile (web blob) above: same videoEl, same
+// #drawCanvas, same everything past this point. Deliberately does NOT touch
+// electronVideoSourcePath/currentPlaybackPath (both stay null/whatever they were) — those identify
+// a REAL LOCAL FILE for export/clip-cutting, which a live stream isn't yet in this phase (no
+// recording to disk happens here), so leaving them alone is exactly correct, not an oversight.
+//
+// Fase 1 set `videoEl.src` directly to a single progressive HTTP endpoint — nothing to rewind
+// into once a byte was written to that one connection's socket (see src/main/liveIngest.ts's
+// module-level comment for the full audit). Fase LIVE 2 replaces that with MediaSource Extensions:
+// the main process now serves an init segment once (GET .../init.mp4) plus a stream of small
+// fragments (GET .../segments/:id, one per 'segment' LiveEvent — see window.api.onLiveEvent
+// below), and THIS driver appends each one to a SourceBuffer as it arrives. videoEl.buffered/
+// .seekable then reflect the REAL sliding window Chromium is holding — that's what live edge,
+// delay, seek-clamping and Go Live are all computed from (see the live-edge UI block further
+// down), never a hand-rolled duration/currentTime hack.
+let liveMediaSource = null;
+let liveSourceBuffer = null;
+let liveAppendQueue = [];       // ArrayBuffers waiting to be appendBuffer()'d — a SourceBuffer only allows one in-flight append at a time
+let liveAppending = false;
+let liveBaseUrl = null;
+let livePendingSegments = [];   // segment ids announced before the SourceBuffer was ready to receive them yet (sourceopen can lag slightly behind the first 'segment' events)
+let liveLastStreamInfo = null;  // latest 'streamInfo' LiveEvent payload — read for .mseCodecs when creating the SourceBuffer
+// The init segment (ftyp+moov) is fetched as soon as the SourceBuffer exists, but deliberately NOT
+// appended on its own — appending a zero-sample init segment by itself was found (via real,
+// hands-on testing against this exact Electron/Chromium build) to hang the renderer process
+// entirely after the append's own 'updateend' fires. Merging it into ONE single appendBuffer() call
+// together with the first real fragment (moof+mdat) avoids the issue completely and is a
+// well-established pattern for fragmented-MP4/MSE playback in general (equivalent to how a CMAF
+// player's first segment often bundles init+media together) — kept here rather than silently
+// working around it with no explanation, since it's a real, reproducible browser-level finding.
+let livePendingInitBytes = null;
+
+// Fase LIVE 3 — LiveTimeline: the explicit bridge between PLAYER TIME (videoEl.currentTime, the MSE
+// media-time domain — whatever PTS ffmpeg's -c:v copy happened to preserve from the source, NOT
+// wall-clock) and the wall-clock milliseconds LiveBuffer's segments are actually indexed by (see the
+// module-level comment in liveIngest.ts). Never assumed to be the same axis, and — importantly —
+// never assumed to advance at a constant 1:1 rate against wall-clock either: real measurement showed
+// media-time can run measurably faster than wall-clock for the first several seconds after connecting
+// (the relay ffmpeg reads through whatever backlog piled up in the OS socket buffer before it started
+// consuming, faster than real-time, before settling into true real-time pacing) — a single
+// anchor-plus-fixed-rate formula computed a too-far-in-the-past wallMs for an early rewind and the
+// clip engine correctly rejected it as "not in the buffer". Fixed by keeping every observed
+// (wallMs, mediaSec) correspondence — one real, freshly-measured point per appended fragment — and
+// interpolating between the two points that bracket the queried mediaSec (or extrapolating from the
+// nearest edge point using the two nearest points' own local rate, never a hardcoded 1:1 assumption).
+// This is what marcações LIVE (createTag, unchanged, already reads videoEl.currentTime) get converted
+// through at EXPORT time only — never at creation time, and never via PTS parsing (out of scope this
+// phase — see mp4Boxes.ts, untouched).
+let liveTimelinePoints = []; // [{wallMs, mediaSec}, ...] ascending by mediaSec
+let pendingAppendEndMs = null; // wall-clock endMs of the segment currently mid-appendBuffer(), consumed by its own updateend
+
+function recordLiveTimelinePoint(wallMs, mediaSec){
+  if(!Number.isFinite(wallMs) || !Number.isFinite(mediaSec)) return;
+  liveTimelinePoints.push({ wallMs, mediaSec });
+  // Bounded the same way the SourceBuffer itself is trimmed (see trimLiveSourceBuffer) — points for
+  // media-time no longer in the buffer at all can never be queried (no tag can reference them), so
+  // keeping them would just be an unbounded-growth leak over a long LIVE session.
+  const newest = liveTimelinePoints[liveTimelinePoints.length - 1].mediaSec;
+  const keepFromMediaSec = newest - LIVE_BUFFER_WINDOW_SEC - LIVE_TRIM_MARGIN_SEC;
+  while(liveTimelinePoints.length > 2 && liveTimelinePoints[1].mediaSec < keepFromMediaSec){
+    liveTimelinePoints.shift();
+  }
+}
+
+function wallClockForMediaTime(mediaSec){
+  if(!Number.isFinite(mediaSec) || liveTimelinePoints.length === 0) return null;
+  if(liveTimelinePoints.length === 1){
+    return liveTimelinePoints[0].wallMs; // only one sample ever recorded — no rate to interpolate/extrapolate with yet
+  }
+  const pts = liveTimelinePoints;
+  let lo = 0, hi = pts.length - 1;
+  if(mediaSec <= pts[0].mediaSec){ lo = 0; hi = 1; }
+  else if(mediaSec >= pts[pts.length - 1].mediaSec){ lo = pts.length - 2; hi = pts.length - 1; }
+  else{
+    // pts is small (bounded above) and appended in order — linear scan is simple and plenty fast.
+    for(let i = 0; i < pts.length - 1; i++){
+      if(mediaSec >= pts[i].mediaSec && mediaSec <= pts[i + 1].mediaSec){ lo = i; hi = i + 1; break; }
+    }
+  }
+  const a = pts[lo], b = pts[hi];
+  const mediaSpan = b.mediaSec - a.mediaSec;
+  const rate = mediaSpan > 0 ? (b.wallMs - a.wallMs) / mediaSpan : 1000; // ms wall-clock per media-second, measured locally — not assumed
+  return a.wallMs + (mediaSec - a.mediaSec) * rate;
+}
+
+function resetLiveMseState(){
+  if(liveMediaSource && liveMediaSource.readyState==='open'){
+    try{ liveMediaSource.endOfStream(); }catch(err){ /* already ending/ended — harmless */ }
+  }
+  liveMediaSource = null;
+  liveSourceBuffer = null;
+  liveAppendQueue = [];
+  liveAppending = false;
+  liveBaseUrl = null;
+  livePendingSegments = [];
+  livePendingInitBytes = null;
+  liveTimelinePoints = [];
+  pendingAppendEndMs = null;
+}
+
+function startLiveMse(baseUrl){
+  currentVideoFile = null;
+  hideVideoError();
+  document.getElementById('videoEmptyState').style.display='none';
+  clearTimeout(videoLoadTimeoutId);
+  videoEl.dataset.strategy = 'live';
+  resetLiveMseState();
+  liveBaseUrl = baseUrl;
+  if(!window.MediaSource){
+    showVideoError('Este Electron/Chromium não suporta MediaSource Extensions — a reprodução LIVE com buffer não está disponível.');
+    return;
+  }
+  const mediaSource = new MediaSource();
+  liveMediaSource = mediaSource;
+  videoEl.src = URL.createObjectURL(mediaSource);
+  videoEl.style.display = 'block';
+  mediaSource.addEventListener('sourceopen', onLiveSourceOpen, {once:true});
+  videoEl.load();
+  videoEl.play().catch(()=>{}); // autoplay can be blocked by browser policy; harmless no-op if so, mirrors Fase 1's loadVideoFromLiveSource
+  videoLoadTimeoutId = setTimeout(()=>{
+    if(videoEl.readyState===0){
+      showVideoError('O vídeo LIVE não respondeu depois de um tempo.');
+    }
+  }, 10000);
+}
+
+async function onLiveSourceOpen(){
+  if(!liveMediaSource || liveMediaSource.readyState!=='open') return;
+  const codecs = (liveLastStreamInfo && liveLastStreamInfo.mseCodecs) || 'avc1.64001f,mp4a.40.2';
+  const mime = 'video/mp4; codecs="'+codecs+'"';
+  if(!MediaSource.isTypeSupported(mime)){
+    showVideoError('O codec deste stream LIVE não é suportado para reprodução com buffer ('+mime+').');
+    return;
+  }
+  try{
+    const sourceBuffer = liveMediaSource.addSourceBuffer(mime);
+    liveMediaSource.duration = Infinity; // live/unbounded stream — never left at its default NaN, matching standard MSE live-streaming practice (dash.js/hls.js do the same)
+    sourceBuffer.mode = 'segments';
+    sourceBuffer.addEventListener('updateend', onLiveSourceBufferUpdateEnd);
+    sourceBuffer.addEventListener('error', ()=>{ console.error('LINHA: erro no SourceBuffer LIVE'); });
+    liveSourceBuffer = sourceBuffer;
+    const initRes = await fetch(liveBaseUrl+'/init.mp4');
+    if(!initRes.ok) throw new Error('init.mp4 HTTP '+initRes.status);
+    livePendingInitBytes = await initRes.arrayBuffer();
+    const queued = livePendingSegments;
+    livePendingSegments = [];
+    queued.forEach(fetchAndEnqueueLiveSegment);
+  }catch(err){
+    console.error(err);
+    showVideoError('Não foi possível iniciar o buffer LIVE: '+(err && err.message ? err.message : err));
+  }
+}
+
+async function fetchAndEnqueueLiveSegment(seg){
+  if(!liveBaseUrl) return;
+  try{
+    const res = await fetch(liveBaseUrl+'/segments/'+seg.id);
+    if(!res.ok) return; // 404 = already trimmed out of the window by the time we asked — a normal race, not an error, just skip it
+    let bytes = await res.arrayBuffer();
+    if(livePendingInitBytes){
+      // First real append of the session — merge init+fragment into one appendBuffer() call (see
+      // the comment on livePendingInitBytes for why appending the init segment alone hangs).
+      const merged = new Uint8Array(livePendingInitBytes.byteLength + bytes.byteLength);
+      merged.set(new Uint8Array(livePendingInitBytes), 0);
+      merged.set(new Uint8Array(bytes), livePendingInitBytes.byteLength);
+      bytes = merged.buffer;
+      livePendingInitBytes = null;
+    }
+    enqueueLiveAppend(bytes, seg.endMs);
+  }catch(err){
+    console.error('LINHA: falha ao obter segmento LIVE', seg.id, err);
+  }
+}
+
+function enqueueLiveAppend(arrayBuffer, endMs){
+  liveAppendQueue.push({bytes: arrayBuffer, endMs: Number.isFinite(endMs) ? endMs : null});
+  pumpLiveAppendQueue();
+}
+function pumpLiveAppendQueue(){
+  if(liveAppending || !liveSourceBuffer || liveSourceBuffer.updating || liveAppendQueue.length===0) return;
+  const next = liveAppendQueue.shift();
+  liveAppending = true;
+  pendingAppendEndMs = next.endMs;
+  try{
+    liveSourceBuffer.appendBuffer(next.bytes);
+  }catch(err){
+    liveAppending = false;
+    pendingAppendEndMs = null;
+    console.error('LINHA: appendBuffer LIVE falhou', err);
+  }
+}
+function onLiveSourceBufferUpdateEnd(){
+  liveAppending = false;
+  // Records a fresh LiveTimeline correspondence point for the segment that JUST finished appending —
+  // see the comment on liveTimelinePoints above for why every point is kept (not just the latest).
+  if(pendingAppendEndMs != null && liveSourceBuffer && liveSourceBuffer.buffered.length){
+    recordLiveTimelinePoint(pendingAppendEndMs, liveSourceBuffer.buffered.end(liveSourceBuffer.buffered.length - 1));
+  }
+  pendingAppendEndMs = null;
+  trimLiveSourceBuffer();
+  pumpLiveAppendQueue();
+}
+
+// Renderer-side half of the sliding window — the main process already trims its OWN disk copy
+// (LiveBuffer.trim() in src/main/liveBuffer.ts), but Chromium's MSE buffer is a SEPARATE pool of
+// memory that keeps growing unless explicitly told to remove() old ranges. Skipping this would
+// silently reintroduce "RAM a crescer continuamente", just moved from the main process into the
+// renderer. LIVE_BUFFER_WINDOW_SEC mirrors DEFAULT_BUFFER_DURATION_MS (liveBuffer.ts); a margin is
+// kept above it so remove() never eats into what a seek the user just made still needs.
+const LIVE_BUFFER_WINDOW_SEC = 5*60;
+const LIVE_TRIM_MARGIN_SEC = 20;
+function trimLiveSourceBuffer(){
+  if(!liveSourceBuffer || liveSourceBuffer.updating) return;
+  const buffered = liveSourceBuffer.buffered;
+  if(!buffered.length) return;
+  const start = buffered.start(0);
+  const end = buffered.end(buffered.length-1);
+  const keepFrom = end - LIVE_BUFFER_WINDOW_SEC - LIVE_TRIM_MARGIN_SEC;
+  if(keepFrom > start + 1){
+    try{ liveSourceBuffer.remove(start, keepFrom); }catch(err){ /* incompatible SourceBuffer state for remove() right now — harmless to skip once, tried again on the next segment */ }
+  }
+}
+
 function guessMimeFromName(name){
   const ext = (name.split('.').pop()||'').toLowerCase();
   const map = {mp4:'video/mp4', m4v:'video/mp4', mov:'video/quicktime', webm:'video/webm',
@@ -3665,6 +4080,196 @@ document.getElementById('btnRetryVideo').addEventListener('click', ()=>{
   else if(currentVideoFile) loadVideoFile(currentVideoFile);
   else document.getElementById('fileVideo').click();
 });
+
+// ---------- LIVE (Fase 1, Desktop/Electron only) ----------
+// This block is unconditionally present in the shared file (Mobile/PWA loads the exact same
+// index.html), but is a no-op everywhere except Electron: window.api.live* only exists there
+// (see preload/index.ts), and every DOM node it touches is base-hidden by CSS unless
+// body.electron-app is present (see the isElectron() gate near PLATFORM DETECTION) — so this
+// guard is redundant with those two facts, not the only thing preventing it from running, kept
+// here anyway so the intent reads clearly at the call site.
+if(isElectron()){
+  const livePanel = document.getElementById('livePanel');
+  const liveUrlInput = document.getElementById('liveUrl');
+  const liveUrlLabel = document.getElementById('liveUrlLabel');
+  const liveSourceRadios = document.querySelectorAll('input[name="liveSourceType"]');
+  const liveConnectBtn = document.getElementById('btnLiveConnect');
+  const liveStopBtn = document.getElementById('btnLiveStop');
+  const liveStatusLabel = document.getElementById('liveStatusLabel');
+  const liveStreamInfoLabel = document.getElementById('liveStreamInfoLabel');
+  const liveErrorLabel = document.getElementById('liveErrorLabel');
+  const liveLogLabel = document.getElementById('liveLogLabel');
+  const liveBtnLabel = document.getElementById('liveBtnLabel');
+  const liveBufferRow = document.getElementById('liveBufferRow');
+  const liveEdgeBarEl = document.getElementById('liveEdgeBar');
+  const liveEdgeBarPlayheadEl = document.getElementById('liveEdgeBarPlayhead');
+  const liveDelayLabelEl = document.getElementById('liveDelayLabel');
+  const btnGoLiveEl = document.getElementById('btnGoLive');
+
+  document.getElementById('btnLiveOpen').addEventListener('click', e=>{
+    e.stopPropagation();
+    livePanel.classList.toggle('pinned');
+  });
+  // Self-contained click-outside-closes handler, rather than extending the tactic board's own
+  // #objectFlyoutWrap/#playerFlyoutWrap listener far away in the file for an unrelated panel.
+  document.addEventListener('click', e=>{
+    if(!e.target.closest('#liveFlyoutWrap')) livePanel.classList.remove('pinned');
+  });
+
+  function selectedLiveSourceType(){
+    return document.querySelector('input[name="liveSourceType"]:checked').value;
+  }
+  // RTMP validation mirrors isValidRtmpUrl() in liveIngest.ts; YouTube validation mirrors
+  // isValidYouTubeUrl() in youtubeResolve.ts — duplicated client-side (same pattern already used
+  // for RTMP before this task) purely so an obviously-wrong URL never even costs an IPC round-trip.
+  // The main process re-validates independently either way — this is a UX shortcut, not the
+  // actual security/correctness boundary.
+  const LIVE_URL_VALIDATORS = {
+    rtmp: { test: u => /^rtmps?:\/\/\S+$/i.test(u), label: 'URL RTMP', placeholder: 'rtmp://...', hint: 'URL RTMP inválido — tem de começar por rtmp:// ou rtmps://.' },
+    youtube: { test: u => /^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\/\S+$/i.test(u), label: 'URL do YouTube', placeholder: 'https://www.youtube.com/watch?v=...', hint: 'URL do YouTube inválido — usa um link como https://www.youtube.com/watch?v=... ou https://youtu.be/...' }
+  };
+  liveSourceRadios.forEach(r => r.addEventListener('change', ()=>{
+    const cfg = LIVE_URL_VALIDATORS[selectedLiveSourceType()];
+    liveUrlLabel.textContent = cfg.label;
+    liveUrlInput.placeholder = cfg.placeholder;
+    liveErrorLabel.style.display = 'none';
+  }));
+
+  function setLiveStatusUI(state){
+    liveStatusLabel.textContent = state.toUpperCase();
+    liveStatusLabel.className = 'live-status'
+      + (state==='connecting' ? ' is-connecting' : state==='live' ? ' is-live' : state==='error' ? ' is-error' : '');
+    liveBtnLabel.textContent = state==='live' ? 'LIVE ●' : 'LIVE';
+    const busy = state==='connecting' || state==='live' || state==='stopping';
+    liveConnectBtn.style.display = busy ? 'none' : '';
+    liveStopBtn.style.display = busy ? '' : 'none';
+    liveStopBtn.disabled = state==='stopping';
+    liveUrlInput.disabled = busy;
+    liveSourceRadios.forEach(r => r.disabled = busy);
+    if(state!=='error') liveErrorLabel.style.display = 'none';
+    if(state==='disconnected' || state==='error'){
+      // Both are terminal — whatever buffer/SourceBuffer existed belongs to a session that's now
+      // over. A subsequent 'url' event (from a fresh Ligar) always calls startLiveMse() again,
+      // which itself resets this state too — done here as well so the buffer-row UI doesn't keep
+      // showing a stale live-edge position from the session that just ended.
+      liveBufferRow.style.display = 'none';
+      liveLastStreamInfo = null;
+      if(videoEl.dataset.strategy==='live') resetLiveMseState();
+    }
+    if(state==='disconnected'){ liveStreamInfoLabel.textContent=''; liveLogLabel.textContent=''; }
+  }
+  setLiveStatusUI('disconnected');
+
+  // Fase LIVE 2 — live edge / delay / seek / Go Live. Driven entirely by the <video> element's own
+  // native events (timeupdate/progress/seeking) and videoEl.seekable (which MediaSource maintains
+  // for us from what's actually appended right now — see startLiveMse in the block above) —
+  // deliberately NOT a setInterval poll, per the task's explicit "não quero setInterval como
+  // mecanismo principal de sincronização temporal".
+  const LIVE_EDGE_THRESHOLD_SEC = 2.5; // within this many seconds of the true edge counts as "at live edge" — accounts for normal MSE append latency, not an arbitrary fudge
+  function updateLiveEdgeUI(){
+    if(videoEl.dataset.strategy!=='live' || !videoEl.seekable || videoEl.seekable.length===0){
+      liveBufferRow.style.display = 'none';
+      return;
+    }
+    liveBufferRow.style.display = '';
+    const start = videoEl.seekable.start(0);
+    const end = videoEl.seekable.end(0);
+    const pos = videoEl.currentTime;
+    const span = Math.max(0.001, end - start);
+    const pct = Math.min(100, Math.max(0, ((pos-start)/span)*100));
+    liveEdgeBarPlayheadEl.style.left = pct+'%';
+    const delaySec = Math.max(0, end - pos);
+    liveDelayLabelEl.textContent = 'Delay: '+Math.round(delaySec)+'s';
+    const atEdge = delaySec <= LIVE_EDGE_THRESHOLD_SEC;
+    liveDelayLabelEl.classList.toggle('at-edge', atEdge);
+    btnGoLiveEl.classList.toggle('at-edge', atEdge);
+  }
+  videoEl.addEventListener('timeupdate', updateLiveEdgeUI);
+  videoEl.addEventListener('progress', updateLiveEdgeUI); // buffered range can extend without currentTime moving (e.g. paused while recuado no LIVE)
+
+  // Seek dentro da janela disponível — [oldestBufferedTime, liveEdge], lido diretamente de
+  // videoEl.seekable em vez de matemática manual sobre timestamps próprios.
+  function liveSeekTo(fraction){
+    if(videoEl.dataset.strategy!=='live' || !videoEl.seekable || videoEl.seekable.length===0) return;
+    const start = videoEl.seekable.start(0);
+    const end = videoEl.seekable.end(0);
+    videoEl.currentTime = Math.min(end, Math.max(start, start + fraction*(end-start)));
+  }
+  liveEdgeBarEl.addEventListener('click', e=>{
+    const rect = liveEdgeBarEl.getBoundingClientRect();
+    liveSeekTo((e.clientX - rect.left) / rect.width);
+  });
+  // Extra explicit clamp on top of the browser's own seekable-range handling — Teste 4 do
+  // enunciado ("recuar até ao limite... confirmar que não é permitido") verificado por esta
+  // aplicação ativa, não apenas confiado ao comportamento implícito do <video>.
+  videoEl.addEventListener('seeking', ()=>{
+    if(videoEl.dataset.strategy!=='live' || !videoEl.seekable || videoEl.seekable.length===0) return;
+    const start = videoEl.seekable.start(0), end = videoEl.seekable.end(0);
+    if(videoEl.currentTime < start) videoEl.currentTime = start;
+    else if(videoEl.currentTime > end) videoEl.currentTime = end;
+  });
+  // GO LIVE — usa o live edge real (videoEl.seekable.end(0)), nunca `duration` (que fica Infinity/
+  // inadequado para LIVE, ver a auditoria no topo de liveIngest.ts). Pequena margem de segurança
+  // atrás do limite absoluto — prática habitual em players live, evita bloquear à espera de dados
+  // que ainda não chegaram.
+  btnGoLiveEl.addEventListener('click', ()=>{
+    if(videoEl.dataset.strategy!=='live' || !videoEl.seekable || videoEl.seekable.length===0) return;
+    const end = videoEl.seekable.end(0);
+    videoEl.currentTime = Math.max(videoEl.seekable.start(0), end - 0.5);
+    if(videoEl.paused) videoEl.play().catch(()=>{});
+  });
+
+  liveConnectBtn.addEventListener('click', async ()=>{
+    const sourceType = selectedLiveSourceType();
+    const url = liveUrlInput.value.trim();
+    const cfg = LIVE_URL_VALIDATORS[sourceType];
+    if(!cfg.test(url)){
+      liveErrorLabel.style.display = '';
+      liveErrorLabel.textContent = cfg.hint;
+      return;
+    }
+    liveErrorLabel.style.display = 'none';
+    liveStreamInfoLabel.textContent = '';
+    liveLogLabel.textContent = '';
+    try{
+      await window.api.liveStart({ sourceType, url });
+    }catch(err){
+      liveErrorLabel.style.display = '';
+      liveErrorLabel.textContent = (err && err.message) ? err.message : 'Não foi possível iniciar a ligação LIVE.';
+    }
+  });
+  liveStopBtn.addEventListener('click', async ()=>{
+    try{ await window.api.liveStop(); }catch(err){ console.error(err); }
+  });
+
+  window.api.onLiveEvent(event=>{
+    if(event.type==='state'){
+      setLiveStatusUI(event.state);
+    } else if(event.type==='streamInfo'){
+      liveLastStreamInfo = event.info; // .mseCodecs read by onLiveSourceOpen() when creating the SourceBuffer
+      const i = event.info;
+      const parts = [];
+      if(i.width && i.height) parts.push(i.width+'×'+i.height);
+      if(i.fps) parts.push(Math.round(i.fps)+' fps');
+      if(i.videoCodec) parts.push(i.videoCodec);
+      if(i.audioCodec) parts.push(i.audioCodec+' áudio');
+      liveStreamInfoLabel.textContent = parts.join(' · ');
+    } else if(event.type==='url'){
+      startLiveMse(event.url);
+    } else if(event.type==='segment'){
+      // Fetched immediately if the SourceBuffer already exists; otherwise queued — sourceopen can
+      // lag slightly behind the very first 'segment' events (see onLiveSourceOpen).
+      if(liveSourceBuffer) fetchAndEnqueueLiveSegment(event);
+      else livePendingSegments.push(event);
+    } else if(event.type==='log'){
+      liveLogLabel.textContent = event.line;
+    } else if(event.type==='error'){
+      liveErrorLabel.style.display = '';
+      liveErrorLabel.textContent = event.message;
+      toast('LIVE: '+event.message);
+    }
+  });
+}
 // Playback fallback: re-encodes the source once via the bundled ffmpeg into widely-supported
 // H.264/AAC and loads that instead — for codecs Chromium's <video> can't decode at all (HEVC/.mov
 // straight off an iPhone being the classic case), no amount of retrying the original ever works.
@@ -3776,6 +4381,15 @@ videoEl.addEventListener('error', ()=>{
   if(videoEl.dataset.strategy==='electron-path'){
     clearTimeout(videoLoadTimeoutId);
     showVideoError('Não foi possível reproduzir este vídeo. Pode ser um formato/codec não suportado para reprodução direta (comum em vídeos gravados no iPhone) — experimenta convertê-lo abaixo. Se o problema persistir, verifica se o ficheiro ainda existe no caminho original.');
+    return;
+  }
+  if(videoEl.dataset.strategy==='live'){
+    // Belt-and-suspenders with the main-process side: liveIngest.ts's LiveSession already detects
+    // the HTTP connection dropping and reports a 'live:event' error (see onLiveStateChanged
+    // below), which is the primary signal — this only covers the case where the <video> element
+    // itself notices something wrong (e.g. an unplayable stream) independently of that.
+    clearTimeout(videoLoadTimeoutId);
+    showVideoError('A reprodução do stream LIVE falhou. Verifica o painel LIVE para o estado da ligação.');
     return;
   }
   if(!currentVideoFile) return;
@@ -3951,27 +4565,76 @@ document.getElementById('btnMute').addEventListener('click', ()=>{
 // (fsOverlayControls, fsCatIndicator) live inside the fullscreened element too.
 const btnFocusVideo = document.getElementById('btnFocusVideo');
 function isVideoFullscreen(){ return document.fullscreenElement === videoWrap; }
+// ---------- Mobile fullscreen: real Fullscreen API when it actually works, CSS fallback when it
+// doesn't (see the .mobile-fs-fallback CSS block above for why: iOS/iPadOS Safari does not support
+// Element.requestFullscreen() on an arbitrary element, only on a real <video> via
+// webkitEnterFullscreen — a native player that would take over completely and lose our own
+// drawing/category UI). Gated entirely behind isMobileUI(): desktop keeps using isVideoFullscreen()
+// /videoWrap.requestFullscreen() directly, exactly as before, never touching any of this. ----------
+function isMobileFullscreenActive(){
+  return isVideoFullscreen() || videoWrap.classList.contains('mobile-fs-fallback');
+}
+// document.fullscreenEnabled is false on platforms (iOS/iPadOS Safari) where the Fullscreen API is
+// disabled for arbitrary elements entirely — checked first so those platforms skip straight to the
+// fallback instead of attempting (and having to recover from) a doomed requestFullscreen() call.
+function elementFullscreenLikelySupported(){
+  return !!(document.fullscreenEnabled && typeof videoWrap.requestFullscreen === 'function');
+}
+function activateFallbackFullscreen(){
+  videoWrap.classList.add('mobile-fs-fallback');
+  applyFullscreenVisualState(true);
+}
+function deactivateFallbackFullscreen(){
+  videoWrap.classList.remove('mobile-fs-fallback');
+  applyFullscreenVisualState(false);
+}
+function enterMobileFullscreen(){
+  if(!elementFullscreenLikelySupported()){ activateFallbackFullscreen(); return; }
+  videoWrap.requestFullscreen().then(()=>{
+    // Some platforms resolve this promise without ever truly entering fullscreen — never just
+    // trust the absence of an error; verify document.fullscreenElement actually changed shortly
+    // after, and fall back if it didn't.
+    setTimeout(()=>{ if(!isVideoFullscreen()) activateFallbackFullscreen(); }, 350);
+  }).catch(()=>activateFallbackFullscreen());
+}
+function exitMobileFullscreen(){
+  if(isVideoFullscreen()){ document.exitFullscreen(); return; }
+  if(videoWrap.classList.contains('mobile-fs-fallback')) deactivateFallbackFullscreen();
+}
 btnFocusVideo.addEventListener('click', ()=>{
+  if(isMobileUI()){
+    if(isMobileFullscreenActive()) exitMobileFullscreen();
+    else enterMobileFullscreen();
+    return;
+  }
   if(isVideoFullscreen()) document.exitFullscreen();
   else videoWrap.requestFullscreen().catch(err => toast('Não foi possível entrar em ecrã inteiro: '+err.message));
 });
+document.getElementById('btnExitMobileFullscreen').addEventListener('click', exitMobileFullscreen);
 let fsControlsHideTimer = null;
 function showFsControls(){
-  if(!isVideoFullscreen()) return;
+  // .fs-active (not isVideoFullscreen()) so this also works for the CSS fallback path, which never
+  // sets document.fullscreenElement at all — applyFullscreenVisualState() below toggles .fs-active
+  // identically for both real and fallback fullscreen, so this stays a provable no-op for desktop
+  // (there .fs-active and isVideoFullscreen() are always in lockstep already).
+  if(!videoWrap.classList.contains('fs-active')) return;
   videoWrap.classList.add('fs-controls-visible');
   clearTimeout(fsControlsHideTimer);
   fsControlsHideTimer = setTimeout(()=>videoWrap.classList.remove('fs-controls-visible'), 5000);
 }
-// mousemove is the ONLY thing that reveals the overlay controls — keyboard shortcuts (see the big
-// keydown handler further down) never check whether the bar is visible, so hiding it never
-// disables anything, it only hides the visual chrome.
+// mousemove reveals the overlay controls for mouse/desktop; touchstart is the touch equivalent —
+// without it, tapping the video on a touch device while controls are auto-hidden did nothing (no
+// mousemove ever fires from touch input), stranding the transport bar/exit button hidden until the
+// user found another way to trigger a mousemove. Keyboard shortcuts (see the big keydown handler
+// further down) never check whether the bar is visible, so hiding it never disables anything, it
+// only hides the visual chrome.
 videoWrap.addEventListener('mousemove', showFsControls);
-// The single source of truth for entering/exiting: fires for every way fullscreen can end (this
-// button, Esc, the OS, a future dblclick handler...), so re-parenting the overlay controls and
-// resizing the canvas here — rather than inside the click handler above — keeps them correct no
-// matter how fullscreen state actually changed.
-document.addEventListener('fullscreenchange', ()=>{
-  const active = isVideoFullscreen();
+videoWrap.addEventListener('touchstart', showFsControls, {passive:true});
+// The single source of truth for entering/exiting, real or fallback: fires for every way real
+// fullscreen can end (this button, Esc, the OS...) via the fullscreenchange listener below, and is
+// called directly by activateFallbackFullscreen()/deactivateFallbackFullscreen() for the CSS
+// fallback path, which never fires a native fullscreenchange event at all.
+function applyFullscreenVisualState(active){
   btnFocusVideo.classList.toggle('active', active);
   videoWrap.classList.toggle('fs-active', active);
   const overlay = document.getElementById('fsOverlayControls');
@@ -3992,7 +4655,8 @@ document.addEventListener('fullscreenchange', ()=>{
   // The video's actual rendered box just changed size drastically — the drawing-canvas overlay
   // (shapes/annotations) needs to be resized/repositioned to match, same as any other resize.
   requestAnimationFrame(sizeDrawCanvas);
-});
+}
+document.addEventListener('fullscreenchange', ()=>applyFullscreenVisualState(isVideoFullscreen()));
 
 /* ---------- Resizable columns: drag the thin dividers to make the video
    area, clip list, or side panel wider/narrower ---------- */
@@ -4182,7 +4846,11 @@ document.getElementById('speedGroup').addEventListener('click', e=>{
 });
 
 function updateTimeReadout(){
-  document.getElementById('timeReadout').textContent = fmtTime(videoEl.currentTime)+' / '+fmtTime(videoEl.duration||0);
+  // Fase LIVE 2: duration is Infinity for 'live' (see startLiveMse) — the dedicated #liveDelayLabel
+  // already shows the meaningful LIVE-relative reading, so this old finite-duration readout is
+  // simply left blank rather than printing something like "0:00 / Infinity".
+  const durText = videoEl.dataset.strategy==='live' ? '' : (' / '+fmtTime(videoEl.duration||0));
+  document.getElementById('timeReadout').textContent = fmtTime(videoEl.currentTime)+durText;
 }
 // Trim mode: when set, the touchline shows a zoomed-in window around a single
 // clip instead of the whole video, with a draggable range to adjust its in/out.
@@ -4248,6 +4916,13 @@ window.addEventListener('touchend', ()=>{
 // zoom (trim mode) up to whole-hour spacing for a full match.
 const NICE_TIME_STEPS = [1,2,5,10,15,30,60,120,300,600,900,1800,3600];
 function renderTicksForRange(start, end, targetCount){
+  // Fase LIVE 2: videoEl.duration is deliberately Infinity for the 'live' strategy (see
+  // startLiveMse) — a real, live-streaming-standard MSE value, not a bug on its own. But this
+  // function predates LIVE and was written assuming a finite duration; without this guard,
+  // `for(let t=firstTick; t<=end; ...)` below never terminates when end===Infinity, hanging the
+  // renderer. Found via real testing, not by inspection — see the equivalent guard's absence being
+  // the actual root cause of a full renderer freeze during Fase LIVE 2 development.
+  if(!Number.isFinite(start) || !Number.isFinite(end)) return;
   const span = end - start;
   if(span<=0) return;
   const step = NICE_TIME_STEPS.find(s => s >= span/targetCount) || 3600;
@@ -4271,6 +4946,12 @@ function renderTouchlineTicks(){
     renderTicksForRange(trimWindow.start, trimWindow.end, 6);
     return;
   }
+  // Fase LIVE 2: the old touchline (built for a finite-duration file) doesn't represent a live
+  // buffer window — #liveEdgeBar (see the live-edge UI block) is the dedicated LIVE equivalent.
+  // videoEl.duration is Infinity for 'live' by design (see startLiveMse), so this is also exactly
+  // the case the defensive guard in renderTicksForRange exists for — skipping here too is
+  // about correctness of WHAT gets shown, not just avoiding that hang.
+  if(videoEl.dataset.strategy==='live'){ return; }
   const dur = videoEl.duration || 0;
   if(dur>0){
     // ~9 labels across the full video lands naturally on 5-min steps for a
@@ -4289,6 +4970,10 @@ renderTouchlineTicks();
 function renderTouchlineFlags(){
   touchline.querySelectorAll('.flag').forEach(f=>f.remove());
   if(trimWindow) return; // the range block replaces individual flags while trimming
+  // Fase LIVE 2: marcações LIVE are explicitly out of scope this phase (see task constraints), and
+  // videoEl.duration is Infinity for 'live' by design (see startLiveMse) — would otherwise feed
+  // Infinity into the Math.max/pct math below for no useful result.
+  if(videoEl.dataset.strategy==='live'){ return; }
   const dur = videoEl.duration || Math.max(1, ...state.tags.map(t=>t.time+1), 60);
   state.tags.forEach(tag=>{
     if(tag.mode==='stopwatch') return; // stopwatch tags aren't on the video timeline
@@ -5568,7 +6253,16 @@ let exportSelectedIds = new Set();
 // happened — used to name exported files "Categoria_1", "Categoria_2"... instead of a timestamp,
 // so a folder of exports reads as a numbered sequence per event type.
 function categoryOccurrenceIndex(tag){
-  const cohort = state.tags.filter(t=>t.categoryId===tag.categoryId && t.mode!=='stopwatch').sort((a,b)=>a.time-b.time);
+  // Creation order (tag.createdAt), NOT t.time: state.tags itself is kept sorted by t.time (see the
+  // sort right after push in createTag, there for the timeline/touchline display) — a LIVE marcação
+  // created after rewinding has an EARLIER media-time than one created before it, so t.time reassigns
+  // an already-exported earlier tag's number to the new one, and the two collide on the same export
+  // filename (the later one silently overwrites the earlier tag's already-exported file). createdAt
+  // is a real wall-clock stamp set once at creation and never touched again, so it can't be reshuffled
+  // by a rewind. Tags saved before this field existed fall back to t.time (their only prior ordering
+  // signal — for local video, chronological creation and t.time coincide in practice anyway).
+  const cohort = state.tags.filter(t=>t.categoryId===tag.categoryId && t.mode!=='stopwatch')
+    .sort((a,b)=>(a.createdAt ?? a.time) - (b.createdAt ?? b.time));
   const idx = cohort.findIndex(t=>t.id===tag.id);
   return idx>=0 ? idx+1 : 1;
 }
@@ -6075,6 +6769,33 @@ async function beginExportItem(item){
   const bench = window.__EXPORT_BENCH__ ? {} : null;
   const tItemStart = bench ? performance.now() : 0;
 
+  if(tag.live){
+    // Fase LIVE 3 — a LIVE clip has no local file for the renderer's canvas pipeline to seek/draw
+    // from at all (there never is one — the source is a ring buffer of fMP4 fragments in the main
+    // process, see src/main/liveClip.ts), so this always takes the direct-cut path, unconditionally
+    // (shapes/zoom/freezes on a LIVE tag, not reachable through any exposed UI this phase, would
+    // simply be ignored rather than attempted — see the Fase LIVE 3 report's Limitações).
+    // tag.inSec/outSec are MSE media-time (videoEl.currentTime's own domain, set by createTag) —
+    // converted to wall-clock ms HERE, at export time, via the LiveTimeline anchor (see
+    // wallClockForMediaTime above), which is the one and only place this conversion needs to
+    // happen.
+    const inMs = wallClockForMediaTime(tag.inSec);
+    const outMs = wallClockForMediaTime(tag.outSec);
+    if(inMs==null || outMs==null){
+      item.status = 'error';
+      item.error = 'Não foi possível localizar este corte no buffer LIVE (a sessão pode ter terminado).';
+      renderExportQueuePanel();
+      return null;
+    }
+    return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, true, async () =>
+      window.api.exportLiveClip({
+        inMs, outMs,
+        folderPath: item.options.destFolder, filename: item.filename,
+        resolution: item.options.resolution, quality: item.options.quality, jobId: item.jobId
+      })
+    ) };
+  }
+
   if(isDirectTrimEligible(tag) && electronVideoSourcePath){
     // No shapes/zoom/freezes means there is nothing for the renderer's canvas pipeline to
     // contribute — ffmpeg cuts straight from the source file instead. Real measurement
@@ -6444,6 +7165,20 @@ let tColor = state.drawColors[1];
 let tLineStyle = 'solid'; // 'solid' | 'dashed' | 'dotted' — applies to line/arrow
 let tDragId = null;
 let tacticShapeDragSession = null; // {shape, startX, startY, orig} — dragging a canvas text shape
+// Which single Touch.identifier currently owns whichever single-finger gesture (token drag, rotate,
+// shape drag, drawing) is active — null when none is, or when the active gesture started with the
+// mouse. Needed because a stray SECOND finger landing anywhere on the pitch (very plausible on a
+// tablet/phone held with a supporting thumb near the edge) must never cancel an in-progress
+// single-finger drag: touchmove/touchstart handlers below use this to keep following the ORIGINAL
+// touch by identifier instead of blindly reading touches[0] or bailing out once touches.length>1.
+// Only two-finger touches with no active single-finger gesture already in progress start a pinch.
+let tActiveTouchId = null;
+// {x,y} at the moment a touch-originated token drag started — used only to require a small amount
+// of finger movement before the drag actually begins moving the token (see
+// TACTIC_TOUCH_DRAG_THRESHOLD below), so a simple tap-and-release doesn't nudge it from natural
+// finger-contact jitter. Left null for a mouse-originated drag, which needs no such threshold.
+let tDragTouchStart = null;
+const TACTIC_TOUCH_DRAG_THRESHOLD = 6;
 
 // "Campo Inteiro", "Campo p/ Zonas", "Área" and "Na Profundidade" are independent boards sharing
 // one DOM/canvas — switching mode snapshots the outgoing board's live tokens/shapes into an
@@ -6607,16 +7342,37 @@ function renderTokens(){
       if(tTool!=='move') return;
       e.stopPropagation(); e.preventDefault();
       tRotateId = id;
+      tActiveTouchId = e.changedTouches ? e.changedTouches[0].identifier : null;
     }
     handle.addEventListener('mousedown', startRotate);
     handle.addEventListener('touchstart', startRotate, {passive:false});
     el.appendChild(handle);
-    function startDrag(e){ if(tTool!=='move') return; tDragId=id; e.preventDefault(); }
+    // A dedicated invisible hit-area child (mobile only, see .token-hit-area CSS) makes the
+    // touchable region noticeably bigger than the visual token without changing its rendered size
+    // — a 22px token is fine for a mouse pointer but far too small to reliably tap with a
+    // fingertip, especially in a tightly-packed formation. Bound to touchstart only: on desktop
+    // this element is display:none, so it never intercepts mouse input at all.
+    const hitArea = document.createElement('div');
+    hitArea.className = 'token-hit-area';
+    el.appendChild(hitArea);
+    function startDrag(e){
+      if(tTool!=='move') return;
+      tDragId=id;
+      if(e.changedTouches){
+        const t = e.changedTouches[0];
+        tActiveTouchId = t.identifier;
+        tDragTouchStart = {x:t.clientX, y:t.clientY};
+      } else {
+        tActiveTouchId = null; tDragTouchStart = null;
+      }
+      e.preventDefault();
+    }
     el.addEventListener('mousedown', startDrag);
     // Apple Pencil on iPadOS Safari already dispatches regular touch events for basic drag/tap
     // (pointer events only add pressure/tilt/hover, none of which this needs) — no pencil-specific
     // handling required here or anywhere else in the tactic board.
     el.addEventListener('touchstart', startDrag, {passive:false});
+    hitArea.addEventListener('touchstart', startDrag, {passive:false});
     el.addEventListener('wheel', e=>{
       if(tTool!=='move') return;
       e.preventDefault(); e.stopPropagation();
@@ -6730,7 +7486,22 @@ function updateTacticPointerMove(clientX, clientY){
       const cx = rect.left+rect.width/2, cy = rect.top+rect.height/2;
       const deg = Math.atan2(clientY-cy, clientX-cx) * 180/Math.PI + 90;
       tk.angle = deg;
-      renderTokens();
+      // Updates the EXISTING element's transform in place instead of calling the full
+      // renderTokens() (which removes and recreates every token's DOM node on every single move
+      // update) — a real touch-specific bug, found by real-device testing, not by inspection: per
+      // the Touch Events spec, touchmove/touchend continue targeting the ORIGINAL element a touch
+      // started on. Destroying that exact node mid-gesture (as renderTokens() does, every frame)
+      // left Chromium with no valid element to dispatch the next touchmove/touchend to — it simply
+      // stopped delivering them, silently, with no error — matching precisely "comecei a arrastar
+      // mas o jogador deixa de responder quando o dedo se desloca." Mouse dragging never showed
+      // this because mousemove/mouseup are bound to window, not tied to the original target's DOM
+      // identity — but it was always paying the cost of tearing down and rebuilding 23 elements per
+      // frame regardless. This sets the exact same style values renderTokens() would have (see its
+      // `el.style.transform = translate(-50%,-50%) rotate(...) scale(...)` line) so the rendered
+      // result is identical — verified against the desktop mouse regression test — only the DOM
+      // node identity differs (preserved instead of replaced). A full renderTokens() still runs
+      // once the gesture ends (mouseup/touchend), so nothing else about token rendering changes.
+      el.style.transform = `translate(-50%,-50%) rotate(${deg}deg) scale(${tk.scale||1})`;
     }
     return;
   }
@@ -6739,7 +7510,9 @@ function updateTacticPointerMove(clientX, clientY){
     const x = clamp(((clientX-r.left)/r.width)*100,0,100);
     const y = clamp(((clientY-r.top)/r.height)*100,0,100);
     tokens[tDragId].x=x; tokens[tDragId].y=y;
-    renderTokens();
+    // Same in-place update as the rotate branch above, same reason — see the comment there.
+    const el = tacticPitch.querySelector('.token[data-id="'+tDragId+'"]');
+    if(el){ el.style.left=x+'%'; el.style.top=y+'%'; } else { renderTokens(); }
     return;
   }
   if(tDrawing){
@@ -6753,17 +7526,66 @@ function updateTacticPointerMove(clientX, clientY){
   }
 }
 tacticPitch.addEventListener('mousemove', e=>updateTacticPointerMove(e.clientX, e.clientY));
+// Finds the SPECIFIC touch that started the current single-finger gesture (tActiveTouchId) among
+// whatever touches are currently down, instead of assuming touches[0] is still it or bailing out
+// entirely the moment a second finger appears anywhere on the pitch. That old behavior (reading
+// e.touches.length>1 and returning) is the direct cause of "started dragging a player but it stops
+// responding" — a stray second finger (a supporting thumb resting near the screen edge while
+// dragging with the other hand, very plausible on a tablet/phone) froze the ENTIRE gesture, not
+// just the pinch-zoom it was meant to guard against. Falls back to touches[0] when no gesture has
+// claimed a specific touch yet (e.g. mid zone-tool point placement).
+function findActiveTacticTouch(e){
+  if(tActiveTouchId==null) return e.touches[0] || null;
+  for(let i=0;i<e.touches.length;i++){ if(e.touches[i].identifier===tActiveTouchId) return e.touches[i]; }
+  return null;
+}
 tacticPitch.addEventListener('touchmove', e=>{
-  // Two fingers on the pitch means pinch-zoom/pan (see below) — a single-finger drag/draw handler
-  // reading touches[0] mid-pinch would fight the gesture, moving whatever token/shape happens to
-  // be under the first finger while the user is actually just trying to zoom.
-  if(e.touches.length > 1) return;
+  const t = findActiveTacticTouch(e);
+  if(!t) return; // the tracked touch already lifted, or nothing claimed one yet — let the pinch handler own multi-touch instead
   if(tRotateId || tDragId || tDrawing || tZonePts.length) e.preventDefault();
-  const p = clientXY(e);
-  updateTacticPointerMove(p.x, p.y);
+  if(tDragId && tDragTouchStart){
+    // Tap-vs-drag tolerance (touch only, see TACTIC_TOUCH_DRAG_THRESHOLD): don't actually move the
+    // token until the finger has traveled past a small threshold, so ordinary contact jitter on a
+    // simple tap never nudges it. Once past the threshold every subsequent move is unthrottled —
+    // updateTacticPointerMove sets an ABSOLUTE position from clientX/Y each call (never a delta),
+    // so there is no snap/jump the first time it fires.
+    const moved = Math.hypot(t.clientX-tDragTouchStart.x, t.clientY-tDragTouchStart.y);
+    if(moved < TACTIC_TOUCH_DRAG_THRESHOLD) return;
+  }
+  updateTacticPointerMove(t.clientX, t.clientY);
 }, {passive:false});
-window.addEventListener('mouseup', ()=>{ tDragId=null; tRotateId=null; });
-window.addEventListener('touchend', ()=>{ tDragId=null; tRotateId=null; });
+// Returns the ended/cancelled touch matching tActiveTouchId among e.changedTouches, undefined if
+// no gesture is tracked at all (mouse-driven, or nothing active — always safe to treat as "ended"),
+// or null if the touch that just ended is some OTHER, untracked finger (e.g. that same stray
+// second finger lifting) — which must NOT be allowed to interrupt a gesture still legitimately in
+// progress via its own touch.
+function findTrackedChangedTouch(e){
+  if(tActiveTouchId==null) return undefined;
+  for(let i=0;i<e.changedTouches.length;i++){
+    if(e.changedTouches[i].identifier===tActiveTouchId) return e.changedTouches[i];
+  }
+  return null;
+}
+function tacticTouchGestureEnded(e){
+  const t = findTrackedChangedTouch(e);
+  if(t===null) return false;
+  tActiveTouchId=null; tDragTouchStart=null;
+  return true;
+}
+// A full renderTokens() once the gesture ends is safe here (unlike during the move itself, see
+// updateTacticPointerMove above) — the touch has finished, so replacing the DOM node no longer
+// risks losing further touchmove/touchend delivery for it.
+function endTacticDragOrRotate(){
+  const hadDragOrRotate = tDragId || tRotateId;
+  tDragId=null; tRotateId=null;
+  if(hadDragOrRotate) renderTokens();
+}
+window.addEventListener('mouseup', endTacticDragOrRotate);
+window.addEventListener('touchend', e=>{ if(tacticTouchGestureEnded(e)) endTacticDragOrRotate(); });
+// touchcancel (the OS interrupting a touch mid-gesture — an incoming call, a system gesture) never
+// had ANY handling before, on top of mouse never needing it: nothing cleared tDragId/tRotateId, so
+// a cancelled drag could leave a token looking stuck to the last position update it ever received.
+window.addEventListener('touchcancel', e=>{ if(tacticTouchGestureEnded(e)) endTacticDragOrRotate(); });
 
 function updateTacticShapeDrag(clientX, clientY){
   if(!tacticShapeDragSession) return;
@@ -6776,12 +7598,14 @@ function updateTacticShapeDrag(clientX, clientY){
 window.addEventListener('mousemove', e=>updateTacticShapeDrag(e.clientX, e.clientY));
 window.addEventListener('touchmove', e=>{
   if(!tacticShapeDragSession) return;
+  const t = findActiveTacticTouch(e);
+  if(!t) return;
   e.preventDefault();
-  const p = clientXY(e);
-  updateTacticShapeDrag(p.x, p.y);
+  updateTacticShapeDrag(t.clientX, t.clientY);
 }, {passive:false});
 window.addEventListener('mouseup', ()=>{ tacticShapeDragSession = null; });
-window.addEventListener('touchend', ()=>{ tacticShapeDragSession = null; });
+window.addEventListener('touchend', e=>{ if(tacticTouchGestureEnded(e)) tacticShapeDragSession = null; });
+window.addEventListener('touchcancel', e=>{ if(tacticTouchGestureEnded(e)) tacticShapeDragSession = null; });
 
 function setTacticTool(tool){
   const b = document.querySelector(`[data-ttool="${tool}"]`);
@@ -6824,6 +7648,11 @@ function startTacticCanvasInteraction(e){
   // already applied to the video tab's drawCanvas). Touch/pen events have no .button at all — only
   // a real mouse click can be a non-primary button, so this only ever filters mouse input.
   if(e.type==='mousedown' && e.button!==0) return;
+  // Captured once, assigned only inside whichever branch below actually starts a persistent
+  // gesture — NOT unconditionally here, since e.g. the 'move' tool tapping empty canvas (no shape
+  // hit) or the zone tool (independent taps, no continuous drag) must leave tActiveTouchId alone
+  // so a genuinely idle pitch still lets a two-finger touch start a pinch.
+  const touchId = e.changedTouches ? e.changedTouches[0].identifier : null;
   if(tTool==='move'){
     // Tokens (players/objects/images) are DOM elements and already drag via their own mousedown/
     // touchstart handlers — this is the equivalent for canvas-drawn text shapes, which have no
@@ -6835,12 +7664,13 @@ function startTacticCanvasInteraction(e){
       if(tacticShapes[i].type==='text' && shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){
         e.preventDefault();
         tacticShapeDragSession = {shape:tacticShapes[i], startX:clientPt.x, startY:clientPt.y, orig:cloneShapeGeometry(tacticShapes[i])};
+        tActiveTouchId = touchId;
         break;
       }
     }
     return;
   }
-  if(tTool==='eraser'){ e.preventDefault(); tErasing=true; if(eraseTacticShapeAt(e)) redrawTactic(); return; }
+  if(tTool==='eraser'){ e.preventDefault(); tErasing=true; tActiveTouchId = touchId; if(eraseTacticShapeAt(e)) redrawTactic(); return; }
   const p = tRelPt(e);
   if(tTool==='zone'){ e.preventDefault(); tZonePts.push(p); return; }
   if(tTool==='text'){
@@ -6854,13 +7684,18 @@ function startTacticCanvasInteraction(e){
     return;
   }
   e.preventDefault();
-  tDrawing=true; tStart=p;
+  tDrawing=true; tStart=p; tActiveTouchId = touchId;
 }
 tacticCanvas.addEventListener('mousedown', startTacticCanvasInteraction);
 tacticCanvas.addEventListener('touchstart', e=>{
-  // A second finger landing on the canvas mid-gesture means pinch-zoom, not "start a new shape
-  // with whichever finger touched first" — bail out entirely so the pinch handler (below) owns it.
-  if(e.touches.length > 1){ tDrawing=false; tZonePts=[]; tErasing=false; return; }
+  // A second finger landing on the canvas while NOTHING is already in progress means pinch-zoom —
+  // let the pitch-level pinch handler (below) own it. But if a single-finger gesture is already
+  // active (tActiveTouchId set), an incidental extra finger touching the canvas must NOT cancel
+  // it — this used to unconditionally reset tDrawing/tZonePts/tErasing the instant any second
+  // touch appeared anywhere on the canvas, which is the same "drag stops responding" bug fixed
+  // pitch-wide below, just for the drawing tools specifically.
+  if(e.touches.length > 1 && tActiveTouchId==null){ tDrawing=false; tZonePts=[]; tErasing=false; return; }
+  if(e.touches.length > 1) return; // extra finger while a gesture is active — ignore it, keep tracking the original touch
   startTacticCanvasInteraction(e);
 }, {passive:false});
 // Double-click opens the shared rich editor panel (see the video-tab section above for the
@@ -6925,10 +7760,21 @@ tacticCanvas.addEventListener('dblclick', e=>{
   }
 });
 function finishTacticDrawing(e){
-  if(tErasing){ tErasing=false; return; }
+  if(tErasing){ if(e.type!=='touchend' || tacticTouchGestureEnded(e)) tErasing=false; return; }
   if(!tDrawing) return;
+  let p;
+  if(e.type==='touchend'){
+    // Use the SPECIFIC tracked touch's final position, not just changedTouches[0] — if an
+    // unrelated finger happens to lift in the same event, changedTouches[0] could be that other
+    // touch instead of the one actually drawing, silently placing the shape at the wrong spot.
+    const t = findTrackedChangedTouch(e);
+    if(t===null) return; // the touch that ended isn't the one drawing — an unrelated finger lifted, drawing continues
+    tacticTouchGestureEnded(e);
+    p = t ? tRelPtXY(t.clientX, t.clientY) : tRelPt(e);
+  } else {
+    p = tRelPt(e);
+  }
   tDrawing=false;
-  const p = tRelPt(e);
   const dx=p.x-tStart.x, dy=p.y-tStart.y;
   if(Math.hypot(dx,dy)>0.005){
     tacticShapes.push({type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
@@ -6937,6 +7783,19 @@ function finishTacticDrawing(e){
 }
 window.addEventListener('mouseup', finishTacticDrawing);
 window.addEventListener('touchend', finishTacticDrawing);
+// touchcancel: discard rather than commit — the OS interrupted the gesture mid-flight (an incoming
+// call, a system gesture), so pushing a shape from whatever partial position it last saw would
+// save something the user never actually finished drawing. Mirrors finishTacticDrawing's touch-
+// identifier guard so an unrelated finger cancelling doesn't discard a drawing still in progress.
+window.addEventListener('touchcancel', e=>{
+  if(tErasing){ if(tacticTouchGestureEnded(e)) tErasing=false; return; }
+  if(!tDrawing) return;
+  const t = findTrackedChangedTouch(e);
+  if(t===null) return;
+  tacticTouchGestureEnded(e);
+  tDrawing=false;
+  redrawTactic(); // clears the in-progress preview line left by updateTacticPointerMove
+});
 
 /* ---------- Pitch pinch-zoom/pan (touch only — desktop has no two-finger gesture, nothing to
    isolate here beyond "these listeners are touch events, which simply never fire without touch
@@ -6952,9 +7811,13 @@ function touchPairDist(t0, t1){ return Math.hypot(t1.clientX-t0.clientX, t1.clie
 function touchPairMid(t0, t1){ return { x:(t0.clientX+t1.clientX)/2, y:(t0.clientY+t1.clientY)/2 }; }
 tacticPitch.addEventListener('touchstart', e=>{
   if(e.touches.length !== 2) return;
-  // A second finger landing means "start pinching," not "keep dragging/drawing with the first
-  // finger" — cancel whatever single-finger gesture might already be mid-flight.
-  tDragId=null; tRotateId=null; tDrawing=false; tZonePts=[]; tErasing=false; tacticShapeDragSession=null;
+  // A second finger landing while NOTHING is already in progress means "start pinching." But if a
+  // single-finger gesture is already active (tActiveTouchId set — a token drag/rotate, a shape
+  // drag, drawing), an incidental extra finger (a supporting thumb resting near the screen edge,
+  // very plausible on a tablet/phone held one-handed) must be ignored instead of hijacking into a
+  // pinch and cancelling the drag that was already in progress — this unconditional cancel used to
+  // be the direct cause of "started dragging a player but it stopped responding."
+  if(tActiveTouchId!=null) return;
   tacticPinch = {
     startDist: touchPairDist(e.touches[0], e.touches[1]),
     startScale: tacticZoom.scale,
