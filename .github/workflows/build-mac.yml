@@ -146,6 +146,8 @@ jobs:
 
           run_with_timeout () {
             # $1 = segundos, $2 = descrição para o log, resto = comando
+            # Deixa o exit code em LAST_EXIT_CODE (variável global, sem "local") para quem chamou
+            # poder ramificar a lógica a seguir — usado pelos veredictos A2/bisseção mais abaixo.
             local secs="$1"; local desc="$2"; shift 2
             echo "----- $desc -----"
             echo "comando: $*"
@@ -160,6 +162,7 @@ jobs:
             echo "stdout:"; cat /tmp/_out.log
             echo "stderr:"; cat /tmp/_err.log
             echo ""
+            LAST_EXIT_CODE="$code"
           }
 
           {
@@ -170,12 +173,60 @@ jobs:
               env ELECTRON_RUN_AS_NODE=1 "$EXEC_PATH" -e "console.log(process.versions)"
 
             echo "===================================================="
-            echo "CONTROLO A2 — Electron 43.4.0 virgem (sem código desta app), mesmo runner"
+            echo "CONTROLO A2 — Electron 43.4.0 virgem, app hello-world mínima (mesmo runner, mesmas flags)"
             echo "===================================================="
-            run_with_timeout 20 "npx electron@43.4.0 --version" \
-              npx --yes electron@43.4.0 --version
-            run_with_timeout 15 "npx electron@43.4.0 sem argumentos (app por omissão, bootstrap completo)" \
-              npx --yes electron@43.4.0 --no-sandbox --disable-gpu
+            # App real com app.whenReady()+BrowserWindow, não "electron --version" nem "electron
+            # sem argumentos" (só mostra o ecrã de ajuda, nunca chega a criar BrowserWindow nem a
+            # inicializar o processo de renderer — pouco informativo, foi o que a ronda anterior
+            # tinha). app.quit() 1s depois de confirmar a janela dá um exit 0 limpo no caso de
+            # sucesso, para distinguir de forma inequívoca de um crash (133) sem ambiguidade com o
+            # nosso próprio watchdog (que mataria com 137 se a app ficasse aberta indefinidamente).
+            # printf em vez de heredoc: um heredoc com terminador na coluna 0 quebraria o parsing
+            # YAML deste bloco literal (run: |), que exige todo o conteúdo indentado ao nível da
+            # primeira linha do bloco.
+            HELLO_DIR="$RUNNER_TEMP/hello-electron"
+            mkdir -p "$HELLO_DIR"
+            printf '%s\n' '{ "name": "hello-electron", "version": "1.0.0", "private": true, "main": "main.js" }' > "$HELLO_DIR/package.json"
+            printf '%s\n' \
+              "const { app, BrowserWindow } = require('electron')" \
+              "app.whenReady().then(() => {" \
+              "  new BrowserWindow({ width: 400, height: 300, show: false })" \
+              "  console.log('CONTROLO_A2_HELLO: BrowserWindow created OK')" \
+              "  setTimeout(() => app.quit(), 1000)" \
+              "})" \
+              > "$HELLO_DIR/main.js"
+            echo "----- a instalar electron@43.4.0 virgem em $HELLO_DIR -----"
+            ( cd "$HELLO_DIR" && npm install --no-save --no-audit --no-fund electron@43.4.0 ) > /tmp/hello-install.log 2>&1
+            echo "npm install exit: $?"
+            tail -20 /tmp/hello-install.log
+            HELLO_ELECTRON_BIN="$HELLO_DIR/node_modules/.bin/electron"
+            HELLO_ELECTRON_REAL_BIN=""
+            if [ -x "$HELLO_ELECTRON_BIN" ]; then
+              # node_modules/.bin/electron é o shim JS (cli.js) que resolve e invoca o binário
+              # nativo — require('electron') a partir do mesmo diretório devolve o caminho real,
+              # que é o que o lldb precisa mais abaixo (não consegue depurar um script JS).
+              HELLO_ELECTRON_REAL_BIN=$(cd "$HELLO_DIR" && node -e "console.log(require('electron'))" 2>/dev/null)
+            fi
+            echo "HELLO_ELECTRON_BIN=$HELLO_ELECTRON_BIN"
+            echo "HELLO_ELECTRON_REAL_BIN=$HELLO_ELECTRON_REAL_BIN"
+
+            A2_HELLO_EXIT="sem-instalacao"
+            if [ -x "$HELLO_ELECTRON_BIN" ]; then
+              run_with_timeout 25 "Electron 43.4.0 virgem + hello-world BrowserWindow (--no-sandbox --disable-gpu)" \
+                env ELECTRON_ENABLE_LOGGING=1 "$HELLO_ELECTRON_BIN" "$HELLO_DIR" --no-sandbox --disable-gpu
+              A2_HELLO_EXIT="$LAST_EXIT_CODE"
+            fi
+
+            if [ "$A2_HELLO_EXIT" = "133" ]; then
+              A2_VERDICT="ELECTRON_OU_AMBIENTE"
+            elif [ "$A2_HELLO_EXIT" = "0" ]; then
+              A2_VERDICT="APP_ESPECIFICO"
+            else
+              A2_VERDICT="INCONCLUSIVO (exit=$A2_HELLO_EXIT)"
+            fi
+            echo ""
+            echo ">>> CONTROLO A2 VEREDICTO: hello-world exit=$A2_HELLO_EXIT -> $A2_VERDICT <<<"
+            echo ""
 
             echo "===================================================="
             echo "CONTROLO A3 — a nossa app com flags que costumam ajudar Chromium sem sessão gráfica"
@@ -210,6 +261,85 @@ jobs:
             run_with_timeout 40 "lldb com ELECTRON_RUN_AS_NODE=1" \
               lldb -b -k "bt all" -k "image list" -k "quit" -o "settings set target.run-args -e console.log(1)" -o "run" -- "$EXEC_PATH"
             unset ELECTRON_RUN_AS_NODE
+
+            echo "===================================================="
+            echo "CONTROLO B (extensão) — lldb sobre o hello-world, só se A2 confirmou que o Electron virgem também crasha"
+            echo "===================================================="
+            if [ "$A2_VERDICT" = "ELECTRON_OU_AMBIENTE" ] && [ -n "$HELLO_ELECTRON_REAL_BIN" ]; then
+              echo "----- lldb no hello-world (Electron virgem, mesmas flags do A2) -----"
+              run_with_timeout 40 "lldb no hello-world" \
+                lldb -b -k "bt all" -k "image list" -k "quit" -o "settings set target.run-args $HELLO_DIR --no-sandbox --disable-gpu" -o "run" -- "$HELLO_ELECTRON_REAL_BIN"
+            else
+              echo "(A2 não confirmou crash no Electron virgem — veredito=$A2_VERDICT — a saltar. Comparar com o backtrace da app real acima.)"
+            fi
+
+            echo "===================================================="
+            echo "BISSEÇÃO — substituir out/main/index.js por stub mínimo e reconstruir com electron-builder, só se A2 mostrou que só a nossa app rebenta"
+            echo "===================================================="
+            # Reconstrução completa via electron-builder (não cirurgia manual no app.asar já
+            # assinado) de propósito: o Info.plist tem ElectronAsarIntegrity (hash do app.asar
+            # embebido no build), e a app já está assinada ad-hoc — trocar o conteúdo do asar
+            # in-place invalidaria esse hash e a assinatura, arriscando um "crash" que na verdade
+            # seria só a verificação de integridade a recusar carregar, contaminando o resultado.
+            # Voltar a chamar o electron-builder recalcula tudo isso corretamente a partir do
+            # out/main/index.js já trocado em disco, mantendo o resto do bundle (node_modules,
+            # resources/, package.json) exatamente igual. Restrito a workflow_dispatch como
+            # salvaguarda extra — nunca correr isto num push de tag, para não publicar por engano
+            # um build de teste com main.js mínimo como release real.
+            if [ "$A2_VERDICT" = "APP_ESPECIFICO" ] && [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              cp out/main/index.js "$RUNNER_TEMP/index.js.orig.bak"
+              printf '%s\n' \
+                "const { app, BrowserWindow } = require('electron')" \
+                "app.whenReady().then(() => {" \
+                "  new BrowserWindow({ width: 400, height: 300, show: false })" \
+                "  console.log('BISSECAO_MAIN_MINIMO: BrowserWindow created OK')" \
+                "  setTimeout(() => app.quit(), 1000)" \
+                "})" \
+                > out/main/index.js
+              echo "----- a reconstruir com electron-builder (out/main/index.js mínimo, resto do bundle igual) -----"
+              npx electron-builder --mac --publish never > /tmp/bisect-build.log 2>&1
+              echo "electron-builder (bisseção) exit: $?"
+              tail -40 /tmp/bisect-build.log
+              cp "$RUNNER_TEMP/index.js.orig.bak" out/main/index.js
+
+              BISECT_APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
+              BISECT_EXEC_PATH=$(find "$BISECT_APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
+              echo "BISECT_APP_PATH=$BISECT_APP_PATH"
+              echo "BISECT_EXEC_PATH=$BISECT_EXEC_PATH"
+
+              BISECT_EXIT="sem-build"
+              if [ -n "$BISECT_EXEC_PATH" ]; then
+                run_with_timeout 20 "app bissetada (main.js mínimo, resto do bundle reconstruído igual)" \
+                  env ELECTRON_ENABLE_LOGGING=1 "$BISECT_EXEC_PATH" --no-sandbox --disable-gpu
+                BISECT_EXIT="$LAST_EXIT_CODE"
+              fi
+
+              if [ "$BISECT_EXIT" = "133" ]; then
+                echo ""
+                echo ">>> BISSEÇÃO VEREDICTO: exit=$BISECT_EXIT -> ainda rebenta com main.js mínimo. O problema está no empacotamento/recursos do bundle, não no código de arranque original. <<<"
+                echo ""
+              elif [ "$BISECT_EXIT" = "0" ]; then
+                echo ""
+                echo ">>> BISSEÇÃO VEREDICTO: exit=$BISECT_EXIT -> já não rebenta com main.js mínimo. O problema está no código de arranque original (main.js/ipc/db), não no empacotamento. <<<"
+                echo ""
+              else
+                echo ""
+                echo ">>> BISSEÇÃO VEREDICTO: inconclusivo, exit=$BISECT_EXIT. <<<"
+                echo ""
+              fi
+            else
+              echo "(A2 não isolou 'só a nossa app rebenta' (veredito=$A2_VERDICT), ou este run não é workflow_dispatch — a saltar bisseção.)"
+            fi
+
+            echo "===================================================="
+            echo "RESUMO DESTA RONDA"
+            echo "===================================================="
+            echo "CONTROLO A1 (bootstrap Node isolado): ver secção acima — confirmado são em rondas anteriores."
+            echo "CONTROLO A2 (Electron virgem + hello-world): exit=$A2_HELLO_EXIT -> $A2_VERDICT"
+            echo "CONTROLO B (lldb): ver backtraces acima."
+            if [ -n "$BISECT_EXIT" ]; then
+              echo "BISSEÇÃO (main.js mínimo, mesmo bundle): exit=$BISECT_EXIT"
+            fi
           } | tee controls-full-report.txt
 
           {
