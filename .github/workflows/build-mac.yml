@@ -130,6 +130,87 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           exit 0
+      # Controlos A/B pedidos depois do smoke test confirmar SIGTRAP (133): antes de mergulhar
+      # mais fundo no bug em si, isolar se o crash é (A) o mesmo bug reportado no Mac real ou um
+      # artefacto deste runner ser headless (sem WindowServer), e (B) obter um backtrace nativo
+      # real via lldb (pré-instalado nas Command Line Tools) em vez de depender de um .ips que
+      # este ambiente não está a gerar. Controlo C (downgrade do Electron para 43.2.0) fica de
+      # fora desta ronda — só faz sentido se A1 confirmar que o bootstrap do Node é onde rebenta.
+      - name: Controlos A/B — isolar bootstrap Node vs Chromium vs ambiente, e backtrace lldb
+        run: |
+          set +e
+          APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
+          EXEC_PATH=$(find "$APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
+          echo "APP_PATH=$APP_PATH"
+          echo "EXEC_PATH=$EXEC_PATH"
+
+          run_with_timeout () {
+            # $1 = segundos, $2 = descrição para o log, resto = comando
+            local secs="$1"; local desc="$2"; shift 2
+            echo "----- $desc -----"
+            echo "comando: $*"
+            "$@" > /tmp/_out.log 2> /tmp/_err.log &
+            local pid=$!
+            ( sleep "$secs" && kill -9 "$pid" 2>/dev/null ) &
+            local watchdog=$!
+            wait "$pid"
+            local code=$?
+            kill "$watchdog" 2>/dev/null
+            echo "exit code: $code"
+            echo "stdout:"; cat /tmp/_out.log
+            echo "stderr:"; cat /tmp/_err.log
+            echo ""
+          }
+
+          {
+            echo "===================================================="
+            echo "CONTROLO A1 — só o bootstrap do Node do próprio Electron, sem Chromium/GUI"
+            echo "===================================================="
+            run_with_timeout 15 "ELECTRON_RUN_AS_NODE=1, imprime process.versions" \
+              env ELECTRON_RUN_AS_NODE=1 "$EXEC_PATH" -e "console.log(process.versions)"
+
+            echo "===================================================="
+            echo "CONTROLO A2 — Electron 43.4.0 virgem (sem código desta app), mesmo runner"
+            echo "===================================================="
+            run_with_timeout 20 "npx electron@43.4.0 --version" \
+              npx --yes electron@43.4.0 --version
+            run_with_timeout 15 "npx electron@43.4.0 sem argumentos (app por omissão, bootstrap completo)" \
+              npx --yes electron@43.4.0 --no-sandbox --disable-gpu
+
+            echo "===================================================="
+            echo "CONTROLO A3 — a nossa app com flags que costumam ajudar Chromium sem sessão gráfica"
+            echo "===================================================="
+            run_with_timeout 15 "--no-sandbox" \
+              env ELECTRON_ENABLE_LOGGING=1 "$EXEC_PATH" --no-sandbox
+            run_with_timeout 15 "--disable-gpu" \
+              env ELECTRON_ENABLE_LOGGING=1 "$EXEC_PATH" --disable-gpu
+            run_with_timeout 15 "--no-sandbox --disable-gpu --disable-software-rasterizer" \
+              env ELECTRON_ENABLE_LOGGING=1 "$EXEC_PATH" --no-sandbox --disable-gpu --disable-software-rasterizer
+
+            echo "===================================================="
+            echo "CONTROLO B — backtrace nativo via lldb"
+            echo "===================================================="
+            echo "----- lldb na app real -----"
+            lldb -b -o "run" -o "bt all" -o "image list" -o "quit" -- "$EXEC_PATH" 2>&1
+
+            echo ""
+            echo "----- lldb com ELECTRON_RUN_AS_NODE=1 (isola o stack sem ruído do Chromium, só se A1 tiver rebentado) -----"
+            # ELECTRON_RUN_AS_NODE=1 exportado para o próprio shell que invoca o lldb — o processo
+            # lançado pelo lldb herda o ambiente do processo que o lançou, tal como um exec normal.
+            export ELECTRON_RUN_AS_NODE=1
+            lldb -b -o "settings set target.run-args -e console.log(1)" -o "run" -o "bt all" -o "image list" -o "quit" -- "$EXEC_PATH" 2>&1
+            unset ELECTRON_RUN_AS_NODE
+          } | tee controls-full-report.txt
+
+          {
+            echo ""
+            echo "## Controlos A/B — ${{ github.ref_name }} (${{ github.sha }})"
+            echo '```'
+            cat controls-full-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit 0
       # Visibilidade c) — o relatório fica também commitado num branch órfão dedicado
       # (ci-diagnostics), legível sem qualquer autenticação via
       # raw.githubusercontent.com/<owner>/<repo>/ci-diagnostics/<sha>.md — não depende da API do
@@ -154,8 +235,13 @@ jobs:
             git checkout -q --orphan ci-diagnostics
             git rm -rf . -q 2>/dev/null
           fi
-          cp "$GITHUB_WORKSPACE/smoke-full-report.txt" "./${{ github.sha }}.md" 2>/dev/null \
-            || echo "(sem smoke-full-report.txt — smoke test não produziu relatório)" > "./${{ github.sha }}.md"
+          {
+            echo "# Smoke test"
+            cat "$GITHUB_WORKSPACE/smoke-full-report.txt" 2>/dev/null || echo "(sem smoke-full-report.txt)"
+            echo ""
+            echo "# Controlos A/B"
+            cat "$GITHUB_WORKSPACE/controls-full-report.txt" 2>/dev/null || echo "(sem controls-full-report.txt)"
+          } > "./${{ github.sha }}.md"
           git add "${{ github.sha }}.md"
           git commit -q -m "Diagnóstico smoke test macOS — ${{ github.ref_name }} (${{ github.sha }})"
           git push -q origin ci-diagnostics
