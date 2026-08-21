@@ -1199,6 +1199,130 @@
     body.mobile-touch-ui .brand .mark{ width:16px; height:16px; }
   }
 
+  /* ===================================================================
+     TABLET LAYOUT — body.mobile-touch-ui.tablet-ui only (iPad/Android
+     tablet, see PLATFORM DETECTION in the script below). Every selector
+     here repeats the FULL body.mobile-touch-ui... chain with .tablet-ui
+     appended, which is strictly more specific than the equivalent plain
+     body.mobile-touch-ui rule above/below (one more class, same rest of
+     the selector) — that's deliberate: it lets these rules reliably win
+     over the generic phone rules and the older width-only ≥640px/≥820px
+     breakpoints regardless of source order or exact media-query overlap,
+     without !important and without touching a single existing phone
+     rule. Root problem this section fixes: those older breakpoints key
+     off viewport WIDTH only (plus a min-height FLOOR for the 820px one),
+     so on a wide tablet they fired in BOTH orientations — a portrait
+     iPad Air/Pro (834-1024px wide) got the landscape-style side-column
+     categories AND the static clip panel at the same time, squeezing
+     the video from three sides in portrait. Tablet now gets its own
+     explicit landscape/portrait split instead of inheriting a rule that
+     was really tuned for "phone landscape vs. everything else".
+     =================================================================== */
+
+  /* Portrait tablet: video dominant, single column, categories as a
+     compact recolhível bottom panel, clips back to an off-canvas drawer
+     — the ≥640px/≥820px width-only rules above would otherwise treat a
+     portrait tablet as "landscape-wide" and open both side columns at
+     once. Declared before the landscape block so a device that's
+     ambiguous for one frame during a rotation never matches neither. */
+  @media (orientation:portrait){
+    body.mobile-touch-ui.tablet-ui .video-body{ flex-direction:column; }
+    body.mobile-touch-ui.tablet-ui #videoWrap{ flex-direction:column; }
+    body.mobile-touch-ui.tablet-ui #mobileCatBar{
+      flex-direction:row; flex-wrap:nowrap;
+      flex:0 0 clamp(64px, 10vh, 100px);
+      overflow-x:auto; overflow-y:hidden;
+      padding:8px calc(8px + var(--safe-right)) calc(8px + var(--safe-bottom)) calc(8px + var(--safe-left));
+      border-top:1px solid var(--line); border-left:none;
+    }
+    body.mobile-touch-ui.tablet-ui #mobileCatBar .cat-btn{ width:auto; min-width:112px; }
+    body.mobile-touch-ui.tablet-ui #videoWrap.cats-collapsed #mobileCatBar{
+      flex-basis:0; padding-top:0; padding-bottom:0; border-top:none; overflow:hidden;
+    }
+    /* Restores the base off-canvas drawer for .clip-sidebar — same values as the un-scoped
+       drawer rule earlier in this file, restated here because the ≥820px breakpoint (a plain
+       body.mobile-touch-ui selector, lower specificity than this) would otherwise still win on
+       a wide portrait tablet and keep it as a static in-flow column. */
+    body.mobile-touch-ui.tablet-ui .clip-sidebar{
+      position:fixed; top:0; bottom:0; left:0; width:86vw; max-width:340px; z-index:200; max-height:none;
+      flex:none; transform:translateX(-105%); transition:transform .28s cubic-bezier(.2,.8,.3,1);
+      box-shadow:0 0 40px rgba(0,0,0,.5); border-right:1px solid var(--line); border-bottom:none;
+      padding-top:var(--safe-top); padding-bottom:var(--safe-bottom); overflow:hidden;
+    }
+    body.mobile-touch-ui.tablet-ui .clip-sidebar.drawer-open{ transform:translateX(0); }
+    body.mobile-touch-ui.tablet-ui #btnOpenClipDrawer{ display:flex; }
+    body.mobile-touch-ui.tablet-ui .panel-collapse-btn#btnToggleClipPanel{ display:none; }
+    /* Same restoration for the Tactic Board's side panel — drawer in portrait, never a static
+       column (the tablet-landscape block further below is the only place it becomes one). */
+    body.mobile-touch-ui.tablet-ui .tactic-side{
+      position:fixed; top:0; bottom:0; right:0; width:86vw; max-width:340px; z-index:200; max-height:none;
+      flex:none; transform:translateX(105%); transition:transform .28s cubic-bezier(.2,.8,.3,1);
+      box-shadow:0 0 40px rgba(0,0,0,.5); border-left:1px solid var(--line); border-top:none;
+      padding-top:var(--safe-top); padding-bottom:var(--safe-bottom); overflow-y:auto;
+    }
+    body.mobile-touch-ui.tablet-ui .tactic-side.drawer-open{ transform:translateX(0); }
+    body.mobile-touch-ui.tablet-ui #btnOpenTacticDrawer{ display:flex; }
+    body.mobile-touch-ui.tablet-ui .panel-collapse-btn#btnToggleTacticPanel{ display:none; }
+  }
+
+  /* Landscape tablet: the three-column layout — CLIPS | VÍDEO | CATEGORIAS — with the video as
+     flex:1 (dominant, gets whatever the other two don't need) and both side columns capped by
+     clamp() so neither can grow past a small share of the width. Both columns collapsible to
+     truly ~0 via the existing real-flex-sibling toggle pattern (#btnToggleClipPanel/
+     #btnToggleCatPanel, now also #btnToggleTacticPanel for the Tactic tab) — never an overlay,
+     so collapsing one always hands its space straight back to the video/pitch. */
+  @media (orientation:landscape){
+    body.mobile-touch-ui.tablet-ui .video-body{ flex-direction:row; }
+    body.mobile-touch-ui.tablet-ui .clip-sidebar{
+      position:static; transform:none; width:auto; max-width:none; max-height:none;
+      flex:0 0 clamp(160px, 18vw, 220px);
+      box-shadow:none; border-right:1px solid var(--line); border-bottom:none;
+      padding-top:0; padding-bottom:0;
+      transition:flex-basis .22s ease;
+    }
+    body.mobile-touch-ui.tablet-ui #btnOpenClipDrawer{ display:none; }
+    body.mobile-touch-ui.tablet-ui .panel-collapse-btn#btnToggleClipPanel{ display:flex; }
+    body.mobile-touch-ui.tablet-ui .video-body.clips-collapsed .clip-sidebar{
+      flex-basis:0; border-right:none; overflow:hidden;
+    }
+
+    body.mobile-touch-ui.tablet-ui #videoWrap{ flex-direction:row; }
+    body.mobile-touch-ui.tablet-ui #mobileCatBar{
+      flex-direction:column; flex-wrap:nowrap;
+      flex:0 0 clamp(112px, 13vw, 152px);
+      overflow-x:hidden; overflow-y:auto;
+      padding:8px calc(8px + var(--safe-right)) calc(8px + var(--safe-bottom)) 8px;
+      border-top:none; border-left:1px solid var(--line);
+    }
+    /* Compact, single-line-first buttons (section 3 of the spec): tighter padding/font than the
+       phone's own row-column rule, still never below --touch-target for the tap height itself. */
+    body.mobile-touch-ui.tablet-ui #mobileCatBar .cat-btn{
+      width:100%; min-width:0; min-height:var(--touch-target); padding:7px 9px; font-size:12.5px;
+    }
+    body.mobile-touch-ui.tablet-ui #videoWrap.cats-collapsed #mobileCatBar{
+      flex-basis:0; padding-left:0; padding-right:0; border-left:none;
+    }
+
+    /* Tactic Board: pitch dominant (.tactic-main is already flex:1 for all mobile-touch-ui, see
+       above — untouched), .tactic-side becomes a real column instead of a drawer. */
+    body.mobile-touch-ui.tablet-ui .tactic-side{
+      position:static; transform:none; width:auto; max-width:none; max-height:none;
+      flex:0 0 clamp(200px, 22vw, 280px);
+      box-shadow:none; border-left:1px solid var(--line); border-top:none;
+      padding-top:14px; padding-bottom:14px;
+      transition:flex-basis .22s ease;
+    }
+    body.mobile-touch-ui.tablet-ui #btnOpenTacticDrawer{ display:none; }
+    body.mobile-touch-ui.tablet-ui .panel-collapse-btn#btnToggleTacticPanel{ display:flex; }
+    body.mobile-touch-ui.tablet-ui #tab-tactic.tactic-collapsed .tactic-side{
+      flex-basis:0; border-left:none; overflow:hidden; padding-left:0; padding-right:0;
+    }
+  }
+
+  /* Base state for the new toggle (mirrors #btnToggleClipPanel's own base-hidden rule) — only the
+     tablet-landscape block above turns it on; every other platform/orientation never sees it. */
+  body.mobile-touch-ui .panel-collapse-btn#btnToggleTacticPanel{ display:none; }
+
   /* ---------- Project picker ---------- */
   #projectPicker{
     display:none; height:100vh; overflow-y:auto; align-items:flex-start; justify-content:center;
@@ -1703,6 +1827,11 @@
         <button class="scene-add" id="btnAddScene" title="Salvar cena atual">+</button>
       </div>
     </div>
+    <!-- Fase Tablet only (see TABLET LAYOUT CSS): mirrors #btnToggleClipPanel exactly — on
+         tablet landscape .tactic-side becomes a real in-flow panel instead of a drawer, so it
+         needs the same collapse toggle instead of (or in addition to) #btnOpenTacticDrawer.
+         display:none by default (phone/desktop); CSS turns it on only under tablet landscape. -->
+    <button class="panel-collapse-btn touch-only" id="btnToggleTacticPanel" title="Formações e configuração" aria-label="Mostrar/esconder formações e configuração">🗂</button>
     <aside class="tactic-side">
       <div id="formationSections">
         <h4 style="font-size:11px; text-transform:uppercase; color:var(--muted); margin-bottom:10px; letter-spacing:.5px;">Formação — Time A</h4>
@@ -2027,7 +2156,16 @@ function isMobileUI(){
 }
 if(isMobileUI()){
   document.body.classList.add('mobile-touch-ui');
-  document.body.classList.add('platform-'+getPlatformProfile());
+  const platformProfile = getPlatformProfile();
+  document.body.classList.add('platform-'+platformProfile);
+  // Fase Tablet — a genuinely separate layout identity from smartphone, not just "a wide phone".
+  // Reuses the SAME platformProfile this file already computed (ipad/android-tablet), never a new
+  // touch/viewport heuristic — structurally impossible to reach on Electron/Desktop or on a phone,
+  // same reasoning as the mobile-touch-ui gate itself. See the TABLET LAYOUT CSS section for what
+  // this class actually changes.
+  if(platformProfile === 'ipad' || platformProfile === 'android-tablet'){
+    document.body.classList.add('tablet-ui');
+  }
 }
 // LIVE (Fase 1) gate — mirrors the mobile-touch-ui pattern above, inverted: Desktop/Electron-only
 // UI (the "LIVE" panel) stays base-hidden (see its CSS) unless this class is present, so it can
@@ -4736,6 +4874,12 @@ document.getElementById('btnToggleCatPanel').addEventListener('click', ()=>{
 // pattern, just targeting .video-body/.clip-sidebar instead of #videoWrap/#mobileCatBar.
 document.getElementById('btnToggleClipPanel').addEventListener('click', ()=>{
   document.querySelector('.video-body').classList.toggle('clips-collapsed');
+  resizeCanvasesAfterPanelToggle();
+});
+// Fase Tablet: same real-flex-sibling shrink-to-zero pattern as the two toggles above, this time
+// for the Tactic Board's .tactic-side (tablet landscape only — see CSS).
+document.getElementById('btnToggleTacticPanel').addEventListener('click', ()=>{
+  document.getElementById('tab-tactic').classList.toggle('tactic-collapsed');
   resizeCanvasesAfterPanelToggle();
 });
 document.getElementById('btnHeaderMore').addEventListener('click', ()=>{
