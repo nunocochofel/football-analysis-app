@@ -1,6 +1,6 @@
 {
   "name": "football-analysis-app",
-  "version": "0.8.45",
+  "version": "0.8.46",
   "description": "App de análise de vídeo de futebol (MVP)",
   "main": "./out/main/index.js",
   "author": "",
@@ -31,7 +31,7 @@
     "@types/react-dom": "^18.3.5",
     "@types/sql.js": "^1.4.9",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^43.2.0",
+    "electron": "^43.4.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
     "playwright": "^1.62.1",
