@@ -1,6 +1,6 @@
 {
   "name": "football-analysis-app",
-  "version": "0.8.46",
+  "version": "0.8.47-rc1",
   "description": "App de análise de vídeo de futebol (MVP)",
   "main": "./out/main/index.js",
   "author": "",
@@ -45,7 +45,7 @@
     "electron-winstaller@5.4.0": true
   },
   "build": {
-    "appId": "com.local.analise-tatica",
+    "appId": "com.nunocochofel.linha",
     "productName": "Análise Tática",
     "directories": {
       "output": "dist",
@@ -87,21 +87,19 @@
         {
           "target": "dmg",
           "arch": [
-            "universal"
+            "arm64"
           ]
         },
         {
           "target": "zip",
           "arch": [
-            "universal"
+            "arm64"
           ]
         }
       ],
       "icon": "build/icon.png",
       "category": "public.app-category.sports",
-      "x64ArchFiles": "**/{ffmpeg-static,ffprobe-static}/**",
-      "artifactName": "${name}-${version}.${ext}",
-      "identity": "-",
+      "artifactName": "${name}-${version}-${arch}.${ext}",
       "hardenedRuntime": true
     }
   }

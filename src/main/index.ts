@@ -1,9 +1,46 @@
 import { app, shell, dialog, BrowserWindow } from 'electron'
 import { join } from 'path'
-import { autoUpdater } from 'electron-updater'
+import { appendFileSync, mkdirSync } from 'fs'
 import { registerIpcHandlers } from './ipc'
 import { initDatabase } from './db'
 import type { LiveSession } from './liveIngest'
+
+// Diagnostic instrumentation for whatever happens from here on (inside app.whenReady()'s own
+// try/catch below, inside any IPC handler, any async operation for the rest of the app's life).
+// A crash that happens before any window opens previously left nothing to go on beyond a native
+// OS crash report — this writes a plain-text log AND shows a dialog for anything that reaches
+// JavaScript as a catchable error.
+//
+// Does NOT cover the static imports of './ipc'/'./db' directly above (which transitively pull in
+// ffmpeg.ts, liveIngest.ts, mp4Boxes.ts, youtubeResolve.ts) — tried moving this registration
+// before those imports textually, on the theory that this project's esbuild/electron-vite CJS
+// output preserves source-line order the way plain CommonJS require() does; built it and
+// inspected out/main/index.js directly rather than trusting that theory, and it does NOT hold —
+// imported modules' own top-level code always runs before the importing file's own top-level
+// statements here, matching real ES module import-hoisting semantics, regardless of where the
+// `import` keyword is textually written. A genuinely earlier catch would need those imports
+// themselves converted to a real dynamic import() (or the risky code moved inside each module's
+// own functions) — a larger change than this task asked for, not attempted here. Separately: also
+// tried making './ipc'/'./db' lazy via require() inside app.whenReady() specifically to route
+// around this — built THAT too and found the relative require() calls were left unresolved in the
+// output (pointing at files this build never emits separately), which would have broken the app
+// on every platform, not just macOS. Caught before it went anywhere by inspecting the actual
+// build output, not assumed to work — reverted back to the static imports above.
+function logStartupError(label: string, err: unknown): void {
+  const message = err instanceof Error ? err.stack || err.message : String(err)
+  const line = `[${new Date().toISOString()}] ${label}: ${message}\n`
+  try {
+    const logsDir = app.getPath('logs')
+    mkdirSync(logsDir, { recursive: true })
+    appendFileSync(join(logsDir, 'startup-errors.log'), line)
+  } catch {
+    // Best-effort — if even the log directory isn't writable, the dialog below still shows.
+  }
+  console.error(label, err)
+  dialog.showErrorBox(label, message)
+}
+process.on('uncaughtException', (err) => logStartupError('Erro inesperado (uncaughtException)', err))
+process.on('unhandledRejection', (reason) => logStartupError('Erro inesperado (unhandledRejection)', reason))
 
 let mainWindow: BrowserWindow | null = null
 // Set once registerIpcHandlers() runs (see app.whenReady() below) — kept here purely so
@@ -100,6 +137,20 @@ function resolveLinhaPath(): string {
 // watching in DevTools.
 function setupAutoUpdate(): void {
   if (!app.isPackaged) return
+  // Required lazily, here, instead of statically at the top of the file — electron-updater pulls
+  // in Squirrel.Mac's native machinery on macOS, which this project has no way to verify behaves
+  // identically for an ad-hoc-signed (non-Developer-ID) app versus one signed the way Squirrel.Mac
+  // was originally designed around. Deferring the require() to this point (called only once the
+  // window has already loaded, well after startup) means that if loading it ever throws, it can
+  // no longer take down the whole app before a single window has shown — worst case, auto-update
+  // silently doesn't work this run, logged below, instead of the app never opening at all.
+  let autoUpdater: typeof import('electron-updater').autoUpdater
+  try {
+    ;({ autoUpdater } = require('electron-updater') as typeof import('electron-updater'))
+  } catch (err) {
+    logStartupError('Não foi possível carregar o verificador de atualizações', err)
+    return
+  }
   const send = (msg: string): void => {
     mainWindow?.webContents.send('autoUpdate:status', msg)
   }
@@ -146,11 +197,8 @@ app.whenReady().then(async () => {
   } catch (err) {
     // A startup failure here used to just mean the app never opened, with nothing to go on —
     // exactly the "não consegui abrir" report with no way to tell what actually broke. Now
-    // whatever failed is at least visible and reportable back.
-    dialog.showErrorBox(
-      'Não foi possível iniciar a aplicação',
-      String(err instanceof Error ? err.stack || err.message : err)
-    )
+    // whatever failed is at least visible and reportable back (see logStartupError above).
+    logStartupError('Não foi possível iniciar a aplicação', err)
     app.quit()
     return
   }
@@ -169,11 +217,6 @@ app.on('render-process-gone', (_event, _webContents, details) => {
     `Motivo: ${details.reason}\n\nTenta abrir a app outra vez. Se voltar a acontecer, avisa com esta mensagem.`
   )
 })
-process.on('uncaughtException', (err) => {
-  console.error('[uncaughtException]', err)
-  dialog.showErrorBox('Erro inesperado', String(err.stack || err.message))
-})
-
 // Best-effort, not blocking: an in-progress RTMP ingest has its own ffmpeg child process that
 // would otherwise survive the app quitting (an orphaned process still connected to the RTMP
 // source). Unlike the export-in-progress warning above, this doesn't prompt the user first —

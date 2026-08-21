@@ -16,35 +16,63 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: '.nvmrc'
       - run: npm ci
       - run: npm run build
-      # Build only — no --publish. electron-builder's built-in GitHub publisher has a real bug
-      # when multiple artifacts (dmg + blockmap + latest-mac.yml) all race to create the release
-      # for a brand-new tag at once: every artifact's upload task independently tries to CREATE
-      # the release, only one can ever win that race, and the rest fail hard with a 422 instead of
-      # falling back to "release already exists, just upload to it" — confirmed by direct
-      # reproduction (multiple clean reruns, with and without a pre-existing release, all failed
-      # identically). softprops/action-gh-release below is a dedicated, widely-used action that
-      # correctly finds-or-creates the release for the tag once, then uploads every file — no race.
-      # --publish never: package.json has a "publish" config block, so electron-builder tries to
-      # auto-publish even without --publish always — it needs to be told explicitly not to.
+      # Assinatura condicional: se o secret CSC_LINK existir, assina com o certificado real (+
+      # notariza, se as credenciais de notarização também existirem via APPLE_API_KEY_ID/
+      # APPLE_API_ISSUER ou APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID — electron-builder
+      # deteta automaticamente qual das duas está presente). Sem CSC_LINK, força assinatura ad-hoc
+      # explícita e desliga a descoberta automática de identidade no keychain do runner. Ligar
+      # assinatura real no futuro é só adicionar os secrets — nada neste workflow muda.
       #
-      # Fase macOS — distribuição gratuita, sem Apple Developer: package.json's mac.identity é
-      # "-" (assinatura ad-hoc, local, gerada na hora pelo próprio codesign do macOS) — NÃO
-      # precisa de nenhum certificado, conta ou secret da Apple. Isto substitui um `identity:
-      # null` anterior (sem assinatura nenhuma), que deixava o FFmpeg empacotado em risco de ser
-      # bloqueado pelo Gatekeeper mesmo depois de o utilizador autorizar a app principal — ver o
-      # relatório da Fase macOS. Sem notarização (exigiria conta Apple Developer paga): o
-      # utilizador vê o aviso normal "developer não identificado" na primeira execução e autoriza
-      # pelo mecanismo do próprio macOS (Definições → Privacidade e Segurança → "Abrir mesmo
-      # assim") — documentado em docs/INSTALL-MAC.md.
-      - run: npx electron-builder --mac --publish never
-      - uses: softprops/action-gh-release@v2
+      # Os secrets são passados por env, nunca interpolados diretamente dentro do script do run:
+      # ${{ secrets.X }} dentro de um bloco `run:` insere o valor em texto no shell ANTES de
+      # correr — um valor com aspas, `$`, backticks ou quebras de linha parte o script (ou, na
+      # pior hipótese, é interpretado como comando). A variável de ambiente ($CSC_LINK) chega ao
+      # shell como um valor de string normal, sem essa reinterpretação.
+      - name: Build (assinatura real se houver secrets, ad-hoc caso contrário)
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CSC_LINK" ]; then
+            echo "Certificado encontrado — assinatura real (+ notarização, se configurada)"
+            npx electron-builder --mac --publish never
+          else
+            echo "Sem certificado — assinatura ad-hoc explícita, notarização desligada"
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            npx electron-builder --mac --publish never -c.mac.identity="-"
+          fi
+      # Sempre disponível como artifact do próprio workflow run — útil para testar via
+      # workflow_dispatch (num commit/branch qualquer) sem precisar de criar uma tag/release.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-build-${{ github.sha }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          retention-days: 14
+      # Release no GitHub só quando disparado por uma tag real — workflow_dispatch num branch não
+      # tem versão nenhuma para publicar como release.
+      #
+      # prerelease automático: uma tag com hífen (v0.8.47-rc1) é sempre um candidato de teste, não
+      # uma versão para distribuir a utilizadores — marcá-la como pre-release no GitHub garante
+      # que o electron-updater (allowPrerelease=false por omissão nas instalações estáveis, ver
+      # docs/RELEASE-MAC.md) a ignora ao verificar /releases/latest. Sem isto, um RC partido podia
+      # ser servido como atualização a toda a gente.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/*.dmg
             dist/*.dmg.blockmap

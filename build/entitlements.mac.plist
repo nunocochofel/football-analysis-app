@@ -3,33 +3,41 @@
 <plist version="1.0">
   <dict>
     <!--
-      Fase macOS — distribuição gratuita, sem Apple Developer: LINHA usa assinatura ad-hoc
-      (mac.identity: "-" em package.json — local, gerada pelo próprio codesign do macOS na hora
-      do build, sem certificado/conta/pagamento nenhum) e NÃO é notarizada. Fora da Mac App
-      Store, por isso também não usa App Sandbox nem entitlements de MAS
-      (com.apple.security.app-sandbox e afins) — pediriam permissões extra sem benefício aqui.
+      Fase macOS — distribuição gratuita, sem Apple Developer: por omissão (sem os secrets de
+      assinatura no CI, ver .github/workflows/build-mac.yml) a app é assinada ad-hoc (identidade
+      "-", passada ao electron-builder pela própria CI, não fixa aqui em package.json — assim o
+      workflow pode passar a assinar com um certificado real só por adicionar secrets, sem mexer
+      nesta config). Sem notarização nesse caso. Fora da Mac App Store, por isso também não usa
+      App Sandbox nem entitlements de MAS (com.apple.security.app-sandbox e afins) — pediriam
+      permissões extra sem benefício aqui.
 
       electron-builder documenta explicitamente que assinatura ad-hoc + Hardened Runtime exige o
       entitlement disable-library-validation (ou, em alternativa, hardenedRuntime: false) — ver
       node_modules/app-builder-lib/out/options/macOptions.d.ts. Optámos por manter Hardened
-      Runtime ativo (é a prática recomendada mesmo sem notarização) e fornecer os 3 entitlements
+      Runtime ativo (é a prática recomendada mesmo sem notarização) e fornecer os entitlements
       que isso exige:
       - allow-jit / allow-unsigned-executable-memory: V8 (o motor JS do Electron) usa JIT e
         aloca memória executável em runtime — sem isto a app pode rebentar ao arrancar,
         sobretudo em Apple Silicon (arm64).
       - disable-library-validation: exigido pela combinação ad-hoc + Hardened Runtime (ver acima).
+      - allow-dyld-environment-variables: permite variáveis de ambiente DYLD_* em runtime,
+        normalmente removidas pelo Hardened Runtime por segurança — incluído por precaução
+        durante o diagnóstico do crash de arranque em macOS 26.5.1/Apple Silicon, sem evidência
+        própria de que seja necessário; seguro de manter, não confirmado como a causa/correção.
 
       Spawnar o FFmpeg/FFprobe empacotados (processos filhos separados, não dylibs carregadas no
       processo principal) não precisa de nenhum entitlement adicional aqui — a assinatura
       recursiva do @electron/osx-sign (usada pelo electron-builder) já assina esses binários com
-      a MESMA identidade ad-hoc, o que reduz o risco de o Gatekeeper os bloquear ao serem
-      invocados; ver o relatório da Fase macOS para os detalhes.
+      a MESMA identidade usada para o resto do bundle, o que reduz o risco de o Gatekeeper os
+      bloquear ao serem invocados; ver o relatório da Fase macOS para os detalhes.
     -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
   </dict>
 </plist>
