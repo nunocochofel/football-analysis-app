@@ -19,90 +19,167 @@ jobs:
           node-version-file: '.nvmrc'
       - run: npm ci
       - run: npm run build
-      # Build only — no --publish. electron-builder's built-in GitHub publisher has a real bug
-      # when multiple artifacts (dmg + blockmap + latest-mac.yml) all race to create the release
-      # for a brand-new tag at once: every artifact's upload task independently tries to CREATE
-      # the release, only one can ever win that race, and the rest fail hard with a 422 instead of
-      # falling back to "release already exists, just upload to it" — confirmed by direct
-      # reproduction (multiple clean reruns, with and without a pre-existing release, all failed
-      # identically). softprops/action-gh-release below is a dedicated, widely-used action that
-      # correctly finds-or-creates the release for the tag once, then uploads every file — no race.
-      # --publish never: package.json has a "publish" config block, so electron-builder tries to
-      # auto-publish even without --publish always — it needs to be told explicitly not to.
-      #
       # Fase macOS — distribuição gratuita, sem Apple Developer: package.json's mac.identity é
       # "-" (assinatura ad-hoc, local, gerada na hora pelo próprio codesign do macOS) — NÃO
-      # precisa de nenhum certificado, conta ou secret da Apple. Isto substitui um `identity:
-      # null` anterior (sem assinatura nenhuma), que deixava o FFmpeg empacotado em risco de ser
-      # bloqueado pelo Gatekeeper mesmo depois de o utilizador autorizar a app principal — ver o
-      # relatório da Fase macOS. Sem notarização (exigiria conta Apple Developer paga): o
-      # utilizador vê o aviso normal "developer não identificado" na primeira execução e autoriza
-      # pelo mecanismo do próprio macOS (Definições → Privacidade e Segurança → "Abrir mesmo
-      # assim") — documentado em docs/INSTALL-MAC.md.
+      # precisa de nenhum certificado, conta ou secret da Apple. Sem notarização (exigiria conta
+      # Apple Developer paga): o utilizador vê o aviso normal "developer não identificado" na
+      # primeira execução e autoriza pelo mecanismo do próprio macOS (Definições → Privacidade e
+      # Segurança → "Abrir mesmo assim") — documentado em docs/INSTALL-MAC.md.
       - run: npx electron-builder --mac --publish never
-      # Smoke test no próprio runner macOS: o crash reportado acontece durante o bootstrap do
-      # Node/Electron, antes de qualquer janela abrir — por isso é detetável mesmo sem sessão
-      # gráfica completa no runner. continue-on-error: true de propósito — queremos o diagnóstico
-      # mesmo (sobretudo) quando a app rebenta, nunca falhar o workflow por causa disto.
-      - name: Smoke test — arrancar a app no runner e capturar diagnóstico
-        continue-on-error: true
-        run: |
-          APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
-          echo "APP_PATH=$APP_PATH"
-          if [ -z "$APP_PATH" ]; then
-            echo "Nenhum .app encontrado em dist/ — build do electron-builder não produziu nada, a saltar smoke test."
-            exit 0
-          fi
-          EXEC_PATH=$(find "$APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
-          echo "EXEC_PATH=$EXEC_PATH"
-
-          echo "===== codesign -dvvv ====="
-          codesign -dvvv "$APP_PATH" || true
-          echo "===== codesign -vvv --strict ====="
-          codesign -vvv --strict "$APP_PATH" || true
-          echo "===== lipo -archs (executável principal) ====="
-          lipo -archs "$EXEC_PATH" || true
-          echo "===== ElectronAsarIntegrity (Info.plist) ====="
-          /usr/libexec/PlistBuddy -c "Print :ElectronAsarIntegrity" "$APP_PATH/Contents/Info.plist" || true
-
-          echo "===== a arrancar a app (ELECTRON_ENABLE_LOGGING=1, timeout manual 25s) ====="
-          # timeout(1) não existe por omissão no BSD userland do macOS — implementado com
-          # bash puro (background + watchdog) em vez de assumir coreutils/gtimeout instalado.
-          ELECTRON_ENABLE_LOGGING=1 "$EXEC_PATH" > smoke-stdout.log 2> smoke-stderr.log &
-          APP_PID=$!
-          ( sleep 25 && kill -9 "$APP_PID" 2>/dev/null ) &
-          WATCHDOG_PID=$!
-          wait "$APP_PID"
-          EXIT_CODE=$?
-          kill "$WATCHDOG_PID" 2>/dev/null || true
-          echo "exit code: $EXIT_CODE"
-          echo "$EXIT_CODE" > smoke-exit-code.txt
-          echo "===== stdout ====="; cat smoke-stdout.log || true
-          echo "===== stderr ====="; cat smoke-stderr.log || true
-
-          echo "===== crash reports (~/Library/Logs/DiagnosticReports) ====="
-          ls -la ~/Library/Logs/DiagnosticReports/ || true
-          mkdir -p crash-reports
-          cp ~/Library/Logs/DiagnosticReports/*.ips crash-reports/ 2>/dev/null || echo "sem .ips gerados"
+      # .dmg/.zip sempre disponíveis como artifact do run, independentemente de o passo de
+      # publicação do Release (mais abaixo) passar ou falhar — nunca perder a build por causa
+      # disso.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-smoke-test-${{ github.sha }}
+          name: macos-dist-${{ github.sha }}
           path: |
-            smoke-stdout.log
-            smoke-stderr.log
-            smoke-exit-code.txt
-            crash-reports/**
-          retention-days: 14
-          if-no-files-found: ignore
-      - uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: |
             dist/*.dmg
             dist/*.dmg.blockmap
             dist/*.zip
             dist/latest-mac.yml
+          retention-days: 14
+          if-no-files-found: ignore
+      # Smoke test no próprio runner macOS: o crash reportado acontece durante o bootstrap do
+      # Node/Electron, antes de qualquer janela abrir — por isso é detetável mesmo sem sessão
+      # gráfica completa no runner.
+      #
+      # `set +e` logo a seguir é a correção do bug real da ronda anterior: os passos `run:` do
+      # GitHub Actions correm com `bash -e` por omissão. `wait "$APP_PID"` devolve o código de
+      # saída do processo filho — se a app rebentar (ex. SIGTRAP, código 133), `-e` interrompe o
+      # script NESSE PONTO EXATO, e todo o diagnóstico que vinha a seguir (stdout/stderr/crash
+      # reports) nunca chegava a correr. `continue-on-error: true` mascarava isto como "success"
+      # ao nível do job — exatamente o motivo de o artifact anterior ter ficado quase vazio (274
+      # bytes). Sem continue-on-error agora: o passo termina sempre com `exit 0` explícito no
+      # fim, de forma honesta (o diagnóstico em si é o objetivo, não o código de saída da app).
+      - name: Smoke test — arrancar a app no runner e capturar diagnóstico
+        run: |
+          set +e
+          APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
+          echo "APP_PATH=$APP_PATH"
+          if [ -z "$APP_PATH" ]; then
+            echo "Nenhum .app encontrado em dist/ — build do electron-builder não produziu nada."
+            echo "N/A (sem .app)" > smoke-exit-code.txt
+            : > smoke-stdout.log
+            : > smoke-stderr.log
+            : > smoke-diagnostics.log
+          else
+            EXEC_PATH=$(find "$APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
+            echo "EXEC_PATH=$EXEC_PATH"
+
+            {
+              echo "===== codesign -dvvv ====="
+              codesign -dvvv "$APP_PATH" 2>&1
+              echo "===== codesign -vvv --strict ====="
+              codesign -vvv --strict "$APP_PATH" 2>&1
+              echo "===== lipo -archs (executável principal) ====="
+              lipo -archs "$EXEC_PATH" 2>&1
+              echo "===== ElectronAsarIntegrity (Info.plist) ====="
+              /usr/libexec/PlistBuddy -c "Print :ElectronAsarIntegrity" "$APP_PATH/Contents/Info.plist" 2>&1
+            } > smoke-diagnostics.log 2>&1
+
+            # timeout(1) não existe por omissão no BSD userland do macOS — implementado com bash
+            # puro (background + watchdog) em vez de assumir coreutils/gtimeout instalado.
+            ELECTRON_ENABLE_LOGGING=1 "$EXEC_PATH" > smoke-stdout.log 2> smoke-stderr.log &
+            APP_PID=$!
+            ( sleep 25 && kill -9 "$APP_PID" 2>/dev/null ) &
+            WATCHDOG_PID=$!
+            wait "$APP_PID"
+            EXIT_CODE=$?
+            kill "$WATCHDOG_PID" 2>/dev/null
+            echo "$EXIT_CODE" > smoke-exit-code.txt
+
+            # Um crash SIGTRAP gera um .ips, mas o macOS pode demorar a escrevê-lo em disco.
+            sleep 10
+            mkdir -p crash-reports
+            cp ~/Library/Logs/DiagnosticReports/*.ips crash-reports/ 2>/dev/null
+          fi
+
+          {
+            echo "EXIT CODE: $(cat smoke-exit-code.txt 2>/dev/null || echo 'desconhecido')"
+            echo ""
+            echo "--- DIAGNOSTICO (codesign / lipo / ElectronAsarIntegrity) ---"
+            cat smoke-diagnostics.log 2>/dev/null
+            echo ""
+            echo "--- STDOUT ---"
+            cat smoke-stdout.log 2>/dev/null
+            echo ""
+            echo "--- STDERR ---"
+            cat smoke-stderr.log 2>/dev/null
+            echo ""
+            echo "--- CRASH REPORTS (~/Library/Logs/DiagnosticReports) ---"
+            ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null || echo "(diretório inexistente ou vazio)"
+            for f in crash-reports/*.ips; do
+              [ -f "$f" ] || continue
+              echo ""
+              echo "=== $f ==="
+              head -150 "$f"
+            done
+          } | tee smoke-full-report.txt
+
+          # Visibilidade a) — o relatório completo já ficou no log deste próprio passo, acima
+          # (via tee), legível sem autenticação na página pública do run se o repositório for
+          # público, e sempre legível por quem tem acesso ao Actions.
+
+          # Visibilidade b) — resumo do run (GitHub Actions → aba "Summary" dessa execução).
+          {
+            echo "## Smoke test macOS — ${{ github.ref_name }} (${{ github.sha }})"
+            echo '```'
+            cat smoke-full-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit 0
+      # Visibilidade c) — o relatório fica também commitado num branch órfão dedicado
+      # (ci-diagnostics), legível sem qualquer autenticação via
+      # raw.githubusercontent.com/<owner>/<repo>/ci-diagnostics/<sha>.md — não depende da API do
+      # GitHub nem de um token para ler, ao contrário dos logs do run e dos artifacts. Checkout
+      # próprio e isolado num diretório temporário, para não interferir com o checkout principal
+      # do job (que tem de continuar na tag/branch a ser construída).
+      - name: Publicar diagnóstico no branch ci-diagnostics
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          WORKDIR=$(mktemp -d)
+          cd "$WORKDIR"
+          git init -q
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          if git fetch -q origin ci-diagnostics 2>/dev/null; then
+            git checkout -q ci-diagnostics
+          else
+            git checkout -q --orphan ci-diagnostics
+            git rm -rf . -q 2>/dev/null
+          fi
+          cp "$GITHUB_WORKSPACE/smoke-full-report.txt" "./${{ github.sha }}.md" 2>/dev/null \
+            || echo "(sem smoke-full-report.txt — smoke test não produziu relatório)" > "./${{ github.sha }}.md"
+          git add "${{ github.sha }}.md"
+          git commit -q -m "Diagnóstico smoke test macOS — ${{ github.ref_name }} (${{ github.sha }})"
+          git push -q origin ci-diagnostics
+          echo "Diagnóstico publicado em: https://raw.githubusercontent.com/${{ github.repository }}/ci-diagnostics/${{ github.sha }}.md"
+      # Release: gh CLI (pré-instalado nos runners, usa GITHUB_TOKEN) em vez da action
+      # softprops/action-gh-release — mais robusto a falhas de rede transitórias
+      # ("Too many retries" observado numa ronda anterior). `gh release create` falha se o
+      # release da tag já existir (ex. o workflow Windows já o criou primeiro) — nesse caso o
+      # fallback `gh release upload --clobber` anexa os ficheiros ao release já existente, sem
+      # recriar nada.
+      - name: Publicar release (gh CLI)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PRERELEASE_FLAG=""
+          case "${{ github.ref_name }}" in
+            *-*) PRERELEASE_FLAG="--prerelease" ;;
+          esac
+          gh release create "${{ github.ref_name }}" \
+            dist/*.dmg dist/*.dmg.blockmap dist/*.zip dist/latest-mac.yml \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            $PRERELEASE_FLAG \
+            || gh release upload "${{ github.ref_name }}" \
+                 dist/*.dmg dist/*.dmg.blockmap dist/*.zip dist/latest-mac.yml \
+                 --clobber
