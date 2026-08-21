@@ -191,14 +191,24 @@ jobs:
             echo "CONTROLO B — backtrace nativo via lldb"
             echo "===================================================="
             echo "----- lldb na app real -----"
-            lldb -b -o "run" -o "bt all" -o "image list" -o "quit" -- "$EXEC_PATH" 2>&1
+            # -k/--one-line-on-crash em vez de encadear "bt all" a seguir a "run" com -o: em modo
+            # batch (-b) o lldb aborta a fila de comandos -o seguintes quando o processo para por
+            # um sinal (ex. SIGTRAP) em vez de um breakpoint nosso — foi isto que aconteceu na
+            # ronda anterior (a sessão que crashou nunca chegou a ecoar "(lldb) bt all"; a sessão
+            # que saiu normalmente ecoou-o sem problema, confirmando que o comando em si estava
+            # correto). -k só dispara quando o alvo efetivamente crasha, contornando esse
+            # comportamento. run_with_timeout evita ficar preso indefinidamente a fazer unwind de
+            # código JIT do V8 sem info de frame.
+            run_with_timeout 40 "lldb na app real" \
+              lldb -b -k "bt all" -k "image list" -k "quit" -o "run" -- "$EXEC_PATH"
 
             echo ""
             echo "----- lldb com ELECTRON_RUN_AS_NODE=1 (isola o stack sem ruído do Chromium, só se A1 tiver rebentado) -----"
             # ELECTRON_RUN_AS_NODE=1 exportado para o próprio shell que invoca o lldb — o processo
             # lançado pelo lldb herda o ambiente do processo que o lançou, tal como um exec normal.
             export ELECTRON_RUN_AS_NODE=1
-            lldb -b -o "settings set target.run-args -e console.log(1)" -o "run" -o "bt all" -o "image list" -o "quit" -- "$EXEC_PATH" 2>&1
+            run_with_timeout 40 "lldb com ELECTRON_RUN_AS_NODE=1" \
+              lldb -b -k "bt all" -k "image list" -k "quit" -o "settings set target.run-args -e console.log(1)" -o "run" -- "$EXEC_PATH"
             unset ELECTRON_RUN_AS_NODE
           } | tee controls-full-report.txt
 
