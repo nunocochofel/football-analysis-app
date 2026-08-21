@@ -19,55 +19,83 @@ jobs:
           node-version-file: '.nvmrc'
       - run: npm ci
       - run: npm run build
-      # Assinatura condicional: se o secret CSC_LINK existir, assina com o certificado real (+
-      # notariza, se as credenciais de notarização também existirem via APPLE_API_KEY_ID/
-      # APPLE_API_ISSUER ou APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID — electron-builder
-      # deteta automaticamente qual das duas está presente). Sem CSC_LINK, força assinatura ad-hoc
-      # explícita e desliga a descoberta automática de identidade no keychain do runner. Ligar
-      # assinatura real no futuro é só adicionar os secrets — nada neste workflow muda.
+      # Build only — no --publish. electron-builder's built-in GitHub publisher has a real bug
+      # when multiple artifacts (dmg + blockmap + latest-mac.yml) all race to create the release
+      # for a brand-new tag at once: every artifact's upload task independently tries to CREATE
+      # the release, only one can ever win that race, and the rest fail hard with a 422 instead of
+      # falling back to "release already exists, just upload to it" — confirmed by direct
+      # reproduction (multiple clean reruns, with and without a pre-existing release, all failed
+      # identically). softprops/action-gh-release below is a dedicated, widely-used action that
+      # correctly finds-or-creates the release for the tag once, then uploads every file — no race.
+      # --publish never: package.json has a "publish" config block, so electron-builder tries to
+      # auto-publish even without --publish always — it needs to be told explicitly not to.
       #
-      # Os secrets são passados por env, nunca interpolados diretamente dentro do script do run:
-      # ${{ secrets.X }} dentro de um bloco `run:` insere o valor em texto no shell ANTES de
-      # correr — um valor com aspas, `$`, backticks ou quebras de linha parte o script (ou, na
-      # pior hipótese, é interpretado como comando). A variável de ambiente ($CSC_LINK) chega ao
-      # shell como um valor de string normal, sem essa reinterpretação.
-      - name: Build (assinatura real se houver secrets, ad-hoc caso contrário)
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # Fase macOS — distribuição gratuita, sem Apple Developer: package.json's mac.identity é
+      # "-" (assinatura ad-hoc, local, gerada na hora pelo próprio codesign do macOS) — NÃO
+      # precisa de nenhum certificado, conta ou secret da Apple. Isto substitui um `identity:
+      # null` anterior (sem assinatura nenhuma), que deixava o FFmpeg empacotado em risco de ser
+      # bloqueado pelo Gatekeeper mesmo depois de o utilizador autorizar a app principal — ver o
+      # relatório da Fase macOS. Sem notarização (exigiria conta Apple Developer paga): o
+      # utilizador vê o aviso normal "developer não identificado" na primeira execução e autoriza
+      # pelo mecanismo do próprio macOS (Definições → Privacidade e Segurança → "Abrir mesmo
+      # assim") — documentado em docs/INSTALL-MAC.md.
+      - run: npx electron-builder --mac --publish never
+      # Smoke test no próprio runner macOS: o crash reportado acontece durante o bootstrap do
+      # Node/Electron, antes de qualquer janela abrir — por isso é detetável mesmo sem sessão
+      # gráfica completa no runner. continue-on-error: true de propósito — queremos o diagnóstico
+      # mesmo (sobretudo) quando a app rebenta, nunca falhar o workflow por causa disto.
+      - name: Smoke test — arrancar a app no runner e capturar diagnóstico
+        continue-on-error: true
         run: |
-          if [ -n "$CSC_LINK" ]; then
-            echo "Certificado encontrado — assinatura real (+ notarização, se configurada)"
-            npx electron-builder --mac --publish never
-          else
-            echo "Sem certificado — assinatura ad-hoc explícita, notarização desligada"
-            export CSC_IDENTITY_AUTO_DISCOVERY=false
-            npx electron-builder --mac --publish never -c.mac.identity="-"
+          APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
+          echo "APP_PATH=$APP_PATH"
+          if [ -z "$APP_PATH" ]; then
+            echo "Nenhum .app encontrado em dist/ — build do electron-builder não produziu nada, a saltar smoke test."
+            exit 0
           fi
-      # Sempre disponível como artifact do próprio workflow run — útil para testar via
-      # workflow_dispatch (num commit/branch qualquer) sem precisar de criar uma tag/release.
+          EXEC_PATH=$(find "$APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
+          echo "EXEC_PATH=$EXEC_PATH"
+
+          echo "===== codesign -dvvv ====="
+          codesign -dvvv "$APP_PATH" || true
+          echo "===== codesign -vvv --strict ====="
+          codesign -vvv --strict "$APP_PATH" || true
+          echo "===== lipo -archs (executável principal) ====="
+          lipo -archs "$EXEC_PATH" || true
+          echo "===== ElectronAsarIntegrity (Info.plist) ====="
+          /usr/libexec/PlistBuddy -c "Print :ElectronAsarIntegrity" "$APP_PATH/Contents/Info.plist" || true
+
+          echo "===== a arrancar a app (ELECTRON_ENABLE_LOGGING=1, timeout manual 25s) ====="
+          # timeout(1) não existe por omissão no BSD userland do macOS — implementado com
+          # bash puro (background + watchdog) em vez de assumir coreutils/gtimeout instalado.
+          ELECTRON_ENABLE_LOGGING=1 "$EXEC_PATH" > smoke-stdout.log 2> smoke-stderr.log &
+          APP_PID=$!
+          ( sleep 25 && kill -9 "$APP_PID" 2>/dev/null ) &
+          WATCHDOG_PID=$!
+          wait "$APP_PID"
+          EXIT_CODE=$?
+          kill "$WATCHDOG_PID" 2>/dev/null || true
+          echo "exit code: $EXIT_CODE"
+          echo "$EXIT_CODE" > smoke-exit-code.txt
+          echo "===== stdout ====="; cat smoke-stdout.log || true
+          echo "===== stderr ====="; cat smoke-stderr.log || true
+
+          echo "===== crash reports (~/Library/Logs/DiagnosticReports) ====="
+          ls -la ~/Library/Logs/DiagnosticReports/ || true
+          mkdir -p crash-reports
+          cp ~/Library/Logs/DiagnosticReports/*.ips crash-reports/ 2>/dev/null || echo "sem .ips gerados"
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: macos-build-${{ github.sha }}
+          name: macos-smoke-test-${{ github.sha }}
           path: |
-            dist/*.dmg
-            dist/*.zip
+            smoke-stdout.log
+            smoke-stderr.log
+            smoke-exit-code.txt
+            crash-reports/**
           retention-days: 14
-      # Release no GitHub só quando disparado por uma tag real — workflow_dispatch num branch não
-      # tem versão nenhuma para publicar como release.
-      #
-      # prerelease automático: uma tag com hífen (v0.8.47-rc1) é sempre um candidato de teste, não
-      # uma versão para distribuir a utilizadores — marcá-la como pre-release no GitHub garante
-      # que o electron-updater (allowPrerelease=false por omissão nas instalações estáveis, ver
-      # docs/RELEASE-MAC.md) a ignora ao verificar /releases/latest. Sem isto, um RC partido podia
-      # ser servido como atualização a toda a gente.
-      - if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+          if-no-files-found: ignore
+      - uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
