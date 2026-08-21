@@ -29,6 +29,16 @@ jobs:
       # correctly finds-or-creates the release for the tag once, then uploads every file — no race.
       # --publish never: package.json has a "publish" config block, so electron-builder tries to
       # auto-publish even without --publish always — it needs to be told explicitly not to.
+      #
+      # Fase macOS — distribuição gratuita, sem Apple Developer: package.json's mac.identity é
+      # "-" (assinatura ad-hoc, local, gerada na hora pelo próprio codesign do macOS) — NÃO
+      # precisa de nenhum certificado, conta ou secret da Apple. Isto substitui um `identity:
+      # null` anterior (sem assinatura nenhuma), que deixava o FFmpeg empacotado em risco de ser
+      # bloqueado pelo Gatekeeper mesmo depois de o utilizador autorizar a app principal — ver o
+      # relatório da Fase macOS. Sem notarização (exigiria conta Apple Developer paga): o
+      # utilizador vê o aviso normal "developer não identificado" na primeira execução e autoriza
+      # pelo mecanismo do próprio macOS (Definições → Privacidade e Segurança → "Abrir mesmo
+      # assim") — documentado em docs/INSTALL-MAC.md.
       - run: npx electron-builder --mac --publish never
       - uses: softprops/action-gh-release@v2
         env:
@@ -38,4 +48,5 @@ jobs:
           files: |
             dist/*.dmg
             dist/*.dmg.blockmap
+            dist/*.zip
             dist/latest-mac.yml

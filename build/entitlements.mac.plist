@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!--
+      Fase macOS — distribuição gratuita, sem Apple Developer: LINHA usa assinatura ad-hoc
+      (mac.identity: "-" em package.json — local, gerada pelo próprio codesign do macOS na hora
+      do build, sem certificado/conta/pagamento nenhum) e NÃO é notarizada. Fora da Mac App
+      Store, por isso também não usa App Sandbox nem entitlements de MAS
+      (com.apple.security.app-sandbox e afins) — pediriam permissões extra sem benefício aqui.
+
+      electron-builder documenta explicitamente que assinatura ad-hoc + Hardened Runtime exige o
+      entitlement disable-library-validation (ou, em alternativa, hardenedRuntime: false) — ver
+      node_modules/app-builder-lib/out/options/macOptions.d.ts. Optámos por manter Hardened
+      Runtime ativo (é a prática recomendada mesmo sem notarização) e fornecer os 3 entitlements
+      que isso exige:
+      - allow-jit / allow-unsigned-executable-memory: V8 (o motor JS do Electron) usa JIT e
+        aloca memória executável em runtime — sem isto a app pode rebentar ao arrancar,
+        sobretudo em Apple Silicon (arm64).
+      - disable-library-validation: exigido pela combinação ad-hoc + Hardened Runtime (ver acima).
+
+      Spawnar o FFmpeg/FFprobe empacotados (processos filhos separados, não dylibs carregadas no
+      processo principal) não precisa de nenhum entitlement adicional aqui — a assinatura
+      recursiva do @electron/osx-sign (usada pelo electron-builder) já assina esses binários com
+      a MESMA identidade ad-hoc, o que reduz o risco de o Gatekeeper os bloquear ao serem
+      invocados; ver o relatório da Fase macOS para os detalhes.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

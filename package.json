@@ -1,6 +1,6 @@
 {
   "name": "football-analysis-app",
-  "version": "0.8.43",
+  "version": "0.8.44",
   "description": "App de análise de vídeo de futebol (MVP)",
   "main": "./out/main/index.js",
   "author": "",
@@ -89,13 +89,20 @@
           "arch": [
             "universal"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
         }
       ],
       "icon": "build/icon.png",
       "category": "public.app-category.sports",
-      "identity": null,
       "x64ArchFiles": "**/{ffmpeg-static,ffprobe-static}/**",
-      "artifactName": "${name}-${version}.${ext}"
+      "artifactName": "${name}-${version}.${ext}",
+      "identity": "-",
+      "hardenedRuntime": true
     }
   }
 }
