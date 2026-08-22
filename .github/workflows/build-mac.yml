@@ -130,13 +130,17 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           exit 0
-      # Controlos A/B pedidos depois do smoke test confirmar SIGTRAP (133): antes de mergulhar
-      # mais fundo no bug em si, isolar se o crash é (A) o mesmo bug reportado no Mac real ou um
-      # artefacto deste runner ser headless (sem WindowServer), e (B) obter um backtrace nativo
-      # real via lldb (pré-instalado nas Command Line Tools) em vez de depender de um .ips que
-      # este ambiente não está a gerar. Controlo C (downgrade do Electron para 43.2.0) fica de
-      # fora desta ronda — só faz sentido se A1 confirmar que o bootstrap do Node é onde rebenta.
-      - name: Controlos A/B — isolar bootstrap Node vs Chromium vs ambiente, e backtrace lldb
+      # Controlos A/B (contexto) seguidos de candidatos a correção C1-C5, testados por ordem, com
+      # o próprio smoke test como critério de aceitação: para no primeiro que arrancar (exit 0) e
+      # publica-o automaticamente. Restrito a workflow_dispatch — nunca corre num push de tag, para
+      # não repetir toda a ronda de candidatos (cara, ~15 min) num run disparado pela própria tag
+      # que este passo cria quando encontra um vencedor; ver a salvaguarda irmã no passo "Publicar
+      # release" mais abaixo (salta se o release já tiver assets, em vez de sobrescrever com um
+      # rebuild redundante desse run retriggado).
+      - name: Controlos A/B + candidatos de correção (C1-C5) + publicação automática
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
           APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
@@ -274,71 +278,235 @@ jobs:
             fi
 
             echo "===================================================="
-            echo "BISSEÇÃO — substituir out/main/index.js por stub mínimo e reconstruir com electron-builder, só se A2 mostrou que só a nossa app rebenta"
+            echo "MUDANÇA DE MODO: a partir daqui já não é só diagnóstico — testa candidatos a"
+            echo "correção, por ordem, e para no primeiro que passe o smoke test (exit 0)."
+            echo "===================================================="
+            CANDIDATE_ROWS=()
+            record_row () { CANDIDATE_ROWS+=("$1|$2|$3"); }
+            WINNER=""
+
+            echo "===================================================="
+            echo "C1 — stub mínimo (só decide o caminho a seguir; nunca é publicável)"
             echo "===================================================="
             # Reconstrução completa via electron-builder (não cirurgia manual no app.asar já
-            # assinado) de propósito: o Info.plist tem ElectronAsarIntegrity (hash do app.asar
-            # embebido no build), e a app já está assinada ad-hoc — trocar o conteúdo do asar
-            # in-place invalidaria esse hash e a assinatura, arriscando um "crash" que na verdade
-            # seria só a verificação de integridade a recusar carregar, contaminando o resultado.
-            # Voltar a chamar o electron-builder recalcula tudo isso corretamente a partir do
-            # out/main/index.js já trocado em disco, mantendo o resto do bundle (node_modules,
-            # resources/, package.json) exatamente igual. Restrito a workflow_dispatch como
-            # salvaguarda extra — nunca correr isto num push de tag, para não publicar por engano
-            # um build de teste com main.js mínimo como release real.
-            if [ "$A2_VERDICT" = "APP_ESPECIFICO" ] && [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-              cp out/main/index.js "$RUNNER_TEMP/index.js.orig.bak"
-              printf '%s\n' \
-                "const { app, BrowserWindow } = require('electron')" \
-                "app.whenReady().then(() => {" \
-                "  new BrowserWindow({ width: 400, height: 300, show: false })" \
-                "  console.log('BISSECAO_MAIN_MINIMO: BrowserWindow created OK')" \
-                "  setTimeout(() => app.quit(), 1000)" \
-                "})" \
-                > out/main/index.js
-              echo "----- a reconstruir com electron-builder (out/main/index.js mínimo, resto do bundle igual) -----"
-              npx electron-builder --mac --publish never > /tmp/bisect-build.log 2>&1
-              echo "electron-builder (bisseção) exit: $?"
-              tail -40 /tmp/bisect-build.log
-              cp "$RUNNER_TEMP/index.js.orig.bak" out/main/index.js
+            # assinado): o Info.plist tem ElectronAsarIntegrity (hash do app.asar embebido no
+            # build), e a app já está assinada ad-hoc — trocar o asar in-place invalidaria esse
+            # hash/assinatura, arriscando um "crash" que seria só a verificação de integridade a
+            # recusar carregar, contaminando o resultado. Voltar a chamar o electron-builder
+            # recalcula tudo isso corretamente.
+            printf '%s\n' \
+              "const { app, BrowserWindow } = require('electron')" \
+              "app.whenReady().then(() => {" \
+              "  new BrowserWindow({ width: 400, height: 300, show: false })" \
+              "  console.log('C1_STUB_MINIMO: BrowserWindow created OK')" \
+              "  setTimeout(() => app.quit(), 1000)" \
+              "})" \
+              > out/main/index.js
+            npx electron-builder --mac --publish never > "$RUNNER_TEMP/build-C1.log" 2>&1
+            echo "electron-builder exit (C1): $?"
+            tail -30 "$RUNNER_TEMP/build-C1.log"
+            C1_APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
+            C1_EXEC_PATH=$(find "$C1_APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
+            run_with_timeout 20 "C1 stub mínimo — smoke test" \
+              env ELECTRON_ENABLE_LOGGING=1 "$C1_EXEC_PATH"
+            C1_EXIT="$LAST_EXIT_CODE"
+            record_row "C1-stub-minimo" "$C1_EXIT" "diagnóstico apenas, nunca publicável"
+            # out/ é gerado — repõe-se limpo a partir do TypeScript original antes dos candidatos
+            # seguintes (nenhum deles deve herdar o stub do C1).
+            npm run build > "$RUNNER_TEMP/rebuild-out-after-c1.log" 2>&1
+            echo "npm run build (repor out/ limpo) exit: $?"
 
-              BISECT_APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
-              BISECT_EXEC_PATH=$(find "$BISECT_APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
-              echo "BISECT_APP_PATH=$BISECT_APP_PATH"
-              echo "BISECT_EXEC_PATH=$BISECT_EXEC_PATH"
-
-              BISECT_EXIT="sem-build"
-              if [ -n "$BISECT_EXEC_PATH" ]; then
-                run_with_timeout 20 "app bissetada (main.js mínimo, resto do bundle reconstruído igual)" \
-                  env ELECTRON_ENABLE_LOGGING=1 "$BISECT_EXEC_PATH" --no-sandbox --disable-gpu
-                BISECT_EXIT="$LAST_EXIT_CODE"
-              fi
-
-              if [ "$BISECT_EXIT" = "133" ]; then
-                echo ""
-                echo ">>> BISSEÇÃO VEREDICTO: exit=$BISECT_EXIT -> ainda rebenta com main.js mínimo. O problema está no empacotamento/recursos do bundle, não no código de arranque original. <<<"
-                echo ""
-              elif [ "$BISECT_EXIT" = "0" ]; then
-                echo ""
-                echo ">>> BISSEÇÃO VEREDICTO: exit=$BISECT_EXIT -> já não rebenta com main.js mínimo. O problema está no código de arranque original (main.js/ipc/db), não no empacotamento. <<<"
-                echo ""
-              else
-                echo ""
-                echo ">>> BISSEÇÃO VEREDICTO: inconclusivo, exit=$BISECT_EXIT. <<<"
-                echo ""
-              fi
+            if [ "$C1_EXIT" = "0" ]; then
+              echo ">>> C1 arranca -> bug no código de arranque da app. A testar C2/C3. <<<"
+              TRY_C2_C3="true"
             else
-              echo "(A2 não isolou 'só a nossa app rebenta' (veredito=$A2_VERDICT), ou este run não é workflow_dispatch — a saltar bisseção.)"
+              echo ">>> C1 também rebenta (exit $C1_EXIT) -> bug no Electron/empacotamento, não no código da app. A saltar C2/C3, direto a C4/C5. <<<"
+              TRY_C2_C3="false"
+            fi
+
+            # v0.8.47-rc1 já existe (tag+release de uma ronda anterior, noutro commit) — usa-se
+            # rc2 para o candidato vencedor desta ronda, se algum passar. Aplicado já aqui, antes
+            # de qualquer candidato, para que o build que passa no smoke test seja byte-a-byte o
+            # mesmo que fica publicado — sem rebuild extra depois de decidir o vencedor.
+            node -e "
+              const fs = require('fs');
+              const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              p.version = '0.8.47-rc2';
+              fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+            "
+            echo "versão candidata desta ronda:"; grep '"version"' package.json
+
+            mkdir -p "$RUNNER_TEMP/orig-src"
+            cp src/main/index.ts "$RUNNER_TEMP/orig-src/index.ts"
+            cp src/main/ipc.ts "$RUNNER_TEMP/orig-src/ipc.ts"
+            cp package.json "$RUNNER_TEMP/orig-src/package.json"
+            cp package-lock.json "$RUNNER_TEMP/orig-src/package-lock.json"
+            restore_baseline () {
+              cp "$RUNNER_TEMP/orig-src/index.ts" src/main/index.ts
+              cp "$RUNNER_TEMP/orig-src/ipc.ts" src/main/ipc.ts
+              cp "$RUNNER_TEMP/orig-src/package.json" package.json
+              cp "$RUNNER_TEMP/orig-src/package-lock.json" package-lock.json
+            }
+
+            if [ "$TRY_C2_C3" = "true" ] && [ -z "$WINNER" ]; then
+              echo "===================================================="
+              echo "C2 — initDatabase() preguiçoso (sql.js/WASM só numa query real, nunca no boot)"
+              echo "===================================================="
+              restore_baseline
+              cp .github/build-candidates/c2-ipc.ts src/main/ipc.ts
+              cp .github/build-candidates/c2-index.ts src/main/index.ts
+              npm run build > "$RUNNER_TEMP/build-src-C2.log" 2>&1
+              echo "npm run build (C2) exit: $?"; tail -30 "$RUNNER_TEMP/build-src-C2.log"
+              npx electron-builder --mac --publish never > "$RUNNER_TEMP/build-C2.log" 2>&1
+              echo "electron-builder exit (C2): $?"; tail -30 "$RUNNER_TEMP/build-C2.log"
+              C2_APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
+              C2_EXEC_PATH=$(find "$C2_APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
+              run_with_timeout 20 "C2 lazy db — smoke test" \
+                env ELECTRON_ENABLE_LOGGING=1 "$C2_EXEC_PATH"
+              C2_EXIT="$LAST_EXIT_CODE"
+              record_row "C2-lazy-db" "$C2_EXIT" ""
+              if [ "$C2_EXIT" = "0" ]; then
+                WINNER="C2-lazy-db"
+                echo ">>> C2 arrancou (exit 0) — candidato vencedor. <<<"
+              fi
+            fi
+
+            if [ "$TRY_C2_C3" = "true" ] && [ -z "$WINNER" ]; then
+              echo "===================================================="
+              echo "C3 — janela primeiro, IPC/DB só depois de did-finish-load"
+              echo "===================================================="
+              restore_baseline
+              cp .github/build-candidates/c3-index.ts src/main/index.ts
+              npm run build > "$RUNNER_TEMP/build-src-C3.log" 2>&1
+              echo "npm run build (C3) exit: $?"; tail -30 "$RUNNER_TEMP/build-src-C3.log"
+              npx electron-builder --mac --publish never > "$RUNNER_TEMP/build-C3.log" 2>&1
+              echo "electron-builder exit (C3): $?"; tail -30 "$RUNNER_TEMP/build-C3.log"
+              C3_APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
+              C3_EXEC_PATH=$(find "$C3_APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
+              run_with_timeout 20 "C3 janela primeiro — smoke test" \
+                env ELECTRON_ENABLE_LOGGING=1 "$C3_EXEC_PATH"
+              C3_EXIT="$LAST_EXIT_CODE"
+              record_row "C3-janela-primeiro" "$C3_EXIT" ""
+              if [ "$C3_EXIT" = "0" ]; then
+                WINNER="C3-janela-primeiro"
+                echo ">>> C3 arrancou (exit 0) — candidato vencedor. <<<"
+              fi
+            fi
+
+            if [ -z "$WINNER" ]; then
+              echo "===================================================="
+              echo "C4 — Electron 43.2.0 (versão anterior ao upgrade da v0.8.46)"
+              echo "===================================================="
+              restore_baseline
+              npm run build > "$RUNNER_TEMP/build-src-C4.log" 2>&1
+              echo "npm run build (C4, código original) exit: $?"
+              npm install --save-exact electron@43.2.0 > "$RUNNER_TEMP/npm-install-C4.log" 2>&1
+              echo "npm install electron@43.2.0 exit: $?"; tail -20 "$RUNNER_TEMP/npm-install-C4.log"
+              npx electron-builder --mac --publish never > "$RUNNER_TEMP/build-C4.log" 2>&1
+              echo "electron-builder exit (C4): $?"; tail -30 "$RUNNER_TEMP/build-C4.log"
+              C4_APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
+              C4_EXEC_PATH=$(find "$C4_APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
+              run_with_timeout 20 "C4 Electron 43.2.0 — smoke test" \
+                env ELECTRON_ENABLE_LOGGING=1 "$C4_EXEC_PATH"
+              C4_EXIT="$LAST_EXIT_CODE"
+              record_row "C4-electron-43.2.0" "$C4_EXIT" ""
+              if [ "$C4_EXIT" = "0" ]; then
+                WINNER="C4-electron-43.2.0"
+                echo ">>> C4 arrancou (exit 0) — candidato vencedor. <<<"
+              fi
+            fi
+
+            if [ -z "$WINNER" ]; then
+              echo "===================================================="
+              echo "C5 — Electron 42.9.3 (última stable fora da série 43; confirmado agora via"
+              echo "releases.electronjs.org — 44/45 só têm nightly nesta data, sem stable ainda)"
+              echo "===================================================="
+              restore_baseline
+              npm run build > "$RUNNER_TEMP/build-src-C5.log" 2>&1
+              echo "npm run build (C5, código original) exit: $?"
+              npm install --save-exact electron@42.9.3 > "$RUNNER_TEMP/npm-install-C5.log" 2>&1
+              echo "npm install electron@42.9.3 exit: $?"; tail -20 "$RUNNER_TEMP/npm-install-C5.log"
+              npx electron-builder --mac --publish never > "$RUNNER_TEMP/build-C5.log" 2>&1
+              echo "electron-builder exit (C5): $?"; tail -30 "$RUNNER_TEMP/build-C5.log"
+              C5_APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
+              C5_EXEC_PATH=$(find "$C5_APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
+              run_with_timeout 20 "C5 Electron 42.9.3 — smoke test" \
+                env ELECTRON_ENABLE_LOGGING=1 "$C5_EXEC_PATH"
+              C5_EXIT="$LAST_EXIT_CODE"
+              record_row "C5-electron-42.9.3" "$C5_EXIT" ""
+              if [ "$C5_EXIT" = "0" ]; then
+                WINNER="C5-electron-42.9.3"
+                echo ">>> C5 arrancou (exit 0) — candidato vencedor. <<<"
+              fi
+            fi
+
+            if [ -z "$WINNER" ]; then
+              restore_baseline
             fi
 
             echo "===================================================="
-            echo "RESUMO DESTA RONDA"
+            echo "TABELA DE RESULTADOS"
             echo "===================================================="
-            echo "CONTROLO A1 (bootstrap Node isolado): ver secção acima — confirmado são em rondas anteriores."
-            echo "CONTROLO A2 (Electron virgem + hello-world): exit=$A2_HELLO_EXIT -> $A2_VERDICT"
-            echo "CONTROLO B (lldb): ver backtraces acima."
-            if [ -n "$BISECT_EXIT" ]; then
-              echo "BISSEÇÃO (main.js mínimo, mesmo bundle): exit=$BISECT_EXIT"
+            printf '%-22s | %-8s | %s\n' "candidato" "exit" "nota"
+            printf -- '-----------------------|----------|--------------------------------------------\n'
+            for row in "${CANDIDATE_ROWS[@]}"; do
+              IFS='|' read -r cname cexit cnote <<< "$row"
+              printf '%-22s | %-8s | %s\n' "$cname" "$cexit" "$cnote"
+            done
+            echo ""
+            if [ -n "$WINNER" ]; then
+              echo ">>> VENCEDOR: $WINNER <<<"
+            else
+              echo ">>> NENHUM CANDIDATO PASSOU O SMOKE TEST. Não publico nada — ver tabela e backtraces do lldb acima. <<<"
+            fi
+
+            if [ -n "$WINNER" ]; then
+              echo "===================================================="
+              echo "PUBLICAÇÃO AUTOMÁTICA — $WINNER passou o smoke test (exit 0), a aplicar ao repositório"
+              echo "===================================================="
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              rm -rf .github/build-candidates
+              git add -A src/main/index.ts src/main/ipc.ts package.json package-lock.json .github/build-candidates
+              git status --short
+              git commit -m "0.8.47-rc2: aplica candidato $WINNER (corrige o crash de arranque no macOS)
+
+Escolhido automaticamente pela ronda de testes desta run — ver
+ci-diagnostics/${{ github.sha }}.md para a tabela completa de candidatos
+(C1-C5) e os backtraces lldb. Critério de aceitação: o smoke test no runner
+macos-latest chega a exit code 0 (a app arranca), em vez do SIGTRAP/exit 133
+anterior, reproduzido em todas as versões publicadas até agora.
+
+Build de teste, validado apenas no arranque — abrir vídeo, gravar na base de
+dados e chamar o ffmpeg continuam por confirmar num Mac real."
+              git push origin HEAD:refs/heads/main
+              PUSH_EXIT=$?
+              echo "git push (main) exit: $PUSH_EXIT"
+              if [ "$PUSH_EXIT" != "0" ]; then
+                echo "ERRO: push para main falhou — a abortar publicação automática sem criar tag/release. Ver o log acima."
+              else
+                git tag v0.8.47-rc2
+                git push origin v0.8.47-rc2
+                echo "git push (tag v0.8.47-rc2) exit: $?"
+
+                NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+                printf '%s\n' \
+                  "Build de teste — candidato de correção **$WINNER** para o crash de arranque no macOS (EXC_BREAKPOINT/SIGTRAP, thread CrBrowserMain, morre em milissegundos antes de qualquer janela abrir)." \
+                  "" \
+                  "**O que este build prova:** o smoke test automático no runner macOS confirma que a app agora ARRANCA (exit code 0) — antes disto, exit 133 em 100% das tentativas, em todas as versões publicadas até agora (v0.8.42 a v0.8.46, e os candidatos v0.8.47-rc1/rc2 anteriores)." \
+                  "" \
+                  "**O que este build NÃO prova:** o smoke test só confirma o arranque, não a funcionalidade. Abrir vídeos, gravar na base de dados e chamar o ffmpeg continuam por testar num Mac real." \
+                  "" \
+                  "Tabela completa dos candidatos testados nesta ronda (C1-C5) e os backtraces lldb: https://raw.githubusercontent.com/${{ github.repository }}/ci-diagnostics/${{ github.sha }}.md" \
+                  > "$NOTES_FILE"
+
+                gh release create v0.8.47-rc2 \
+                  dist/*.dmg dist/*.dmg.blockmap dist/*.zip dist/latest-mac.yml \
+                  --title "v0.8.47-rc2 ($WINNER)" \
+                  --notes-file "$NOTES_FILE" \
+                  --prerelease
+                echo "gh release create exit: $?"
+              fi
             fi
           } | tee controls-full-report.txt
 
@@ -397,6 +565,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Salvaguarda contra o próprio passo "Controlos A/B + candidatos" acima: quando um
+          # candidato vence, esse passo cria e empurra a tag diretamente (só corre em
+          # workflow_dispatch) e já publica o release com os assets EXATOS que passaram no smoke
+          # test. Empurrar essa tag despoleta este mesmo workflow outra vez, agora como push de
+          # tag — sem esta guarda, este passo reconstruiria tudo do zero e sobrescreveria
+          # (--clobber) os assets já testados por um rebuild equivalente mas não idêntico.
+          EXISTING_ASSETS=$(gh release view "${{ github.ref_name }}" --json assets --jq '.assets | length' 2>/dev/null || echo "0")
+          if [ "$EXISTING_ASSETS" != "0" ] && [ -n "$EXISTING_ASSETS" ]; then
+            echo "Release ${{ github.ref_name }} já tem $EXISTING_ASSETS asset(s) — provavelmente publicados diretamente pela ronda de candidatos. A saltar para não sobrescrever com um rebuild redundante."
+            exit 0
+          fi
           PRERELEASE_FLAG=""
           case "${{ github.ref_name }}" in
             *-*) PRERELEASE_FLAG="--prerelease" ;;
