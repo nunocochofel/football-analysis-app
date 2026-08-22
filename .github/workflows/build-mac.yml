@@ -469,16 +469,24 @@ jobs:
               rm -rf .github/build-candidates
               git add -A src/main/index.ts src/main/ipc.ts package.json package-lock.json .github/build-candidates
               git status --short
-              git commit -m "0.8.47-rc2: aplica candidato $WINNER (corrige o crash de arranque no macOS)
-
-Escolhido automaticamente pela ronda de testes desta run — ver
-ci-diagnostics/${{ github.sha }}.md para a tabela completa de candidatos
-(C1-C5) e os backtraces lldb. Critério de aceitação: o smoke test no runner
-macos-latest chega a exit code 0 (a app arranca), em vez do SIGTRAP/exit 133
-anterior, reproduzido em todas as versões publicadas até agora.
-
-Build de teste, validado apenas no arranque — abrir vídeo, gravar na base de
-dados e chamar o ffmpeg continuam por confirmar num Mac real."
+              # Mensagem via ficheiro (git commit -F), não -m com string multi-linha inline: uma
+              # string bash com quebras de linha embutida diretamente num bloco literal YAML
+              # (run: |) precisa de todas as linhas indentadas ao nível do bloco — já apanhámos
+              # este exato problema com heredocs antes; -F evita repeti-lo aqui.
+              COMMIT_MSG_FILE="$RUNNER_TEMP/commit-message.txt"
+              printf '%s\n' \
+                "0.8.47-rc2: aplica candidato $WINNER (corrige o crash de arranque no macOS)" \
+                "" \
+                "Escolhido automaticamente pela ronda de testes desta run — ver" \
+                "ci-diagnostics/${{ github.sha }}.md para a tabela completa de candidatos" \
+                "(C1-C5) e os backtraces lldb. Critério de aceitação: o smoke test no runner" \
+                "macos-latest chega a exit code 0 (a app arranca), em vez do SIGTRAP/exit 133" \
+                "anterior, reproduzido em todas as versões publicadas até agora." \
+                "" \
+                "Build de teste, validado apenas no arranque — abrir vídeo, gravar na base de" \
+                "dados e chamar o ffmpeg continuam por confirmar num Mac real." \
+                > "$COMMIT_MSG_FILE"
+              git commit -F "$COMMIT_MSG_FILE"
               git push origin HEAD:refs/heads/main
               PUSH_EXIT=$?
               echo "git push (main) exit: $PUSH_EXIT"
