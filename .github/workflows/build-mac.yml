@@ -325,7 +325,13 @@ jobs:
             echo ">>> CORREÇÃO (productName ASCII, app real) VEREDICTO: exit=$FIX_EXIT <<<"
             echo ""
 
-            if [ "$FIX_EXIT" = "0" ]; then
+            # Ao contrário do stub das rondas anteriores (que tinha app.quit() e por isso dava
+            # exit 0 sozinho), a app REAL não se fecha sozinha — um build que arranca bem corre
+            # normalmente até o próprio watchdog do run_with_timeout a matar aos 25s com SIGKILL
+            # (exit 137), depois de já ter passado por did-finish-load e setupAutoUpdate(). Só
+            # SIGTRAP (133, a assinatura do crash em todas as rondas anteriores) ou outro código
+            # inesperado conta como falha aqui.
+            if [ "$FIX_EXIT" = "0" ] || [ "$FIX_EXIT" = "137" ]; then
               echo "===================================================="
               echo "PUBLICAÇÃO — a correção passou no smoke test com a app real, a aplicar ao repositório"
               echo "===================================================="
