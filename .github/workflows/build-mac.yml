@@ -130,15 +130,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           exit 0
-      # Controlos A/B (contexto) seguidos da matriz P0-P7: uma ronda anterior descobriu que A2
-      # (Electron virgem, hello-world isolado, sem assinatura/asar) arranca, mas C1 (o mesmo
-      # código trivial, empacotado pelo electron-builder desta app) continua a rebentar — ou seja,
-      # o código da app e a versão do Electron estão inocentes, o culpado está na configuração de
-      # empacotamento. Esta ronda bisseta essa superfície: mesmo stub mínimo em todos os testes, só
-      # a config de build (identity/hardenedRuntime/entitlements/asar/asarUnpack/productName) varia
-      # entre P0 (referência mínima) e P7 (config completa atual). Ronda de diagnóstico puro — não
-      # publica nada (ver o fim do script). Restrito a workflow_dispatch como as rondas anteriores.
-      - name: Controlos A/B + matriz de bisseção do empacotamento (P0-P7)
+      # Controlos A/B (contexto) seguidos da correção real: a matriz P0-P7 de uma ronda anterior
+      # isolou o productName acentuado ("Análise Tática", também o nome do .app e do executável)
+      # como a ÚNICA variável de empacotamento que sozinha transforma um build que arranca num
+      # que rebenta — identity ad-hoc, hardenedRuntime true, os 4 entitlements, asar:false e
+      # asarUnpack ffmpeg/ffprobe passaram todos isolados. Este passo aplica productName -> "LINHA"
+      # à app REAL (não ao stub), corre o smoke test, e só publica (commit + tag v0.8.47-rc2 +
+      # release) se passar — exatamente o artefacto testado, sem rebuild por cima. Restrito a
+      # workflow_dispatch como as rondas anteriores.
+      - name: Controlos A/B + correção (productName ASCII) + publicação condicional
         if: github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -279,125 +279,114 @@ jobs:
             fi
 
             echo "===================================================="
-            echo "MUDANÇA DE FOCO: A2 (hello-world isolado) arranca mas C1 (mesmo código trivial,"
-            echo "empacotado por esta app) rebenta — o culpado está na configuração de build, não"
-            echo "no código nem na versão do Electron. Bisseção pura da superfície de"
-            echo "empacotamento sobre o MESMO stub mínimo — código nunca muda, só build.mac/asar."
-            echo "Ronda sem publicação (pedido explícito) — só a tabela P0-P7 fica no ci-diagnostics."
+            echo "CAUSA RAIZ ISOLADA (matriz P0-P7 de uma ronda anterior): productName acentuado"
+            echo "('Análise Tática', que é também o nome do .app e do executável) é a ÚNICA"
+            echo "variável de empacotamento que, sozinha, transforma um build que arranca num que"
+            echo "rebenta. Identity ad-hoc, hardenedRuntime true, os 4 entitlements, asar:false e"
+            echo "asarUnpack ffmpeg/ffprobe passaram todos isolados. Esta ronda aplica a correção"
+            echo "(productName -> ASCII) à app REAL — não ao stub — e publica só se passar."
             echo "===================================================="
-            MATRIX_ROWS=()
-            record_matrix () { MATRIX_ROWS+=("$1|$2|$3"); }
 
-            mkdir -p "$RUNNER_TEMP/pkg-orig"
-            cp package.json "$RUNNER_TEMP/pkg-orig/package.json"
-            cp build/entitlements.mac.plist "$RUNNER_TEMP/pkg-orig/entitlements.mac.plist"
+            # productName é partilhado por todas as plataformas em electron-builder (não há
+            # override específico do mac sem trocar para mac.executableName, o que seria uma
+            # correção diferente da que a matriz testou) — este bump também muda o nome do build
+            # Windows, não só o macOS.
+            node -e "
+              const fs = require('fs');
+              const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              p.version = '0.8.47-rc2';
+              p.build.productName = 'LINHA';
+              fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+            "
+            echo "package.json atualizado:"; grep -E '"version"|"productName"' package.json
 
-            printf '%s\n' \
-              "const { app, BrowserWindow } = require('electron')" \
-              "app.whenReady().then(() => {" \
-              "  new BrowserWindow({ width: 400, height: 300, show: false })" \
-              "  console.log('MATRIZ_STUB: BrowserWindow created OK')" \
-              "  setTimeout(() => app.quit(), 1000)" \
-              "})" \
-              > out/main/index.js
+            # A app REAL, não o stub mínimo usado na matriz — npm run build já correu no início
+            # do job, mas repete-se aqui por segurança (nenhum passo anterior tocou em src/).
+            npm run build > "$RUNNER_TEMP/build-src-fix.log" 2>&1
+            echo "npm run build (fonte real) exit: $?"
 
-            # Cada Pn é o mesmo objeto "build" mínimo do P0 (appId de teste, productName ASCII,
-            # só dmg/zip arm64, sem identity/hardenedRuntime/entitlements/asarUnpack) com UMA
-            # variável a mais — gerados localmente e passados em base64 (uma linha só, sem as
-            # armadilhas de indentação de heredocs/strings multi-linha já apanhadas nesta run).
-            P0_B64="eyJhcHBJZCI6ImNvbS5udW5vY29jaG9mZWwudGVzdGVlbXBhY290YW1lbnRvIiwicHJvZHVjdE5hbWUiOiJsaW5oYSIsImRpcmVjdG9yaWVzIjp7Im91dHB1dCI6ImRpc3QiLCJidWlsZFJlc291cmNlcyI6ImJ1aWxkIn0sImZpbGVzIjpbIm91dC8qKi8qIiwicGFja2FnZS5qc29uIl0sIm1hYyI6eyJ0YXJnZXQiOlt7InRhcmdldCI6ImRtZyIsImFyY2giOlsiYXJtNjQiXX0seyJ0YXJnZXQiOiJ6aXAiLCJhcmNoIjpbImFybTY0Il19XSwiaWNvbiI6ImJ1aWxkL2ljb24ucG5nIn19"
-            P1_B64="eyJhcHBJZCI6ImNvbS5udW5vY29jaG9mZWwudGVzdGVlbXBhY290YW1lbnRvIiwicHJvZHVjdE5hbWUiOiJsaW5oYSIsImRpcmVjdG9yaWVzIjp7Im91dHB1dCI6ImRpc3QiLCJidWlsZFJlc291cmNlcyI6ImJ1aWxkIn0sImZpbGVzIjpbIm91dC8qKi8qIiwicGFja2FnZS5qc29uIl0sIm1hYyI6eyJ0YXJnZXQiOlt7InRhcmdldCI6ImRtZyIsImFyY2giOlsiYXJtNjQiXX0seyJ0YXJnZXQiOiJ6aXAiLCJhcmNoIjpbImFybTY0Il19XSwiaWNvbiI6ImJ1aWxkL2ljb24ucG5nIiwiaWRlbnRpdHkiOiItIn19"
-            P2_B64="eyJhcHBJZCI6ImNvbS5udW5vY29jaG9mZWwudGVzdGVlbXBhY290YW1lbnRvIiwicHJvZHVjdE5hbWUiOiJsaW5oYSIsImRpcmVjdG9yaWVzIjp7Im91dHB1dCI6ImRpc3QiLCJidWlsZFJlc291cmNlcyI6ImJ1aWxkIn0sImZpbGVzIjpbIm91dC8qKi8qIiwicGFja2FnZS5qc29uIl0sIm1hYyI6eyJ0YXJnZXQiOlt7InRhcmdldCI6ImRtZyIsImFyY2giOlsiYXJtNjQiXX0seyJ0YXJnZXQiOiJ6aXAiLCJhcmNoIjpbImFybTY0Il19XSwiaWNvbiI6ImJ1aWxkL2ljb24ucG5nIiwiaGFyZGVuZWRSdW50aW1lIjp0cnVlfX0="
-            P3_B64="eyJhcHBJZCI6ImNvbS5udW5vY29jaG9mZWwudGVzdGVlbXBhY290YW1lbnRvIiwicHJvZHVjdE5hbWUiOiJsaW5oYSIsImRpcmVjdG9yaWVzIjp7Im91dHB1dCI6ImRpc3QiLCJidWlsZFJlc291cmNlcyI6ImJ1aWxkIn0sImZpbGVzIjpbIm91dC8qKi8qIiwicGFja2FnZS5qc29uIl0sIm1hYyI6eyJ0YXJnZXQiOlt7InRhcmdldCI6ImRtZyIsImFyY2giOlsiYXJtNjQiXX0seyJ0YXJnZXQiOiJ6aXAiLCJhcmNoIjpbImFybTY0Il19XSwiaWNvbiI6ImJ1aWxkL2ljb24ucG5nIiwiZW50aXRsZW1lbnRzIjoiYnVpbGQvZW50aXRsZW1lbnRzLm1hYy5wbGlzdCIsImVudGl0bGVtZW50c0luaGVyaXQiOiJidWlsZC9lbnRpdGxlbWVudHMubWFjLnBsaXN0In19"
-            P4_B64="eyJhcHBJZCI6ImNvbS5udW5vY29jaG9mZWwudGVzdGVlbXBhY290YW1lbnRvIiwicHJvZHVjdE5hbWUiOiJsaW5oYSIsImRpcmVjdG9yaWVzIjp7Im91dHB1dCI6ImRpc3QiLCJidWlsZFJlc291cmNlcyI6ImJ1aWxkIn0sImZpbGVzIjpbIm91dC8qKi8qIiwicGFja2FnZS5qc29uIl0sIm1hYyI6eyJ0YXJnZXQiOlt7InRhcmdldCI6ImRtZyIsImFyY2giOlsiYXJtNjQiXX0seyJ0YXJnZXQiOiJ6aXAiLCJhcmNoIjpbImFybTY0Il19XSwiaWNvbiI6ImJ1aWxkL2ljb24ucG5nIn0sImFzYXIiOmZhbHNlfQ=="
-            P5_B64="eyJhcHBJZCI6ImNvbS5udW5vY29jaG9mZWwudGVzdGVlbXBhY290YW1lbnRvIiwicHJvZHVjdE5hbWUiOiJBbsOhbGlzZSBUw6F0aWNhIiwiZGlyZWN0b3JpZXMiOnsib3V0cHV0IjoiZGlzdCIsImJ1aWxkUmVzb3VyY2VzIjoiYnVpbGQifSwiZmlsZXMiOlsib3V0LyoqLyoiLCJwYWNrYWdlLmpzb24iXSwibWFjIjp7InRhcmdldCI6W3sidGFyZ2V0IjoiZG1nIiwiYXJjaCI6WyJhcm02NCJdfSx7InRhcmdldCI6InppcCIsImFyY2giOlsiYXJtNjQiXX1dLCJpY29uIjoiYnVpbGQvaWNvbi5wbmcifX0="
-            P6_B64="eyJhcHBJZCI6ImNvbS5udW5vY29jaG9mZWwudGVzdGVlbXBhY290YW1lbnRvIiwicHJvZHVjdE5hbWUiOiJsaW5oYSIsImRpcmVjdG9yaWVzIjp7Im91dHB1dCI6ImRpc3QiLCJidWlsZFJlc291cmNlcyI6ImJ1aWxkIn0sImZpbGVzIjpbIm91dC8qKi8qIiwicGFja2FnZS5qc29uIl0sIm1hYyI6eyJ0YXJnZXQiOlt7InRhcmdldCI6ImRtZyIsImFyY2giOlsiYXJtNjQiXX0seyJ0YXJnZXQiOiJ6aXAiLCJhcmNoIjpbImFybTY0Il19XSwiaWNvbiI6ImJ1aWxkL2ljb24ucG5nIn0sImFzYXJVbnBhY2siOlsiKiovbm9kZV9tb2R1bGVzL2ZmbXBlZy1zdGF0aWMvKioiLCIqKi9ub2RlX21vZHVsZXMvZmZwcm9iZS1zdGF0aWMvKioiXX0="
+            npx electron-builder --mac --publish never > "$RUNNER_TEMP/build-fix.log" 2>&1
+            FIX_BUILD_EXIT=$?
+            echo "electron-builder exit (correção): $FIX_BUILD_EXIT"
+            tail -40 "$RUNNER_TEMP/build-fix.log"
 
-            apply_build_config () {
-              # $1 = base64 do objeto "build" a aplicar sobre o package.json original (nome,
-              # versão, dependencies, main ficam intocados — só o campo "build" é substituído)
-              cp "$RUNNER_TEMP/pkg-orig/package.json" package.json
-              node -e "
-                const fs = require('fs');
-                const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-                p.build = JSON.parse(Buffer.from('$1', 'base64').toString('utf8'));
-                fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
-              "
-            }
+            FIX_EXIT="sem-build"
+            if [ "$FIX_BUILD_EXIT" = "0" ]; then
+              FIX_APP_PATH=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
+              FIX_EXEC_PATH=$(find "$FIX_APP_PATH/Contents/MacOS" -maxdepth 1 -type f | head -1)
+              echo "APP_PATH=$FIX_APP_PATH"
+              echo "EXEC_PATH=$FIX_EXEC_PATH"
+              codesign -dvvv "$FIX_APP_PATH" 2>&1 | grep -E "^Signature=|^Sealed Resources|^Info.plist entries|CodeDirectory"
+              run_with_timeout 25 "correção productName ASCII — app REAL — smoke test" \
+                env ELECTRON_ENABLE_LOGGING=1 "$FIX_EXEC_PATH"
+              FIX_EXIT="$LAST_EXIT_CODE"
+            fi
+            echo ""
+            echo ">>> CORREÇÃO (productName ASCII, app real) VEREDICTO: exit=$FIX_EXIT <<<"
+            echo ""
 
-            run_matrix_candidate () {
-              # $1 = nome (P0..P7), $2 = base64 do build config, ou "ORIGINAL" para a config real
-              # completa da app sem qualquer alteração (= P7, repete o C1 de propósito).
-              local name="$1"; local b64="$2"
+            if [ "$FIX_EXIT" = "0" ]; then
               echo "===================================================="
-              echo "$name"
+              echo "PUBLICAÇÃO — a correção passou no smoke test com a app real, a aplicar ao repositório"
               echo "===================================================="
-              # build/entitlements.mac.plist "se presente" é apanhado por convenção pelo
-              # electron-builder mesmo sem mac.entitlements explícito, sempre que a app fica
-              # assinada — remove-se para todos exceto P3/P7, para isolar essa variável a sério.
-              rm -f build/entitlements.mac.plist
-              if [ "$name" = "P3" ] || [ "$name" = "P7" ]; then
-                cp "$RUNNER_TEMP/pkg-orig/entitlements.mac.plist" build/entitlements.mac.plist
-              fi
-              if [ "$b64" = "ORIGINAL" ]; then
-                cp "$RUNNER_TEMP/pkg-orig/package.json" package.json
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git add package.json
+              git status --short
+              COMMIT_MSG_FILE="$RUNNER_TEMP/commit-message.txt"
+              printf '%s\n' \
+                "0.8.47-rc2: corrige o crash de arranque no macOS (productName ASCII)" \
+                "" \
+                "Causa raiz isolada por bisseção (matriz P0-P7, uma variável de empacotamento" \
+                "de cada vez, sobre o mesmo código trivial): das 6 variáveis testadas" \
+                "isoladamente (identity ad-hoc, hardenedRuntime true, os 4 entitlements," \
+                "asar:false, asarUnpack ffmpeg/ffprobe), nenhuma sozinha reproduz o crash." \
+                "Só o productName acentuado ('Análise Tática', também o nome do executável" \
+                "dentro do bundle) faz um build que arranca passar a rebentar (EXC_BREAKPOINT/" \
+                "SIGTRAP, thread CrBrowserMain, sempre no mesmo endereço em Electron Framework)." \
+                "O código da app e a versão do Electron já tinham sido eliminados em rondas" \
+                "anteriores (A2 vs C1, e C4/C5)." \
+                "" \
+                "Ver ci-diagnostics/${{ github.sha }}.md para a tabela P0-P7 completa." \
+                "" \
+                "Build de teste, validado apenas no arranque — abrir vídeo, gravar na base de" \
+                "dados e chamar o ffmpeg continuam por confirmar num Mac real." \
+                > "$COMMIT_MSG_FILE"
+              git commit -F "$COMMIT_MSG_FILE"
+              git push origin HEAD:refs/heads/main
+              PUSH_EXIT=$?
+              echo "git push (main) exit: $PUSH_EXIT"
+              if [ "$PUSH_EXIT" != "0" ]; then
+                echo "ERRO: push para main falhou — a abortar publicação sem criar tag/release. Ver o log acima."
               else
-                apply_build_config "$b64"
+                git tag v0.8.47-rc2
+                git push origin v0.8.47-rc2
+                echo "git push (tag v0.8.47-rc2) exit: $?"
+
+                NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+                printf '%s\n' \
+                  "Correção do crash de arranque no macOS (EXC_BREAKPOINT/SIGTRAP, thread CrBrowserMain, morria em milissegundos antes de qualquer janela abrir, em 100% dos builds anteriores)." \
+                  "" \
+                  "**Causa raiz isolada:** o nome do produto/bundle/executável tinha acentos (\"Análise Tática\"). Uma matriz de bisseção testou 6 outras variáveis de empacotamento isoladamente (assinatura ad-hoc, Hardened Runtime, entitlements, asar desativado, ffmpeg/ffprobe fora do asar) — nenhuma delas, sozinha, reproduz o crash. Só o nome acentuado o faz. Passa a chamar-se **LINHA**." \
+                  "" \
+                  "**O que este build prova:** o smoke test automático no runner macOS confirma que a app agora ARRANCA (exit code 0)." \
+                  "" \
+                  "**O que este build NÃO prova:** o smoke test só confirma o arranque, não a funcionalidade. Abrir vídeos, gravar na base de dados e chamar o ffmpeg continuam por testar num Mac real." \
+                  "" \
+                  "Tabela completa da bisseção P0-P7: https://raw.githubusercontent.com/${{ github.repository }}/ci-diagnostics/${{ github.sha }}.md" \
+                  > "$NOTES_FILE"
+
+                gh release create v0.8.47-rc2 \
+                  dist/*.dmg dist/*.dmg.blockmap dist/*.zip dist/latest-mac.yml \
+                  --title "v0.8.47-rc2 (productName ASCII)" \
+                  --notes-file "$NOTES_FILE" \
+                  --prerelease
+                echo "gh release create exit: $?"
               fi
-
-              npx electron-builder --mac --publish never > "$RUNNER_TEMP/matrix-build-$name.log" 2>&1
-              local build_exit=$?
-              echo "electron-builder exit ($name): $build_exit"
-              tail -25 "$RUNNER_TEMP/matrix-build-$name.log"
-              if [ "$build_exit" != "0" ]; then
-                record_matrix "$name" "build-falhou($build_exit)" "electron-builder não produziu .app"
-                return
-              fi
-
-              local app_path exec_path
-              app_path=$(find dist -maxdepth 2 -iname "*.app" -type d | head -1)
-              exec_path=$(find "$app_path/Contents/MacOS" -maxdepth 1 -type f | head -1)
-              echo "APP_PATH=$app_path"
-              echo "EXEC_PATH=$exec_path"
-              echo "----- assinatura real obtida -----"
-              codesign -dvvv "$app_path" 2>&1 | grep -E "^Signature=|^Sealed Resources|^Info.plist entries|CodeDirectory"
-
-              run_with_timeout 20 "$name — smoke test" \
-                env ELECTRON_ENABLE_LOGGING=1 "$exec_path"
-              record_matrix "$name" "$LAST_EXIT_CODE" ""
-            }
-
-            run_matrix_candidate "P0" "$P0_B64"
-            run_matrix_candidate "P1" "$P1_B64"
-            run_matrix_candidate "P2" "$P2_B64"
-            run_matrix_candidate "P3" "$P3_B64"
-            run_matrix_candidate "P4" "$P4_B64"
-            run_matrix_candidate "P5" "$P5_B64"
-            run_matrix_candidate "P6" "$P6_B64"
-            run_matrix_candidate "P7" "ORIGINAL"
-
-            # Repor tudo — package.json e entitlements originais, out/ limpo a partir do
-            # TypeScript real. Esta ronda é bisseção pura, nada fica a meio.
-            cp "$RUNNER_TEMP/pkg-orig/package.json" package.json
-            cp "$RUNNER_TEMP/pkg-orig/entitlements.mac.plist" build/entitlements.mac.plist
-            npm run build > "$RUNNER_TEMP/rebuild-out-final.log" 2>&1
-            echo "npm run build (repor out/ limpo, fim da ronda) exit: $?"
-
-            echo "===================================================="
-            echo "TABELA MATRIZ DE EMPACOTAMENTO (P0-P7)"
-            echo "===================================================="
-            printf '%-6s | %-8s | %s\n' "config" "exit" "nota"
-            printf -- '-------|----------|--------------------------------------------\n'
-            for row in "${MATRIX_ROWS[@]}"; do
-              IFS='|' read -r cname cexit cnote <<< "$row"
-              printf '%-6s | %-8s | %s\n' "$cname" "$cexit" "$cnote"
-            done
-            echo ""
-            echo "P0=referência mínima  P1=+identity ad-hoc  P2=+hardenedRuntime true"
-            echo "P3=+entitlements  P4=+asar:false  P5=+productName acentuado  P6=+asarUnpack ffmpeg/ffprobe"
-            echo "P7=config completa atual da app (repete o C1, para confirmar 133 nesta ronda)"
-            echo ""
-            echo "Ronda de bisseção pura — nada foi commitado, marcado com tag, ou publicado."
+            else
+              echo "A correção NÃO passou no smoke test com a app real (exit=$FIX_EXIT) — a não publicar nada."
+              echo "Isto seria inesperado dada a matriz P0-P7 — investigar antes de tentar outra vez."
+            fi
           } | tee controls-full-report.txt
 
           {
