@@ -1,6 +1,6 @@
 {
   "name": "football-analysis-app",
-  "version": "0.8.47-rc1",
+  "version": "0.8.47-rc2",
   "description": "App de análise de vídeo de futebol (MVP)",
   "main": "./out/main/index.js",
   "author": "",
@@ -46,7 +46,7 @@
   },
   "build": {
     "appId": "com.nunocochofel.linha",
-    "productName": "Análise Tática",
+    "productName": "LINHA",
     "directories": {
       "output": "dist",
       "buildResources": "build"
