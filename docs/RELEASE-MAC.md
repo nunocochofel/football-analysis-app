@@ -63,7 +63,7 @@ de a partir do Finder, para veres o erro que a interface gráfica normalmente
 engole:
 
 ```bash
-ELECTRON_ENABLE_LOGGING=1 "/Applications/Análise Tática.app/Contents/MacOS/Análise Tática"
+ELECTRON_ENABLE_LOGGING=1 "/Applications/LINHA.app/Contents/MacOS/LINHA"
 ```
 
 Deixa correr até fechar (ou até tu fechares, se ficar pendurado) e copia todo
@@ -74,9 +74,9 @@ quarentena (confirma que o download veio mesmo da internet, como um
 utilizador real receberia):
 
 ```bash
-codesign -vvv --strict "/Applications/Análise Tática.app"
-lipo -archs "/Applications/Análise Tática.app/Contents/MacOS/Análise Tática"
-xattr -l "/Applications/Análise Tática.app"
+codesign -vvv --strict "/Applications/LINHA.app"
+lipo -archs "/Applications/LINHA.app/Contents/MacOS/LINHA"
+xattr -l "/Applications/LINHA.app"
 ```
 
 `lipo -archs` deve devolver só `arm64` (não `x86_64 arm64`) — se devolver mais
