@@ -6516,8 +6516,10 @@ function canvasToJpegBytes(canvas, quality, bench){
   });
 }
 
-async function drawExportFrame(ectx, exportCanvas, tag, atTime, source, bench){
-  const tDraw0 = bench ? performance.now() : 0;
+// Pure drawing, no encoding — shared by the Electron JPEG path (drawExportFrame below) and the
+// Web streaming path (captureAndEncodeClipWeb further down), so both draw shapes/zoom identically
+// and neither can drift from the other.
+function drawExportFrameContent(ectx, exportCanvas, tag, atTime, source){
   const zoom = tag.zoom;
   if(zoom && zoom.scale > 1){
     const sw = exportCanvas.width/zoom.scale, sh = exportCanvas.height/zoom.scale;
@@ -6532,6 +6534,11 @@ async function drawExportFrame(ectx, exportCanvas, tag, atTime, source, bench){
     const end = s.endSec!=null ? s.endSec : tag.outSec;
     if(atTime>=start && atTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
   });
+}
+
+async function drawExportFrame(ectx, exportCanvas, tag, atTime, source, bench){
+  const tDraw0 = bench ? performance.now() : 0;
+  drawExportFrameContent(ectx, exportCanvas, tag, atTime, source);
   if(bench) bench.drawMs = (bench.drawMs||0) + (performance.now()-tDraw0);
   return canvasToJpegBytes(exportCanvas, 0.88, bench);
 }
@@ -6853,13 +6860,38 @@ async function processExportQueue(){
 // Web/PWA-only clip export: Electron's native ffmpeg pipeline doesn't exist outside Electron at
 // all — there's no ffmpeg-in-a-browser — so this is a genuinely different encode pipeline, not the
 // same thing running somewhere else: WebCodecs VideoEncoder feeding a vendored MP4 muxer (see
-// vendor/mp4-muxer.js), instead of a spawned ffmpeg process. It reuses the EXACT SAME captured JPEG
-// frames from captureClipFrames() that the Electron path also uses — only what happens to them
-// AFTER capture differs. Deliberately video-only for now (no audio track): muxing an audio track
-// too is real additional work (AudioEncoder, a second encode pass synced to the same timestamps)
-// that hasn't been built and tested yet — shipping silent video and disclosing that plainly beats
-// pretending this already has full parity with the desktop export.
-async function encodeClipFramesWeb(frames, fps, quality, onProgress, isCancelled){
+// vendor/mp4-muxer.js), instead of a spawned ffmpeg process. Deliberately video-only for now (no
+// audio track): muxing an audio track too is real additional work (AudioEncoder, a second encode
+// pass synced to the same timestamps) that hasn't been built and tested yet — shipping silent
+// video and disclosing that plainly beats pretending this already has full parity with the
+// desktop export.
+//
+// Capture and encode are ONE streaming pass here, not two phases like the Electron path
+// (captureClipFrames() collects a full JPEG-byte array first, handed to ffmpeg afterward over
+// IPC) — deliberately NOT reusing that function. Two reasons, not one:
+//   1. JPEG round-trip removed entirely: VideoEncoder.encode() takes a VideoFrame built directly
+//      from the canvas (new VideoFrame(exportCanvas, {timestamp}), which snapshots the pixel data
+//      synchronously at construction time — safe to redraw the canvas immediately after). No
+//      canvas.toBlob() JPEG encode, no createImageBitmap() JPEG decode, on the one platform where
+//      neither ever served a purpose (there's no IPC boundary here for JPEG bytes to cross).
+//   2. Memory: an array of decoded frames instead of JPEG bytes was considered and rejected — a
+//      1080p ImageBitmap is ~8MB uncompressed; a 30s/25fps clip is 750 of them, ~6GB held at once
+//      if capture finished before encoding started, almost certain to crash Safari's tab on an
+//      iPad well before it would even trouble a desktop. Streaming straight into the encoder one
+//      frame at a time (VideoEncoder manages its own small internal queue/backpressure) never
+//      holds more than one decoded frame in JS memory regardless of clip length.
+// The sampling strategy itself (real 1x playback + requestVideoFrameCallback, sampling at the
+// target export fps using each callback's actual mediaTime; seek-per-frame only as a fallback
+// where rVFC isn't supported at all) is UNCHANGED from captureClipFrames() — see the big comment
+// there for why. `bench` (optional, {drawMs, h264EncodeMs, h264FlushMs, decodeWaitMs,
+// catchUpEvents, duplicatedSamples, maxSamplesPerCallback, frameCount}) is the same opt-in
+// accumulator used by [export-bench] elsewhere — catchUpEvents/duplicatedSamples/
+// maxSamplesPerCallback are new: they count, directly and internally, how often a single rVFC
+// callback had to draw more than one target sample (i.e. the device fell behind real-time and the
+// SAME decoded frame got encoded at more than one output timestamp) — the exact mechanism behind
+// "video looks choppy but has the right frame count and constant frame rate", confirmable without
+// a round-trip to a desktop ffmpeg/mpdecimate check.
+async function captureAndEncodeClipWeb(el, tag, fps, resolution, quality, onProgress, isCancelled, bench){
   if(typeof VideoEncoder === 'undefined' || typeof Mp4Muxer === 'undefined'){
     throw new Error('Este navegador não suporta exportação de vídeo (requer WebCodecs: Safari 16.4+/iOS 16.4+, Chrome 94+, Edge 94+).');
   }
@@ -6872,15 +6904,16 @@ async function encodeClipFramesWeb(frames, fps, quality, onProgress, isCancelled
   if('wakeLock' in navigator){
     try{ wakeLock = await navigator.wakeLock.request('screen'); }catch(_e){ /* not fatal — export still works, screen may just lock */ }
   }
-  // Frame dimensions aren't tracked separately from the JPEG bytes — decode the first one to find
-  // out, same as the browser has to do to draw any of them anyway.
-  const firstBitmap = await createImageBitmap(new Blob([frames[0]], {type:'image/jpeg'}));
-  const width = firstBitmap.width, height = firstBitmap.height;
-  firstBitmap.close();
+
+  const exportCanvas = document.createElement('canvas');
+  const canvasSize = computeExportCanvasSize(el.videoWidth, el.videoHeight, resolution);
+  exportCanvas.width = canvasSize.w;
+  exportCanvas.height = canvasSize.h;
+  const ectx = exportCanvas.getContext('2d');
 
   const muxer = new Mp4Muxer.Muxer({
     target: new Mp4Muxer.ArrayBufferTarget(),
-    video: { codec:'avc', width, height, frameRate: fps },
+    video: { codec:'avc', width: canvasSize.w, height: canvasSize.h, frameRate: fps },
     fastStart: 'in-memory'
   });
   const encoder = new VideoEncoder({
@@ -6891,31 +6924,125 @@ async function encodeClipFramesWeb(frames, fps, quality, onProgress, isCancelled
   // avc1.640028 = H.264 High profile, level 4.0 — decodes in hardware on essentially everything
   // that has WebCodecs at all, including iOS, while still giving reasonable quality/bitrate headroom.
   encoder.configure({
-    codec: 'avc1.640028', width, height,
+    codec: 'avc1.640028', width: canvasSize.w, height: canvasSize.h,
     bitrate: BITRATE_BY_QUALITY[quality] || BITRATE_BY_QUALITY.balanced,
     framerate: fps
   });
 
+  const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
+  const frameInterval = 1/fps;
+  const frameDurationUs = Math.round(1_000_000/fps);
+  const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
+  let sampleIndex = 0;
+
+  // Encodes the CURRENTLY DRAWN canvas content as one more output sample — used both for the
+  // normal case (one sample per drawAndEncodeAt call) and for freeze holds (several samples in a
+  // row, same still-undrawn-over canvas, no redraw between them).
+  function encodeOneSample(){
+    const tEnc0 = bench ? performance.now() : 0;
+    const videoFrame = new VideoFrame(exportCanvas, { timestamp: sampleIndex*frameDurationUs, duration: frameDurationUs });
+    encoder.encode(videoFrame, { keyFrame: sampleIndex % (fps*2) === 0 }); // a keyframe every ~2s, not just the first
+    videoFrame.close();
+    if(bench) bench.h264EncodeMs = (bench.h264EncodeMs||0) + (performance.now()-tEnc0);
+    sampleIndex++;
+  }
+  function drawAndEncodeAt(atTime){
+    const tDraw0 = bench ? performance.now() : 0;
+    drawExportFrameContent(ectx, exportCanvas, tag, atTime, el);
+    if(bench) bench.drawMs = (bench.drawMs||0) + (performance.now()-tDraw0);
+    encodeOneSample();
+  }
+
   try{
-    const frameDurationUs = Math.round(1_000_000/fps);
-    for(let i=0; i<frames.length; i++){
-      if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
-      const bitmap = await createImageBitmap(new Blob([frames[i]], {type:'image/jpeg'}));
-      const videoFrame = new VideoFrame(bitmap, { timestamp: i*frameDurationUs, duration: frameDurationUs });
-      bitmap.close();
-      encoder.encode(videoFrame, { keyFrame: i % (fps*2) === 0 }); // a keyframe every ~2s, not just the first
-      videoFrame.close();
-      if(onProgress) onProgress(Math.round((i/frames.length)*100));
-      // The encoder queues frames internally — yield occasionally so a long clip doesn't feel like
-      // it blocked the tab for its whole duration (progress UI, the cancel check above...).
-      if(i % 8 === 0) await new Promise(r=>setTimeout(r,0));
+    if(typeof el.requestVideoFrameCallback !== 'function'){
+      // Fallback path (no requestVideoFrameCallback support): seek-per-frame — mirrors
+      // captureClipFramesBySeeking() exactly, streaming instead of collecting a JPEG array.
+      const totalFrames = Math.max(1, Math.round(totalSec * fps));
+      let freezeIdx = 0, t = tag.inSec;
+      el.pause();
+      await seekVideoTo(el, t);
+      for(let i=0; i<totalFrames; i++){
+        if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
+        drawAndEncodeAt(t);
+        if(freezeIdx < freezes.length && t >= freezes[freezeIdx].atSec){
+          const holdFrames = Math.max(1, Math.round(freezes[freezeIdx].holdSec * fps));
+          for(let h=0; h<holdFrames; h++) encodeOneSample();
+          freezeIdx++;
+        }
+        t = Math.min(tag.outSec, t+frameInterval);
+        if(i < totalFrames-1) await seekVideoTo(el, t);
+        if(onProgress && i%8===0) onProgress(Math.round((i/totalFrames)*100));
+      }
+    } else {
+      el.pause();
+      await seekVideoTo(el, tag.inSec);
+      const originalMuted = el.muted, originalRate = el.playbackRate;
+      el.muted = true;
+      let tLastFrameEnd = bench ? performance.now() : 0;
+      try{
+        await new Promise((resolve, reject) => {
+          let nextSampleTime = tag.inSec;
+          let freezeIdx = 0;
+
+          function captureUpTo(t){
+            let samplesThisCall = 0;
+            while(nextSampleTime <= t && nextSampleTime <= tag.outSec + 1e-6){
+              drawAndEncodeAt(nextSampleTime);
+              samplesThisCall++;
+              onProgress(Math.min(99, Math.round((nextSampleTime-tag.inSec)/totalSec*100)));
+              while(freezeIdx < freezes.length && freezes[freezeIdx].atSec <= nextSampleTime){
+                const holdFrames = Math.max(1, Math.round(Math.max(0, freezes[freezeIdx].holdSec) * fps));
+                for(let h=0; h<holdFrames; h++) encodeOneSample();
+                freezeIdx++;
+              }
+              nextSampleTime += frameInterval;
+            }
+            // Direct, internal confirmation of the duplicate-frame hypothesis: more than one
+            // target sample drawn from the SAME decoded frame in this callback means the device
+            // fell behind real-time between the previous callback and this one.
+            if(bench && samplesThisCall > 1){
+              bench.catchUpEvents = (bench.catchUpEvents||0) + 1;
+              bench.duplicatedSamples = (bench.duplicatedSamples||0) + (samplesThisCall-1);
+              bench.maxSamplesPerCallback = Math.max(bench.maxSamplesPerCallback||0, samplesThisCall);
+            }
+          }
+
+          async function onFrame(now, metadata){
+            if(bench){
+              const tNow = performance.now();
+              bench.decodeWaitMs = (bench.decodeWaitMs||0) + (tNow-tLastFrameEnd);
+            }
+            try{
+              if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
+              captureUpTo(metadata.mediaTime);
+              if(metadata.mediaTime >= tag.outSec || el.ended){ el.pause(); resolve(); return; }
+            }catch(err){ el.pause(); reject(err); return; }
+            await new Promise(r => setTimeout(r, 0));
+            if(bench) tLastFrameEnd = performance.now();
+            el.requestVideoFrameCallback(onFrame);
+          }
+
+          el.playbackRate = 1;
+          el.play().then(() => { tLastFrameEnd = bench ? performance.now() : 0; el.requestVideoFrameCallback(onFrame); }).catch(reject);
+        });
+      } finally {
+        el.muted = originalMuted;
+        el.playbackRate = originalRate;
+      }
+      if(sampleIndex === 0 || totalSec > (sampleIndex/fps) + frameInterval){
+        drawAndEncodeAt(tag.outSec);
+      }
     }
+    const tFlush0 = bench ? performance.now() : 0;
     await encoder.flush();
+    if(bench) bench.h264FlushMs = (performance.now()-tFlush0);
   } finally {
     encoder.close();
     if(wakeLock) wakeLock.release().catch(()=>{});
   }
+  if(onProgress) onProgress(100);
   muxer.finalize();
+  if(bench) bench.frameCount = sampleIndex;
   return new Blob([muxer.target.buffer], {type:'video/mp4'});
 }
 
@@ -6986,35 +7113,42 @@ async function beginExportItem(item){
 
   try{
     const el = await ensureExportVideoLoaded();
-    const frames = await captureClipFrames(el, tag, CLIP_EXPORT_FPS, item.options.resolution, pct => {
-      item.progress = Math.round(pct*0.5);
+    if(isElectron()){
+      const frames = await captureClipFrames(el, tag, CLIP_EXPORT_FPS, item.options.resolution, pct => {
+        item.progress = Math.round(pct*0.5);
+        renderExportQueuePanel();
+      }, () => item.cancelRequested, bench);
+      if(item.cancelRequested) throw new Error(EXPORT_CANCELLED);
+      item.progress = 50;
       renderExportQueuePanel();
-    }, () => item.cancelRequested, bench);
-    if(item.cancelRequested) throw new Error(EXPORT_CANCELLED);
-    item.progress = 50;
-    renderExportQueuePanel();
-    // Electron: hand frames to the native ffmpeg pipeline via IPC, same as always. Web/PWA: no
-    // ffmpeg exists outside Electron at all, so this is the WebCodecs path instead — same captured
-    // frames, different encoder. Either way runExportEncode() below treats it as an opaque
-    // "produce the final file" step; item.outputPath ends up being a real filesystem path in
-    // Electron, or just this item's filename (for display) on web, with the actual video kept in
-    // item.webBlob for the panel's download/share button to use.
-    return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, false, async () => {
-      if(isElectron()){
-        return window.api.exportClipFrames({
+      // Hand frames to the native ffmpeg pipeline via IPC — item.outputPath ends up a real
+      // filesystem path once this resolves.
+      return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, false, async () =>
+        window.api.exportClipFrames({
           frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
           audioInSec: tag.inSec, audioOutSec: tag.outSec,
           folderPath: item.options.destFolder, filename: item.filename,
           resolution: item.options.resolution, quality: item.options.quality, jobId: item.jobId
-        });
-      }
-      const blob = await encodeClipFramesWeb(frames, CLIP_EXPORT_FPS, item.options.quality, pct => {
-        item.progress = 50 + Math.round(pct*0.5);
-        renderExportQueuePanel();
-      }, () => item.cancelRequested);
-      item.webBlob = blob;
-      return item.filename;
-    }) };
+        })
+      ) };
+    }
+    // Web/PWA: no ffmpeg exists outside Electron at all, so this is the WebCodecs path instead —
+    // capture and encode happen together in ONE streaming pass (see captureAndEncodeClipWeb's own
+    // comment for why). Awaited HERE, before returning — not inside runExportEncode's
+    // concurrency-gated tail the way Electron's IPC call is above — because both phases share the
+    // one singleton hidden <video> element (ensureExportVideoLoaded()/exportVideoEl): two items'
+    // captures can never safely overlap on it regardless of EXPORT_ENCODE_CONCURRENCY, and awaiting
+    // the whole thing right here, exactly where captureClipFrames used to be awaited, keeps that
+    // guarantee exactly as it already was rather than letting the queue loop race two exports over
+    // the same element. The actual video stays in item.webBlob for the panel's download/share
+    // button; runExportEncode below only needs to know the filename to report as "done".
+    const blob = await captureAndEncodeClipWeb(el, tag, CLIP_EXPORT_FPS, item.options.resolution, item.options.quality, pct => {
+      item.progress = pct;
+      renderExportQueuePanel();
+    }, () => item.cancelRequested, bench);
+    if(item.cancelRequested) throw new Error(EXPORT_CANCELLED);
+    item.webBlob = blob;
+    return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, false, async () => item.filename) };
   }catch(err){
     finishExportItemWithError(item, err);
     return null;
@@ -7079,8 +7213,8 @@ function cancelExportItemForced(id){
     item.status = 'cancelled';
   }else if(item.status === 'processing'){
     item.cancelRequested = true;
-    // On web there's no ffmpeg process to reach — encodeClipFramesWeb polls item.cancelRequested
-    // (via isCancelled()) itself, same as the capture loop already does either way.
+    // On web there's no ffmpeg process to reach — captureAndEncodeClipWeb polls
+    // item.cancelRequested (via isCancelled()) itself, same as the capture loop already does either way.
     if(item.jobId && isElectron()) window.api.cancelExport(item.jobId);
   }
   renderExportQueuePanel();
