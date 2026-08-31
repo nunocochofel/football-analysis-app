@@ -37,17 +37,17 @@ jobs:
           # User-facing per-release description — softprops/action-gh-release leaves the body
           # empty by default (no generate_release_notes here), and this project has no other
           # per-release-notes mechanism for Windows yet (see build-mac.yml's NOTES_FILE step for
-          # the equivalent there). Static text describing v0.8.48 specifically — update this block
+          # the equivalent there). Static text describing v0.8.49 specifically — update this block
           # for whatever the next release's own user-facing change actually is, same as every
           # release before this needed its own description written by hand.
           body: |
-            **Categorias: predefinições para projetos novos**
+            **Categorias: predefinições agora só na página inicial**
 
-            As categorias que editas (cor, tecla, tudo) podem agora tornar-se o ponto de
-            partida de qualquer projeto criado a seguir — em "⚙ Times & categorias" →
-            "Categorias", há um botão "Usar estas categorias em projetos novos".
+            A gestão das categorias predefinidas (editar, repor de fábrica, exportar/importar)
+            passou a estar só na página inicial, onde crias um projeto novo — já não está
+            dentro do editor de categorias de um projeto aberto. Quem já tinha as suas
+            categorias predefinidas guardadas não perde nada: continuam exatamente como
+            estavam, só o sítio onde se gerem é que mudou.
 
-            Cada projeto, uma vez criado, é dono das suas categorias: editar predefinições,
-            repor as de fábrica, ou mexer noutro projeto nunca voltam a alterar um projeto já
-            existente. Também dá para exportar/importar as predefinições como ficheiro — útil
-            para levar as tuas categorias de um computador para outro.
+            Cada projeto, uma vez criado, continua dono das suas próprias categorias: nada do
+            que fazes na página inicial volta a alterar um projeto já existente.
