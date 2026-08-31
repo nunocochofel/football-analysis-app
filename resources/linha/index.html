@@ -2182,6 +2182,16 @@ if(isMobileUI()){
   if(platformProfile === 'ipad' || platformProfile === 'android-tablet'){
     document.body.classList.add('tablet-ui');
   }
+  // R2 — measured on an iPhone: exporting at "Original" (the default for every platform — see the
+  // Resolução <select>) against a 1920x1080 source spent 10.8s of a 25.8s export just on H.264
+  // encode, one of two near-tied bottlenecks alongside decode. Encode cost scales with pixel
+  // count — 720p is ~44% of 1080p's pixels — and for tactical analysis (marking events, drawing on
+  // the pitch) the detail 1080p adds over 720p is rarely the point. Still fully overridable in the
+  // export dialog itself, same <select> as always; this only changes what's pre-selected, and only
+  // on mobile/tablet — Electron/desktop web keep "Original" as they already had it, since neither
+  // this decode/encode budget nor the phone/tablet screen the result gets watched on applies there.
+  const exportResolutionEl = document.getElementById('exportResolution');
+  if(exportResolutionEl) exportResolutionEl.value = '720p';
 }
 // LIVE (Fase 1) gate — mirrors the mobile-touch-ui pattern above, inverted: Desktop/Electron-only
 // UI (the "LIVE" panel) stays base-hidden (see its CSS) unless this class is present, so it can
