@@ -2441,23 +2441,32 @@ function listCategoryTemplates(){
   return seed;
 }
 function saveCategoryTemplates(list){ localStorage.setItem(CATEGORY_TEMPLATES_KEY, JSON.stringify(list)); }
-// The templates list (home screen) is the single source of truth for name/tecla/cor — a project's
-// own state.categories starts as a COPY of chosen templates (so a project keeps working offline of
-// template edits made mid-session, and can still have its own project-only categories), but is
-// resynced from the templates by id every time the project is opened, so an edit made on the home
-// screen reaches every project that uses that category without the user having to redo it per
-// project. Deliberately narrow: only label/key/color come from the template — isTeamPhase/isGoal/
-// countsToward/etc. are per-project semantics a template has no opinion on, and a category that
-// only exists inside this project (never a template, or since deleted from the templates list)
-// is left completely untouched.
-function migrateProjectCategoriesFromTemplates(){
-  const templates = listCategoryTemplates();
-  const byId = new Map(templates.map(t=>[t.id, t]));
+// A project, once created, owns its categories — nothing from outside ever touches them again.
+// Templates only act at project-creation time (see createProject()); there used to ALSO be a
+// resync-by-id-on-every-open step here (this function was called migrateProjectCategoriesFromTemplates),
+// silently overwriting a project's category label/key/color to match whatever the CURRENT
+// templates say. Removed: it was already silent data loss (open a 3-month-old match, its category
+// colours/keys change with no warning, no undo) — and with promoteCurrentCategoriesToTemplates()
+// below making "update the templates" an easy, routine action, it would have gone from a rare
+// latent bug to a near-guaranteed one. See the project history for the full reasoning.
+//
+// backfillMissingCategoryColors() is a DIFFERENT, unrelated concern kept from that same function
+// — some genuinely old projects were saved before every category was guaranteed a color, and
+// still load with `color` simply absent from the object. That's a missing-field repair, not a
+// resync from anything, and has nothing to do with templates — still needed regardless of the
+// removal above.
+function backfillMissingCategoryColors(){
   state.categories.forEach(c=>{
-    const t = byId.get(c.id);
-    if(t){ c.label = t.label; c.key = t.key; c.color = t.color; }
-    if(!c.color) c.color = pickDistinctCategoryColor(state.categories.map(x=>x.color)); // legacy project, never had a color
+    if(!c.color) c.color = pickDistinctCategoryColor(state.categories.map(x=>x.color));
   });
+}
+// Full deep copy of the project's CURRENT categories — deliberately not narrowed to label/key/
+// color like the old resync was: isGoal/isTeamPhase/countsToward should carry over too, so a new
+// project seeded from this ends up materially the same as the one it was promoted from, not a
+// stripped-down version of it. Replaces the templates list entirely (not merged) — the caller is
+// responsible for confirming with the user first, this function just does it.
+function promoteCurrentCategoriesToTemplates(){
+  saveCategoryTemplates(JSON.parse(JSON.stringify(state.categories)));
 }
 
 let selectedTemplateCatIds = new Set();
@@ -2466,11 +2475,12 @@ function updateTemplateCatSummary(){
   document.getElementById('templateCatSummary').textContent =
     '🏷 Categorias a usar neste projeto' + (n ? ' — ' + n + ' selecionada' + (n===1?'':'s') : '');
 }
-// This list IS the single source of truth for category name/tecla/cor — editable directly here
-// (no separate "edit" step: label/key/color are live inputs, saved on every change) rather than
-// only offered as create/delete like before. A project's own category list (see renderCatsModal)
-// is a separate copy seeded from these at project-creation time, resynced from here by id whenever
-// a project is opened — see migrateProjectCategoriesFromTemplates().
+// Editable directly here (no separate "edit" step: label/key/color are live inputs, saved on
+// every change) rather than only offered as create/delete like before. A project's own category
+// list (see renderCatsModal) is seeded from these ONCE, at project-creation time, and never
+// touched again from here afterward — see promoteCurrentCategoriesToTemplates() for the only other
+// way templates change, which flows the opposite direction (project -> templates, explicit, never
+// automatic).
 function renderTemplateCatList(){
   const templates = listCategoryTemplates();
   if(selectedTemplateCatIds.size === 0 && templates.length){
@@ -2815,7 +2825,7 @@ async function loadState(){
         if(c.label==='Escanteio') c.label = 'Canto';
         else if(c.label==='Gol') c.label = 'Golo';
       });
-      migrateProjectCategoriesFromTemplates();
+      backfillMissingCategoryColors();
       state.tags = parsed.tags || [];
       state.tags.forEach(t=>{ if(!t.freezes) t.freezes = []; });
       state.possession = parsed.possession || [];
@@ -3402,6 +3412,18 @@ function renderCatsModal(){
     <p style="color:var(--muted); font-size:12px; margin-top:10px;">Usa teclas únicas (letras ou números) — se atribuíres uma tecla já usada por outra categoria, a app avisa-te. Dica: na aba de vídeo, pressionar uma tecla ainda não usada abre um criador rápido de categoria na hora.</p>
     <p style="color:var(--muted); font-size:12px; margin-top:6px;">Marca "fase de equipa" para comportamentos coletivos (ex.: organização ofensiva/defensiva, transição ofensiva/defensiva) — o relatório calcula o tempo médio e total dessas categorias em vez de só contar ocorrências, como faz para remates, passes ou lances individuais.</p>
     <p style="color:var(--muted); font-size:12px; margin-top:6px;">Marca "golo" para que marcar essa categoria some automaticamente ao placar do time do lance.</p>
+    <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
+      <h4 style="color:var(--muted); text-transform:uppercase; font-size:11px; letter-spacing:.5px; margin-bottom:8px;">Predefinições para projetos novos</h4>
+      <p style="color:var(--muted); font-size:12px; margin-bottom:10px;">Categorias com que um projeto novo começa. Só muda o que vem a seguir — projetos já criados, incluindo este, nunca são alterados por nada nesta secção.</p>
+      <div style="display:flex; flex-wrap:wrap; gap:8px;">
+        <button class="btn" id="btnSaveCatsAsTemplate">💾 Usar estas categorias em projetos novos</button>
+        <button class="btn" id="btnResetCatTemplates">↺ Repor predefinições do programa</button>
+        <button class="btn" id="btnExportCatTemplates">⬇ Exportar (.json)</button>
+        <button class="btn" id="btnImportCatTemplates">⬆ Importar (.json)</button>
+        <input type="file" id="fileImportCatTemplates" accept=".json,application/json" style="display:none;">
+      </div>
+      <p style="color:var(--muted); font-size:11px; margin-top:8px;">Exportar/Importar é a forma de levar as tuas predefinições de um computador para outro (ex.: PC ↔ iPad) — não sincronizam sozinhas, é um ficheiro que tu próprio transferes.</p>
+    </div>
   `;
   const list = el.querySelector('#catEditList');
   // Color leads each row (matches the same order used on the home screen's category list) so the
@@ -3450,6 +3472,48 @@ function renderCatsModal(){
     state.categories.push({id:'c'+uid(), key:'', label:'Nova categoria', color:pickDistinctCategoryColor(state.categories.map(c=>c.color)), isTeamPhase:false});
     draw();
     saveState();
+  });
+
+  el.querySelector('#btnSaveCatsAsTemplate').addEventListener('click', ()=>{
+    if(!state.categories.length){ toast('Não há categorias para guardar.'); return; }
+    if(!confirm(`Substituir as predefinições de projetos novos pelas ${state.categories.length} categorias deste projeto? Os projetos já criados, incluindo este, não são alterados.`)) return;
+    promoteCurrentCategoriesToTemplates();
+    toast('Predefinição atualizada — os próximos projetos novos começam com estas categorias.');
+  });
+  el.querySelector('#btnResetCatTemplates').addEventListener('click', ()=>{
+    if(!confirm(`Repor as predefinições do programa (${DEFAULT_CATS.length} categorias de fábrica)? Substitui a tua predefinição atual. Os projetos já criados não são alterados.`)) return;
+    saveCategoryTemplates(JSON.parse(JSON.stringify(DEFAULT_CATS)));
+    toast('Predefinições repostas para as de fábrica.');
+  });
+  el.querySelector('#btnExportCatTemplates').addEventListener('click', ()=>{
+    const templates = listCategoryTemplates();
+    const payload = { linhaCategoryTemplatesExport: 1, exportedAt: Date.now(), categories: templates };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'linha-predefinicoes-categorias.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+  el.querySelector('#btnImportCatTemplates').addEventListener('click', ()=>{
+    el.querySelector('#fileImportCatTemplates').click();
+  });
+  el.querySelector('#fileImportCatTemplates').addEventListener('change', e=>{
+    const file = e.target.files[0];
+    e.target.value = '';
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let payload;
+      try{ payload = JSON.parse(reader.result); }
+      catch(err){ toast('Ficheiro de predefinições inválido.'); return; }
+      const categories = Array.isArray(payload) ? payload : (payload && Array.isArray(payload.categories) ? payload.categories : null);
+      if(!categories || !categories.length){ toast('Ficheiro de predefinições inválido ou vazio.'); return; }
+      if(!confirm(`Importar ${categories.length} categorias como predefinição, substituindo a atual? Os projetos já criados não são alterados.`)) return;
+      saveCategoryTemplates(categories);
+      toast('Predefinições importadas — os próximos projetos novos começam com estas categorias.');
+    };
+    reader.readAsText(file);
   });
 }
 
