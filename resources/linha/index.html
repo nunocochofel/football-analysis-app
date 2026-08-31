@@ -6439,16 +6439,21 @@ function playNextInReel(){
    in a plain browser tab, so export there just explains that plainly.
 =================================================================== */
 const CLIP_EXPORT_FPS = 20;
-// F2 (prepared, not engaged): capturing at real 1x playback (see captureAndEncodeClipWeb) gives a
-// slow device less wall-clock time per target sample than CLIP_EXPORT_FPS demands — a lower
-// el.playbackRate during capture buys back 1/rate more real time per sample, at the cost of a
-// proportionally slower export. Deliberately not auto-computed from anything yet — a real device
-// measurement (window.__EXPORT_BENCH__/?bench=1, see runExportEncode) is what earns a specific
-// number here, not a guess. To engage manually once one exists: set this to a value in (0,1] —
-// e.g. measured effective fps ÷ CLIP_EXPORT_FPS, with some safety margin below that ratio (not
-// exactly at it — no margin for anything worse than the exact clip measured). null = 1x, today's
-// unchanged behavior.
-const EXPORT_PLAYBACK_RATE_OVERRIDE = null;
+// F2/R3 — ENGAGED at a fixed 0.5x: capturing at real 1x playback (see captureAndEncodeClipWeb)
+// gave a slow device less wall-clock time per target sample than CLIP_EXPORT_FPS demanded — a
+// lower el.playbackRate during capture buys back 1/rate more real time per sample, at the cost of
+// a proportionally slower export. Measured on an iPhone before this: 33% duplicated frames even
+// after R1 (hardware encoder)+R2 (720p default) — effective capture rate 13.4fps against a 20fps
+// target (ratio ≈0.67), but maxSamplesPerCallback:3 means the WORST single moment fell to 1/3
+// speed, not just the average — 0.5x was chosen over the ≈0.67x average-case ratio specifically to
+// cover that worse-than-average burst, not just the mean. Explicit tradeoff, accepted: exports
+// take ~2x longer. Two known follow-ups, not done yet: (1) if the next measurement shows
+// duplicates under 2%, try loosening this to 0.75x and re-measure — this value was not tuned to be
+// minimal, it was tuned to stop the bleeding; (2) F4's degraded-export warning (see
+// beginExportItem) stays fully active regardless of this value, specifically so a future device
+// slower than the one this was tuned against still gets flagged instead of silently shipping a
+// stuttery file again. null would mean 1x (pre-R3 behavior); a value in (0,1] engages this.
+const EXPORT_PLAYBACK_RATE_OVERRIDE = 0.5;
 let exportSelectedIds = new Set();
 
 // A clip's rank (1-based) among every other tag of the same category, ordered by when it
