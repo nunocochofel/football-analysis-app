@@ -6930,6 +6930,12 @@ async function captureAndEncodeClipWeb(el, tag, fps, resolution, quality, onProg
   exportCanvas.width = canvasSize.w;
   exportCanvas.height = canvasSize.h;
   const ectx = exportCanvas.getContext('2d');
+  // R2 diagnostic: el.videoWidth/videoHeight is the SOURCE file's real resolution (known the
+  // moment its metadata loads, well before any of this runs) — logged so "what resolution are
+  // people's source videos" stops being a guess after the first real export. "original" (the
+  // default — see the Resolução <select>) means canvasSize === source size exactly; 1080p/720p
+  // downscale canvasSize below it.
+  if(bench){ bench.sourceWidth = el.videoWidth; bench.sourceHeight = el.videoHeight; bench.exportWidth = canvasSize.w; bench.exportHeight = canvasSize.h; }
 
   const muxer = new Mp4Muxer.Muxer({
     target: new Mp4Muxer.ArrayBufferTarget(),
@@ -6943,11 +6949,34 @@ async function captureAndEncodeClipWeb(el, tag, fps, resolution, quality, onProg
   const BITRATE_BY_QUALITY = { high: 8_000_000, balanced: 5_000_000, small: 2_500_000 };
   // avc1.640028 = H.264 High profile, level 4.0 — decodes in hardware on essentially everything
   // that has WebCodecs at all, including iOS, while still giving reasonable quality/bitrate headroom.
-  encoder.configure({
+  const encoderConfig = {
     codec: 'avc1.640028', width: canvasSize.w, height: canvasSize.h,
     bitrate: BITRATE_BY_QUALITY[quality] || BITRATE_BY_QUALITY.balanced,
-    framerate: fps
-  });
+    framerate: fps,
+    // R1 — measured on an iPhone: 500 frames @ 1080p took 10.8s to encode (~21.5ms/frame), one of
+    // two near-tied bottlenecks alongside decodeWaitMs. hardwareAcceleration defaults to
+    // 'no-preference' when unset, which does NOT guarantee the platform's hardware encoder
+    // (VideoToolbox on iOS/macOS) actually gets used — explicitly asking for it is the only way to
+    // know either way, not assume. isConfigSupported() below confirms whether THIS device actually
+    // honors the request before configure() commits to it.
+    hardwareAcceleration: 'prefer-hardware'
+  };
+  let hwEncodeSupported = null;
+  if(typeof VideoEncoder.isConfigSupported === 'function'){
+    try{
+      const support = await VideoEncoder.isConfigSupported(encoderConfig);
+      hwEncodeSupported = !!support.supported;
+      if(bench) bench.hwEncodeSupported = hwEncodeSupported;
+      if(!hwEncodeSupported){
+        // The browser is telling us up front it can't (or won't) honor prefer-hardware for this
+        // exact config — proceeding with it anyway would just make configure() itself decide
+        // silently; falling back to no explicit preference here is the same "let the platform
+        // decide" behavior this file already had before R1, not a new failure mode.
+        delete encoderConfig.hardwareAcceleration;
+      }
+    }catch(_e){ /* isConfigSupported itself failing isn't fatal — configure() below still works */ }
+  }
+  encoder.configure(encoderConfig);
 
   const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
   const frameInterval = 1/fps;
