@@ -7223,6 +7223,12 @@ async function beginExportItem(item){
       item.degraded = true;
       item.degradedMessage = `Este dispositivo não acompanhou a captura em tempo real — ${degradedPct}% dos frames deste corte estão repetidos (a imagem pode saltar/gaguejar na reprodução).`;
       toast('⚠ Exportação com qualidade reduzida — ' + degradedPct + '% de frames repetidos');
+      // Rendered here, immediately — not left to wait for runExportEncode's own finally block —
+      // specifically so the panel has already painted this BEFORE bench mode's alert() (see
+      // runExportEncode) blocks the whole page a moment later. A blocking alert() freezes
+      // rendering entirely while it's up; a toast timed to auto-hide while frozen was confirmed,
+      // testing this on a real iPhone, to never actually become visible at all.
+      renderExportQueuePanel();
     }
     return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, false, async () => item.filename) };
   }catch(err){
@@ -7267,15 +7273,18 @@ async function runExportEncode(item, bench, tItemStart, clipDurationSec, fastPat
       // Electron always has real devtools available (F12, wired up elsewhere in this file), so
       // this would only be an annoying mid-workflow interruption there — skipped on purpose.
       if(!isElectron()){
+        const dupPct = bench.frameCount ? Math.round((bench.duplicatedSamples||0)/bench.frameCount*100) : 0;
         alert(
           'export-bench (' + clipDurationSec.toFixed(1) + 's clip)\n' +
+          'source: ' + (bench.sourceWidth||'?') + 'x' + (bench.sourceHeight||'?') +
+            '  export: ' + (bench.exportWidth||'?') + 'x' + (bench.exportHeight||'?') + '\n' +
+          'hwEncodeSupported: ' + (bench.hwEncodeSupported==null ? '?' : bench.hwEncodeSupported) + '\n' +
           'draw: ' + Math.round(bench.drawMs||0) + 'ms\n' +
           'h264EncodeMs: ' + Math.round(bench.h264EncodeMs||0) + 'ms\n' +
           'h264FlushMs: ' + Math.round(bench.h264FlushMs||0) + 'ms\n' +
           'decodeWaitMs: ' + Math.round(bench.decodeWaitMs||0) + 'ms\n' +
-          'frameCount: ' + (bench.frameCount||0) + '\n' +
+          'frameCount: ' + (bench.frameCount||0) + '  duplicated: ' + (bench.duplicatedSamples||0) + ' (' + dupPct + '%)\n' +
           'catchUpEvents: ' + (bench.catchUpEvents||0) + '\n' +
-          'duplicatedSamples: ' + (bench.duplicatedSamples||0) + '\n' +
           'maxSamplesPerCallback: ' + (bench.maxSamplesPerCallback||0) + '\n' +
           'itemTotalMs: ' + Math.round(bench.itemTotalMs||0)
         );
