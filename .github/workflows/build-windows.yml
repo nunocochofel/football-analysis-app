@@ -37,17 +37,14 @@ jobs:
           # User-facing per-release description — softprops/action-gh-release leaves the body
           # empty by default (no generate_release_notes here), and this project has no other
           # per-release-notes mechanism for Windows yet (see build-mac.yml's NOTES_FILE step for
-          # the equivalent there). Static text describing v0.8.49 specifically — update this block
+          # the equivalent there). Static text describing v0.8.50 specifically — update this block
           # for whatever the next release's own user-facing change actually is, same as every
           # release before this needed its own description written by hand.
           body: |
-            **Categorias: predefinições agora só na página inicial**
+            **Categorias: exportar as de um projeto para usar noutro**
 
-            A gestão das categorias predefinidas (editar, repor de fábrica, exportar/importar)
-            passou a estar só na página inicial, onde crias um projeto novo — já não está
-            dentro do editor de categorias de um projeto aberto. Quem já tinha as suas
-            categorias predefinidas guardadas não perde nada: continuam exatamente como
-            estavam, só o sítio onde se gerem é que mudou.
-
-            Cada projeto, uma vez criado, continua dono das suas próprias categorias: nada do
-            que fazes na página inicial volta a alterar um projeto já existente.
+            Editaste categorias só dentro de um projeto e querias usá-las como ponto de
+            partida de um projeto novo? Em "⚙ Times & categorias" → "Categorias" há agora um
+            botão "Exportar categorias deste projeto" — gera um ficheiro que depois importas
+            na página inicial (botão "⬆ Importar" da lista de categorias predefinidas). O
+            projeto de onde exportaste nunca é alterado por isto.
