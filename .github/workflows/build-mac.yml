@@ -1,9 +1,12 @@
 name: Build macOS
 
+# Tag trigger PAUSED (v0.8.48, 2026-08-31): the appId still needs a migration decision (see the
+# ci-diagnostics/macOS investigation, parked at the P0-P7 matrix) before another .dmg goes out —
+# publishing one now, from whatever's on main, would ship before that's resolved. workflow_dispatch
+# still works for manual runs/diagnostics. Restore the `push: tags: - 'v*'` block (removed just
+# below, not deleted from history) once the migration question is settled, so mac releases resume
+# going out automatically alongside Windows on every version tag, same as before.
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:
