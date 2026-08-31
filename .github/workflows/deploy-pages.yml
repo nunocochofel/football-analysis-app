@@ -26,11 +26,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Stamps the real commit SHA into a COPY of index.html, never the source file in the repo —
+      # resources/linha/index.html itself always keeps the literal __BUILD_SHA__/__BUILD_DATE__
+      # placeholders (see the BUILD MARKER comment there). Lets anyone testing the deployed PWA
+      # confirm exactly which commit they're looking at (visible in the UI on iPad/iPhone, logged
+      # to console everywhere) instead of guessing whether they're on a stale cached copy.
+      - name: Stamp build marker
+        run: |
+          mkdir -p /tmp/pages-build
+          cp -r resources/linha/. /tmp/pages-build/
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          DEPLOY_DATE="$(date -u +%Y-%m-%d)"
+          sed -i "s/__BUILD_SHA__/${SHORT_SHA}/; s/__BUILD_DATE__/${DEPLOY_DATE}/" /tmp/pages-build/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           # resources/linha/ is the whole web app (index.html + manifest.json + sw.js + icons/),
           # entirely self-contained with only relative asset paths, so it can be served as-is from
-          # the Pages root with no build step or path rewriting.
-          path: resources/linha
+          # the Pages root with no build step or path rewriting — /tmp/pages-build is that same
+          # tree, just with the build marker stamped into its copy of index.html above.
+          path: /tmp/pages-build
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -17,7 +17,7 @@
 <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
 <link rel="icon" href="./icons/icon-192.png">
 <!-- Vendored locally (not a CDN) so the app stays fully self-contained/offline-capable — only
-     used by the web/PWA clip-export fallback (see encodeClipFramesWeb below); Electron never
+     used by the web/PWA clip-export fallback (see captureAndEncodeClipWeb below); Electron never
      touches this, it has native ffmpeg instead. Source: https://www.npmjs.com/package/mp4-muxer,
      see vendor/mp4-muxer.LICENSE.txt. -->
 <script src="./vendor/mp4-muxer.js" defer></script>
@@ -108,6 +108,16 @@
   }
   .brand h1{font-size:17px; letter-spacing:.5px;}
   .brand span.sub{color:var(--muted); font-size:11px; display:block; margin-top:-2px; letter-spacing:.4px;}
+  /* Confirms which deployed build is actually running — stamped with the real published commit
+     SHA by .github/workflows/deploy-pages.yml at publish time (see BUILD MARKER in the script
+     below), not a hand-maintained number that can drift out of sync with what's live. touch-only
+     (see PLATFORM DETECTION) — this exists specifically so testing on an iPad/iPhone can confirm
+     "am I looking at the build I think I am" without needing Safari's remote Web Inspector (which
+     needs a Mac connected by cable) just to read a console.log(). */
+  .build-tag{
+    display:block; color:var(--muted); opacity:.55; font-size:9px; font-family:'IBM Plex Mono',monospace;
+    letter-spacing:.2px; margin-top:1px; user-select:text; -webkit-user-select:text;
+  }
   nav.tabs{display:flex; gap:4px; margin-left:12px;}
   nav.tabs button{
     background:transparent; border:1px solid transparent; color:var(--muted);
@@ -1422,6 +1432,11 @@
     <div>
       <h1>LINHA</h1>
       <span class="sub">análise de vídeo · futebol</span>
+      <!-- Sibling of .sub, not nested inside it: .sub itself is display:none under
+           body.mobile-touch-ui (see TABLET/MOBILE LAYOUT CSS) to save header space, which would
+           hide this too if nested — this needs to be visible on EXACTLY that platform (see
+           BUILD MARKER in the script below), the opposite of .sub's own visibility. -->
+      <span id="buildTag" class="build-tag touch-only"></span>
     </div>
   </div>
   <nav class="tabs">
@@ -2175,6 +2190,19 @@ if(isMobileUI()){
 if(isElectron()){
   document.body.classList.add('electron-app');
 }
+// BUILD MARKER — replaced by .github/workflows/deploy-pages.yml at publish time with the real
+// commit SHA and deploy timestamp (see the placeholder tokens below); a literal, unreplaced
+// placeholder here means this copy was never processed by that workflow — a raw git checkout, or
+// (expected, harmless) Electron, which loads this exact same file straight from disk and has its
+// own separate version story already (package.json + the desktop auto-updater). Logged
+// unconditionally (cheap, always useful from a desktop browser's own devtools) but only shown in
+// the UI itself under mobile-touch-ui (see .build-tag's touch-only class) — specifically so
+// testing on an iPad/iPhone can confirm which build is actually running without needing Safari's
+// remote Web Inspector (a Mac connected by cable) just to read a console.log().
+const BUILD_MARKER = '__BUILD_SHA__ · __BUILD_DATE__';
+console.log('[LINHA] build: ' + BUILD_MARKER);
+const buildTagEl = document.getElementById('buildTag');
+if(buildTagEl) buildTagEl.textContent = 'build ' + BUILD_MARKER;
 // Installability on Android requires a registered service worker; iOS Safari's "Add to Home
 // Screen" doesn't strictly require one but treats the result as a more real PWA (offline shell,
 // update handling) with one. Electron loads this file via file:// and never needs any of it —
