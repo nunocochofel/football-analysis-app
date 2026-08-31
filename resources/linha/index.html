@@ -6522,6 +6522,57 @@ function ensureExportVideoLoaded(){
   });
 }
 
+// ?seektest=1 — standalone measurement, decides whether captureAndEncodeClipWeb should switch
+// from real 1x playback capture to deterministic seek-per-frame. The comment on
+// captureClipFramesBySeeking calls seek-per-frame "interminável", but that was measured with the
+// JPEG round-trip still in the pipeline (removed by F1) — this re-measures seek+draw ALONE, at
+// 720p (R2's new mobile default), on the same hidden export <video> element real exports use, so
+// the number reflects real conditions, not a guess. Self-triggers once a video is already loaded
+// (open one first, then load this URL, or reload with it already open) — no console needed, same
+// Mac-free reasoning as ?bench=1's alert().
+if(/[?&]seektest=1(&|$)/.test(location.search)){
+  let seekTestDone = false;
+  const trySeekTest = () => {
+    if(seekTestDone) return;
+    if(!currentPlaybackPath && !currentVideoFile){ setTimeout(trySeekTest, 500); return; }
+    seekTestDone = true;
+    runSeekCostTest().catch(err => alert('seek-test falhou: ' + (err && err.message || err)));
+  };
+  window.addEventListener('load', () => setTimeout(trySeekTest, 500));
+}
+async function runSeekCostTest(){
+  const el = await ensureExportVideoLoaded();
+  const testCanvas = document.createElement('canvas');
+  const size = computeExportCanvasSize(el.videoWidth, el.videoHeight, '720p');
+  testCanvas.width = size.w; testCanvas.height = size.h;
+  const tctx = testCanvas.getContext('2d');
+  const N = 30;
+  const startT = Math.min(5, el.duration*0.1);
+  const frameGap = 1/CLIP_EXPORT_FPS;
+  el.pause();
+  const perFrameMs = [];
+  let totalSeekMs = 0, totalDrawMs = 0;
+  for(let i=0; i<N; i++){
+    const t = startT + i*frameGap;
+    const tSeek0 = performance.now();
+    await seekVideoTo(el, t);
+    const tSeek1 = performance.now();
+    tctx.drawImage(el, 0, 0, testCanvas.width, testCanvas.height);
+    const tDraw1 = performance.now();
+    const seekMs = tSeek1-tSeek0, drawMs = tDraw1-tSeek1;
+    totalSeekMs += seekMs; totalDrawMs += drawMs;
+    perFrameMs.push(Math.round(seekMs+drawMs));
+  }
+  const avgSeek = totalSeekMs/N, avgDraw = totalDrawMs/N, avgTotal = (totalSeekMs+totalDrawMs)/N;
+  const msg = 'seek-test (' + N + ' frames @ ' + size.w + 'x' + size.h + ')\n' +
+    'avg seek: ' + avgSeek.toFixed(1) + 'ms\n' +
+    'avg draw: ' + avgDraw.toFixed(1) + 'ms\n' +
+    'avg total: ' + avgTotal.toFixed(1) + 'ms/frame\n' +
+    'per-frame ms: ' + perFrameMs.join(',');
+  console.log('[seek-test]', {avgSeek, avgDraw, avgTotal, perFrameMs});
+  alert(msg);
+}
+
 // Draws one export frame (video frame + zoom crop + active shapes) onto the offscreen export
 // canvas and returns it as a JPEG-encoded Uint8Array. canvas.toBlob() encodes without blocking the
 // main thread's synchronous execution — unlike toDataURL(), which does the JPEG encode + base64
