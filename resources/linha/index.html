@@ -6438,22 +6438,18 @@ function playNextInReel(){
    then muxed with the drawn frames. Electron-only — there's no ffmpeg
    in a plain browser tab, so export there just explains that plainly.
 =================================================================== */
+// Electron's fps — used verbatim by captureClipFrames()/window.api.exportClipFrames below,
+// untouched by any of the web-only tuning this file has been through (F1/R1/R2/R3, all scoped to
+// captureAndEncodeClipWeb). Web/PWA no longer uses this constant for its own export at all — see
+// getSourceFpsFor() near ensureExportVideoLoaded, which matches the SOURCE video's own frame rate
+// instead, now that seek-per-frame capture (see captureAndEncodeClipWeb) has enough of a time
+// budget (measured: 12.7ms/frame on an iPhone against a >30ms/frame budget even at 30fps) to
+// afford it. A fixed lower el.playbackRate during real-time-playback capture (F2, briefly engaged
+// at 0.5x as R3) was tried and removed entirely once seek-per-frame proved both faster and — the
+// bigger win — not fixed-cost-and-still-choppy: 0.5x accepted a 2x-slower export and STILL left
+// 33% of frames duplicated, whereas seek-per-frame duplicates nothing by construction, regardless
+// of device speed.
 const CLIP_EXPORT_FPS = 20;
-// F2/R3 — ENGAGED at a fixed 0.5x: capturing at real 1x playback (see captureAndEncodeClipWeb)
-// gave a slow device less wall-clock time per target sample than CLIP_EXPORT_FPS demanded — a
-// lower el.playbackRate during capture buys back 1/rate more real time per sample, at the cost of
-// a proportionally slower export. Measured on an iPhone before this: 33% duplicated frames even
-// after R1 (hardware encoder)+R2 (720p default) — effective capture rate 13.4fps against a 20fps
-// target (ratio ≈0.67), but maxSamplesPerCallback:3 means the WORST single moment fell to 1/3
-// speed, not just the average — 0.5x was chosen over the ≈0.67x average-case ratio specifically to
-// cover that worse-than-average burst, not just the mean. Explicit tradeoff, accepted: exports
-// take ~2x longer. Two known follow-ups, not done yet: (1) if the next measurement shows
-// duplicates under 2%, try loosening this to 0.75x and re-measure — this value was not tuned to be
-// minimal, it was tuned to stop the bleeding; (2) F4's degraded-export warning (see
-// beginExportItem) stays fully active regardless of this value, specifically so a future device
-// slower than the one this was tuned against still gets flagged instead of silently shipping a
-// stuttery file again. null would mean 1x (pre-R3 behavior); a value in (0,1] engages this.
-const EXPORT_PLAYBACK_RATE_OVERRIDE = 0.5;
 let exportSelectedIds = new Set();
 
 // A clip's rank (1-based) among every other tag of the same category, ordered by when it
@@ -6522,12 +6518,77 @@ function ensureExportVideoLoaded(){
   });
 }
 
-// ?seektest=1 — standalone measurement, decides whether captureAndEncodeClipWeb should switch
-// from real 1x playback capture to deterministic seek-per-frame. The comment on
-// captureClipFramesBySeeking calls seek-per-frame "interminável", but that was measured with the
+// Matches captureAndEncodeClipWeb's output fps to the SOURCE video's own frame rate instead of the
+// fixed CLIP_EXPORT_FPS Electron uses — with seek-per-frame's real per-device budget confirmed
+// (12.7ms/frame measured, see ?seektest=1 below) there's no longer a cost reason to cap output
+// below what the source actually has, and a mismatched fps (e.g. exporting a 30fps source at 20)
+// is its own, separate source of visible non-smoothness even with zero duplicated frames.
+// HTMLVideoElement has no standard API to just ask "what's your frame rate" — this briefly plays a
+// handful of frames and times the gaps between requestVideoFrameCallback deliveries, discarding
+// the first two (playback startup/buffering jitter) before averaging the rest and snapping to the
+// nearest common broadcast/camera rate, which is far more reliable than trusting the raw average
+// literally. This is the ONLY place this file still plays a video for real during export prep — a
+// few hundred ms once per loaded video (see getSourceFpsFor's cache below), never per-frame, and
+// never used for the actual capture loop itself, which is pure seek-per-frame throughout.
+const STANDARD_FPS = [24, 25, 30, 50, 60];
+function snapToStandardFps(measured){
+  if(!measured || !isFinite(measured) || measured <= 0) return null;
+  let best = STANDARD_FPS[0], bestDiff = Math.abs(measured-STANDARD_FPS[0]);
+  for(const f of STANDARD_FPS){ const d = Math.abs(measured-f); if(d < bestDiff){ best = f; bestDiff = d; } }
+  return best;
+}
+function detectSourceFps(el){
+  if(typeof el.requestVideoFrameCallback !== 'function') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const SAMPLES_NEEDED = 8, DISCARD_FIRST = 2;
+    const deltas = [];
+    let lastMediaTime = null, settled = false;
+    const originalMuted = el.muted, originalTime = el.currentTime, originalRate = el.playbackRate;
+    function finish(result){
+      if(settled) return;
+      settled = true;
+      el.pause();
+      el.muted = originalMuted;
+      el.playbackRate = originalRate;
+      el.currentTime = originalTime;
+      resolve(result);
+    }
+    function onFrame(now, metadata){
+      if(lastMediaTime != null) deltas.push(metadata.mediaTime - lastMediaTime);
+      lastMediaTime = metadata.mediaTime;
+      if(deltas.length >= SAMPLES_NEEDED){
+        const used = deltas.slice(DISCARD_FIRST);
+        const avgDelta = used.reduce((a,b) => a+b, 0) / used.length;
+        finish(snapToStandardFps(avgDelta > 0 ? 1/avgDelta : null));
+        return;
+      }
+      el.requestVideoFrameCallback(onFrame);
+    }
+    el.muted = true;
+    el.playbackRate = 1;
+    el.play().then(() => el.requestVideoFrameCallback(onFrame)).catch(() => finish(null));
+    // A stall here must never block export from starting — fall back to CLIP_EXPORT_FPS (see
+    // getSourceFpsFor's caller) rather than hang.
+    setTimeout(() => finish(null), 2000);
+  });
+}
+let cachedSourceFps = null, cachedSourceFpsKey = null;
+async function getSourceFpsFor(el, key){
+  if(cachedSourceFpsKey === key && cachedSourceFps) return cachedSourceFps;
+  cachedSourceFps = (await detectSourceFps(el)) || CLIP_EXPORT_FPS;
+  cachedSourceFpsKey = key;
+  return cachedSourceFps;
+}
+
+// ?seektest=1 — standalone measurement, used to decide whether captureAndEncodeClipWeb should
+// switch from real 1x playback capture to deterministic seek-per-frame (it now does — see
+// captureAndEncodeClipWeb's own comment). The comment that used to be on
+// captureClipFramesBySeeking called seek-per-frame "interminável", but that was measured with the
 // JPEG round-trip still in the pipeline (removed by F1) — this re-measures seek+draw ALONE, at
 // 720p (R2's new mobile default), on the same hidden export <video> element real exports use, so
-// the number reflects real conditions, not a guess. Self-triggers once a video is already loaded
+// the number reflects real conditions, not a guess. Kept as a standing diagnostic, not deleted
+// after answering that one question — useful again if a future device/resolution/browser change
+// puts the seek+draw budget in doubt. Self-triggers once a video is already loaded
 // (open one first, then load this URL, or reload with it already open) — no console needed, same
 // Mac-free reasoning as ?bench=1's alert().
 if(/[?&]seektest=1(&|$)/.test(location.search)){
@@ -6966,17 +7027,26 @@ async function processExportQueue(){
 //      iPad well before it would even trouble a desktop. Streaming straight into the encoder one
 //      frame at a time (VideoEncoder manages its own small internal queue/backpressure) never
 //      holds more than one decoded frame in JS memory regardless of clip length.
-// The sampling strategy itself (real 1x playback + requestVideoFrameCallback, sampling at the
-// target export fps using each callback's actual mediaTime; seek-per-frame only as a fallback
-// where rVFC isn't supported at all) is UNCHANGED from captureClipFrames() — see the big comment
-// there for why. `bench` (optional, {drawMs, h264EncodeMs, h264FlushMs, decodeWaitMs,
-// catchUpEvents, duplicatedSamples, maxSamplesPerCallback, frameCount}) is the same opt-in
-// accumulator used by [export-bench] elsewhere — catchUpEvents/duplicatedSamples/
-// maxSamplesPerCallback are new: they count, directly and internally, how often a single rVFC
-// callback had to draw more than one target sample (i.e. the device fell behind real-time and the
-// SAME decoded frame got encoded at more than one output timestamp) — the exact mechanism behind
-// "video looks choppy but has the right frame count and constant frame rate", confirmable without
-// a round-trip to a desktop ffmpeg/mpdecimate check.
+//
+// SAMPLING STRATEGY — seek-per-frame, not real 1x playback. This changed after shipping the
+// opposite choice first: real playback + requestVideoFrameCallback (rVFC), sampling at the target
+// fps using each callback's mediaTime, with el.playbackRate slowed down (F2/R3, briefly shipped at
+// 0.5x) to buy a struggling device more real time per target sample. Measured on an iPhone: even
+// at 0.5x, 33% of frames still came out duplicated (the device fell behind and the SAME decoded
+// frame got encoded at more than one output timestamp — correct frame count, constant frame rate,
+// still visibly choppy), AND the whole app was unusable for the entire export (near-continuous
+// synchronous draw+encode work between rVFC callbacks left touch input almost no real opening).
+// ?seektest=1 (see ensureExportVideoLoaded) measured plain seek+draw at 720p directly on-device:
+// 12.7ms/frame average, sane distribution, no red flags — nowhere near the old "seek is
+// interminable" comment this replaces, which was measured before F1 removed the JPEG round-trip
+// and is no longer valid evidence. Seeking is deterministic (no falling behind, so no duplicates
+// are even possible — duplicatedSamples/catchUpEvents below now only ever come from intentional
+// freeze holds, never device slowness) and gives TWO genuine yield points per frame (the awaited
+// 'seeked' event, plus an explicit requestAnimationFrame yield) instead of a tight real-time loop
+// with almost none — that combination is what fixes both problems (speed AND responsiveness) at
+// once, not two separate mechanisms. `bench` (optional, {drawMs, h264EncodeMs, h264FlushMs,
+// frameCount, sourceWidth/Height, exportWidth/Height, hwEncodeSupported}) is the same opt-in
+// accumulator used by [export-bench] elsewhere.
 async function captureAndEncodeClipWeb(el, tag, fps, resolution, quality, onProgress, isCancelled, bench){
   if(typeof VideoEncoder === 'undefined' || typeof Mp4Muxer === 'undefined'){
     throw new Error('Este navegador não suporta exportação de vídeo (requer WebCodecs: Safari 16.4+/iOS 16.4+, Chrome 94+, Edge 94+).');
@@ -7049,9 +7119,12 @@ async function captureAndEncodeClipWeb(el, tag, fps, resolution, quality, onProg
   const frameDurationUs = Math.round(1_000_000/fps);
   const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
   let sampleIndex = 0;
-  // Always tracked (not gated behind bench/?bench=1, unlike the other bench.* fields further
-  // down) — this is what beginExportItem uses to warn about a degraded export on every real
-  // export, not just an instrumented one. See the F4 comment there.
+  // Kept for F4/beginExportItem's degraded-export check and bench's return shape, even though
+  // seek-per-frame capture (see the big comment above) makes device-slowness duplication
+  // structurally impossible now — always 0 unless a future change reintroduces some form of
+  // real-time pacing. F4 stays wired up regardless (per explicit instruction: it's the safety net
+  // for a device slower than the one this was tuned against), it just won't have anything to warn
+  // about from this cause any more.
   let duplicatedSamples = 0, catchUpEvents = 0;
 
   // Encodes the CURRENTLY DRAWN canvas content as one more output sample — used both for the
@@ -7073,84 +7146,31 @@ async function captureAndEncodeClipWeb(el, tag, fps, resolution, quality, onProg
   }
 
   try{
-    if(typeof el.requestVideoFrameCallback !== 'function'){
-      // Fallback path (no requestVideoFrameCallback support): seek-per-frame — mirrors
-      // captureClipFramesBySeeking() exactly, streaming instead of collecting a JPEG array.
-      const totalFrames = Math.max(1, Math.round(totalSec * fps));
-      let freezeIdx = 0, t = tag.inSec;
-      el.pause();
-      await seekVideoTo(el, t);
-      for(let i=0; i<totalFrames; i++){
-        if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
-        drawAndEncodeAt(t);
-        if(freezeIdx < freezes.length && t >= freezes[freezeIdx].atSec){
-          const holdFrames = Math.max(1, Math.round(freezes[freezeIdx].holdSec * fps));
-          for(let h=0; h<holdFrames; h++) encodeOneSample();
-          freezeIdx++;
-        }
-        t = Math.min(tag.outSec, t+frameInterval);
-        if(i < totalFrames-1) await seekVideoTo(el, t);
-        if(onProgress && i%8===0) onProgress(Math.round((i/totalFrames)*100));
+    // Seek-per-frame, unconditionally — see the big comment above for the measurement that
+    // justifies this (12.7ms/frame average on a real iPhone, sane distribution) and why the real-
+    // playback/rVFC approach this replaced is gone rather than kept as an alternate branch.
+    const totalFrames = Math.max(1, Math.round(totalSec * fps));
+    let freezeIdx = 0, t = tag.inSec;
+    el.pause();
+    await seekVideoTo(el, t);
+    for(let i=0; i<totalFrames; i++){
+      if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
+      drawAndEncodeAt(t);
+      if(freezeIdx < freezes.length && t >= freezes[freezeIdx].atSec){
+        const holdFrames = Math.max(1, Math.round(freezes[freezeIdx].holdSec * fps));
+        for(let h=0; h<holdFrames; h++) encodeOneSample();
+        freezeIdx++;
       }
-    } else {
-      el.pause();
-      await seekVideoTo(el, tag.inSec);
-      const originalMuted = el.muted, originalRate = el.playbackRate;
-      el.muted = true;
-      let tLastFrameEnd = bench ? performance.now() : 0;
-      try{
-        await new Promise((resolve, reject) => {
-          let nextSampleTime = tag.inSec;
-          let freezeIdx = 0;
-
-          function captureUpTo(t){
-            let samplesThisCall = 0;
-            while(nextSampleTime <= t && nextSampleTime <= tag.outSec + 1e-6){
-              drawAndEncodeAt(nextSampleTime);
-              samplesThisCall++;
-              onProgress(Math.min(99, Math.round((nextSampleTime-tag.inSec)/totalSec*100)));
-              while(freezeIdx < freezes.length && freezes[freezeIdx].atSec <= nextSampleTime){
-                const holdFrames = Math.max(1, Math.round(Math.max(0, freezes[freezeIdx].holdSec) * fps));
-                for(let h=0; h<holdFrames; h++) encodeOneSample();
-                freezeIdx++;
-              }
-              nextSampleTime += frameInterval;
-            }
-            // Direct, internal confirmation of the duplicate-frame hypothesis: more than one
-            // target sample drawn from the SAME decoded frame in this callback means the device
-            // fell behind real-time between the previous callback and this one.
-            if(samplesThisCall > 1){
-              catchUpEvents++;
-              duplicatedSamples += (samplesThisCall-1);
-              if(bench) bench.maxSamplesPerCallback = Math.max(bench.maxSamplesPerCallback||0, samplesThisCall);
-            }
-          }
-
-          async function onFrame(now, metadata){
-            if(bench){
-              const tNow = performance.now();
-              bench.decodeWaitMs = (bench.decodeWaitMs||0) + (tNow-tLastFrameEnd);
-            }
-            try{
-              if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
-              captureUpTo(metadata.mediaTime);
-              if(metadata.mediaTime >= tag.outSec || el.ended){ el.pause(); resolve(); return; }
-            }catch(err){ el.pause(); reject(err); return; }
-            await new Promise(r => setTimeout(r, 0));
-            if(bench) tLastFrameEnd = performance.now();
-            el.requestVideoFrameCallback(onFrame);
-          }
-
-          el.playbackRate = EXPORT_PLAYBACK_RATE_OVERRIDE || 1; // F2, prepared but off — see its own comment near CLIP_EXPORT_FPS
-          el.play().then(() => { tLastFrameEnd = bench ? performance.now() : 0; el.requestVideoFrameCallback(onFrame); }).catch(reject);
-        });
-      } finally {
-        el.muted = originalMuted;
-        el.playbackRate = originalRate;
-      }
-      if(sampleIndex === 0 || totalSec > (sampleIndex/fps) + frameInterval){
-        drawAndEncodeAt(tag.outSec);
-      }
+      t = Math.min(tag.outSec, t+frameInterval);
+      if(onProgress) onProgress(Math.round((i/totalFrames)*100));
+      // Two genuine yield points per frame, not one: this rAF wait is what actually guarantees the
+      // browser gets an animation-frame's worth of opportunity to dispatch a pending tap/touch
+      // before the next frame's synchronous draw+encode work starts, rather than leaving
+      // responsiveness as a hopeful side effect of however long the next seekVideoTo() happens to
+      // take on its own (which is real work too, and does yield, but isn't guaranteed to coincide
+      // with a paint/input opportunity the way requestAnimationFrame is).
+      await new Promise(requestAnimationFrame);
+      if(i < totalFrames-1) await seekVideoTo(el, t);
     }
     const tFlush0 = bench ? performance.now() : 0;
     await encoder.flush();
@@ -7272,7 +7292,11 @@ async function beginExportItem(item){
     // guarantee exactly as it already was rather than letting the queue loop race two exports over
     // the same element. The actual video stays in item.webBlob for the panel's download/share
     // button; runExportEncode below only needs to know the filename to report as "done".
-    const result = await captureAndEncodeClipWeb(el, tag, CLIP_EXPORT_FPS, item.options.resolution, item.options.quality, pct => {
+    // Matches the source video's own frame rate (cached per loaded video — see getSourceFpsFor)
+    // instead of the fixed CLIP_EXPORT_FPS Electron uses; falls back to it if detection fails.
+    const webExportFps = await getSourceFpsFor(el, exportVideoLoadedKey);
+    if(bench) bench.detectedFps = webExportFps;
+    const result = await captureAndEncodeClipWeb(el, tag, webExportFps, item.options.resolution, item.options.quality, pct => {
       item.progress = pct;
       renderExportQueuePanel();
     }, () => item.cancelRequested, bench);
@@ -7343,15 +7367,13 @@ async function runExportEncode(item, bench, tItemStart, clipDurationSec, fastPat
         alert(
           'export-bench (' + clipDurationSec.toFixed(1) + 's clip)\n' +
           'source: ' + (bench.sourceWidth||'?') + 'x' + (bench.sourceHeight||'?') +
-            '  export: ' + (bench.exportWidth||'?') + 'x' + (bench.exportHeight||'?') + '\n' +
+            '  export: ' + (bench.exportWidth||'?') + 'x' + (bench.exportHeight||'?') +
+            '  fps: ' + (bench.detectedFps||'?') + '\n' +
           'hwEncodeSupported: ' + (bench.hwEncodeSupported==null ? '?' : bench.hwEncodeSupported) + '\n' +
           'draw: ' + Math.round(bench.drawMs||0) + 'ms\n' +
           'h264EncodeMs: ' + Math.round(bench.h264EncodeMs||0) + 'ms\n' +
           'h264FlushMs: ' + Math.round(bench.h264FlushMs||0) + 'ms\n' +
-          'decodeWaitMs: ' + Math.round(bench.decodeWaitMs||0) + 'ms\n' +
           'frameCount: ' + (bench.frameCount||0) + '  duplicated: ' + (bench.duplicatedSamples||0) + ' (' + dupPct + '%)\n' +
-          'catchUpEvents: ' + (bench.catchUpEvents||0) + '\n' +
-          'maxSamplesPerCallback: ' + (bench.maxSamplesPerCallback||0) + '\n' +
           'itemTotalMs: ' + Math.round(bench.itemTotalMs||0)
         );
       }
