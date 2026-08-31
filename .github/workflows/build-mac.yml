@@ -142,7 +142,16 @@ jobs:
       # release) se passar — exatamente o artefacto testado, sem rebuild por cima. Restrito a
       # workflow_dispatch como as rondas anteriores.
       - name: Controlos A/B + correção (productName ASCII) + publicação condicional
-        if: github.event_name == 'workflow_dispatch'
+        # Disabled (2026-08-31): this was a one-time bisection-and-fix experiment for the
+        # productName crash, gated to workflow_dispatch so it could be re-run during that
+        # investigation. The fix already landed (productName is "LINHA" since v0.8.47-rc2,
+        # several releases ago) — leaving this wired to workflow_dispatch would make any future
+        # manual dispatch try to re-apply it: reset package.json's version to the hardcoded
+        # "0.8.47-rc2", re-tag a tag that already exists, and attempt another release, unrelated
+        # to whatever workflow_dispatch is actually being used for now (e.g. the plain smoke
+        # test below). if: false keeps the step (and the historical A/B diagnostic code) in git
+        # history rather than deleting it, matching how the tag-trigger pause above was done.
+        if: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

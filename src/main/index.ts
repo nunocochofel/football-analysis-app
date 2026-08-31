@@ -1,6 +1,6 @@
 import { app, shell, dialog, BrowserWindow } from 'electron'
 import { join } from 'path'
-import { appendFileSync, mkdirSync } from 'fs'
+import { appendFileSync, mkdirSync, existsSync, cpSync, rmSync, renameSync } from 'fs'
 import { registerIpcHandlers } from './ipc'
 import { initDatabase } from './db'
 import type { LiveSession } from './liveIngest'
@@ -184,8 +184,84 @@ function setupAutoUpdate(): void {
   })
 }
 
+// One-time migration from the app's previous productName ("Análise Tática", every release
+// before v0.8.47-rc2) to the current one ("LINHA"). Electron derives the userData folder from
+// the packaged executable/bundle's product name — Windows EXE VERSIONINFO, macOS CFBundleName —
+// NOT from electron-builder's appId (confirmed by extracting an old build's app.asar: no
+// top-level "productName" in package.json, and the appId change in v0.8.47-rc1 alone did not
+// move the folder). So the LINHA rename silently orphaned every existing user's projects — plain
+// localStorage blobs, see resources/linha/index.html — the first time they installed a
+// LINHA-named build. Also confirmed on-disk: Local Storage is still classic LevelDB
+// (CURRENT/LOCK/MANIFEST-*/*.ldb/*.log), not a newer SQLite-backed store, so a raw directory
+// copy of it IS the actual data, verbatim.
+//
+// Safe by construction: copies into a staging directory first and only renames it into place if
+// the whole copy succeeds, so a failed/interrupted copy never leaves a half-written "Local
+// Storage" behind; never touches or deletes the OLD folder, so there's always a way back; and is
+// naturally idempotent — once the new profile has its own Local Storage/leveldb/CURRENT, this
+// returns immediately on every later launch, migration or not.
+//
+// One real, NOT fully solvable-from-here risk: copying while the OLD build is still actually
+// running. LevelDB tolerates being copied while idle, because CURRENT/MANIFEST/*.log/*.ldb form
+// a self-consistent snapshot as long as nothing is concurrently compacting it — but if the old
+// app is open at the same moment as this one, that assumption breaks and the copy could capture
+// a torn state. Low real-world odds (two different installed apps — a user has to deliberately
+// keep both open across the switch), and if the copy throws for any reason, including that, the
+// dialog below offers a retry instead of silently losing the user's old data.
+const OLD_PRODUCT_NAME = 'Análise Tática'
+function migrateUserDataFromOldProductName(): void {
+  try {
+    const oldLocalStorage = join(app.getPath('appData'), OLD_PRODUCT_NAME, 'Local Storage')
+    const newUserData = app.getPath('userData')
+    const newLocalStorage = join(newUserData, 'Local Storage')
+
+    const oldHasData = existsSync(join(oldLocalStorage, 'leveldb', 'CURRENT'))
+    const newAlreadyHasData = existsSync(join(newLocalStorage, 'leveldb', 'CURRENT'))
+    if (!oldHasData || newAlreadyHasData) return
+
+    const staging = join(newUserData, '.migration-staging-local-storage')
+    rmSync(staging, { recursive: true, force: true })
+    mkdirSync(newUserData, { recursive: true })
+    cpSync(oldLocalStorage, staging, { recursive: true })
+    // Only ever removes something INSIDE the new profile (an empty scaffold Chromium may have
+    // pre-created, never real data — newAlreadyHasData already ruled that out above) or nothing
+    // at all if it doesn't exist yet. Never touches the old profile.
+    rmSync(newLocalStorage, { recursive: true, force: true })
+    renameSync(staging, newLocalStorage)
+    console.log('[migration] copied Local Storage from the "' + OLD_PRODUCT_NAME + '" profile')
+  } catch (err) {
+    try {
+      rmSync(join(app.getPath('userData'), '.migration-staging-local-storage'), {
+        recursive: true,
+        force: true
+      })
+    } catch {
+      // Best-effort cleanup of our own staging dir — leaving it behind is harmless (never mistaken
+      // for real data, since newAlreadyHasData only ever checks Local Storage/leveldb/CURRENT).
+    }
+    console.error('[migration] failed to copy Local Storage from previous version:', err)
+    const oldPath = join(app.getPath('appData'), OLD_PRODUCT_NAME)
+    const choice = dialog.showMessageBoxSync({
+      type: 'warning',
+      buttons: ['Tentar novamente', 'Continuar sem migrar'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Projetos da versão anterior',
+      message:
+        'Encontrámos projetos de uma versão anterior desta app, mas não foi possível copiá-los automaticamente.',
+      detail:
+        String(err instanceof Error ? err.message : err) +
+        '\n\nOs teus dados antigos continuam intactos em:\n' +
+        oldPath +
+        '\n\nPodes tentar novamente agora, ou continuar e migrar mais tarde (basta reabrir a app).'
+    })
+    if (choice === 0) migrateUserDataFromOldProductName()
+  }
+}
+
 app.whenReady().then(async () => {
   try {
+    migrateUserDataFromOldProductName()
     await initDatabase()
     liveSession = registerIpcHandlers(
       () => mainWindow,
