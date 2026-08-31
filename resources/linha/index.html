@@ -3449,6 +3449,10 @@ function renderCatsModal(){
     <p style="color:var(--muted); font-size:12px; margin-top:10px;">Usa teclas únicas (letras ou números) — se atribuíres uma tecla já usada por outra categoria, a app avisa-te. Dica: na aba de vídeo, pressionar uma tecla ainda não usada abre um criador rápido de categoria na hora.</p>
     <p style="color:var(--muted); font-size:12px; margin-top:6px;">Marca "fase de equipa" para comportamentos coletivos (ex.: organização ofensiva/defensiva, transição ofensiva/defensiva) — o relatório calcula o tempo médio e total dessas categorias em vez de só contar ocorrências, como faz para remates, passes ou lances individuais.</p>
     <p style="color:var(--muted); font-size:12px; margin-top:6px;">Marca "golo" para que marcar essa categoria some automaticamente ao placar do time do lance.</p>
+    <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
+      <button class="btn" id="btnExportProjectCats">⬇ Exportar categorias deste projeto (.json)</button>
+      <p style="color:var(--muted); font-size:11px; margin-top:8px;">Para as usar noutro projeto novo: exporta aqui e depois importa este ficheiro na página inicial, no botão "⬆ Importar" da lista de categorias predefinidas. Este projeto não é alterado por isto.</p>
+    </div>
   `;
   const list = el.querySelector('#catEditList');
   // Color leads each row (matches the same order used on the home screen's category list) so the
@@ -3497,6 +3501,20 @@ function renderCatsModal(){
     state.categories.push({id:'c'+uid(), key:'', label:'Nova categoria', color:pickDistinctCategoryColor(state.categories.map(c=>c.color)), isTeamPhase:false});
     draw();
     saveState();
+  });
+  // Export-only bridge for "só editei as categorias dentro deste projeto": produces the exact same
+  // file shape the home screen's "⬆ Importar" already reads (see btnImportCatTemplates), so this
+  // project's categories can become a new project's starting point via that existing import — never
+  // silently, and never touching the global template directly from here.
+  el.querySelector('#btnExportProjectCats').addEventListener('click', ()=>{
+    if(!state.categories.length){ toast('Não há categorias para exportar.'); return; }
+    const payload = { linhaCategoryTemplatesExport: 1, exportedAt: Date.now(), categories: JSON.parse(JSON.stringify(state.categories)) };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'linha-categorias-projeto.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
   });
 }
 
