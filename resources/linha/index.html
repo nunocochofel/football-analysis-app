@@ -6429,6 +6429,16 @@ function playNextInReel(){
    in a plain browser tab, so export there just explains that plainly.
 =================================================================== */
 const CLIP_EXPORT_FPS = 20;
+// F2 (prepared, not engaged): capturing at real 1x playback (see captureAndEncodeClipWeb) gives a
+// slow device less wall-clock time per target sample than CLIP_EXPORT_FPS demands — a lower
+// el.playbackRate during capture buys back 1/rate more real time per sample, at the cost of a
+// proportionally slower export. Deliberately not auto-computed from anything yet — a real device
+// measurement (window.__EXPORT_BENCH__/?bench=1, see runExportEncode) is what earns a specific
+// number here, not a guess. To engage manually once one exists: set this to a value in (0,1] —
+// e.g. measured effective fps ÷ CLIP_EXPORT_FPS, with some safety margin below that ratio (not
+// exactly at it — no margin for anything worse than the exact clip measured). null = 1x, today's
+// unchanged behavior.
+const EXPORT_PLAYBACK_RATE_OVERRIDE = null;
 let exportSelectedIds = new Set();
 
 // A clip's rank (1-based) among every other tag of the same category, ordered by when it
@@ -7036,7 +7046,7 @@ async function captureAndEncodeClipWeb(el, tag, fps, resolution, quality, onProg
             el.requestVideoFrameCallback(onFrame);
           }
 
-          el.playbackRate = 1;
+          el.playbackRate = EXPORT_PLAYBACK_RATE_OVERRIDE || 1; // F2, prepared but off — see its own comment near CLIP_EXPORT_FPS
           el.play().then(() => { tLastFrameEnd = bench ? performance.now() : 0; el.requestVideoFrameCallback(onFrame); }).catch(reject);
         });
       } finally {
