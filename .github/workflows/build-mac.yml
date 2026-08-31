@@ -466,17 +466,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Salvaguarda contra o próprio passo "Controlos A/B + candidatos" acima: quando um
-          # candidato vence, esse passo cria e empurra a tag diretamente (só corre em
-          # workflow_dispatch) e já publica o release com os assets EXATOS que passaram no smoke
-          # test. Empurrar essa tag despoleta este mesmo workflow outra vez, agora como push de
-          # tag — sem esta guarda, este passo reconstruiria tudo do zero e sobrescreveria
-          # (--clobber) os assets já testados por um rebuild equivalente mas não idêntico.
-          EXISTING_ASSETS=$(gh release view "${{ github.ref_name }}" --json assets --jq '.assets | length' 2>/dev/null || echo "0")
-          if [ "$EXISTING_ASSETS" != "0" ] && [ -n "$EXISTING_ASSETS" ]; then
-            echo "Release ${{ github.ref_name }} já tem $EXISTING_ASSETS asset(s) — provavelmente publicados diretamente pela ronda de candidatos. A saltar para não sobrescrever com um rebuild redundante."
-            exit 0
-          fi
+          # Bug found and fixed (v0.8.51 -> v0.8.52): this step used to open with an
+          # EXISTING_ASSETS guard that skipped the upload entirely whenever the release already
+          # had ANY assets — meant to protect against the "Controlos A/B + candidatos" step above
+          # double-publishing over itself (that step is now permanently disabled, if: false, see
+          # its own comment). The guard had no way to tell "assets from that step" apart from
+          # "assets from build-windows.yml winning the normal cross-workflow race to create the
+          # release first" — which is the ORDINARY case on every tagged release, not an edge
+          # case — so it silently skipped the real macOS upload on v0.8.51, even though the
+          # smoke test had already passed and the .dmg/.zip existed. Confirmed on v0.8.51's
+          # release: 3 Windows assets, 0 macOS assets, this step logged success anyway. With the
+          # guard gone, the fallback below (already correctly designed for this exact race, see
+          # its own comment) is what actually runs.
           PRERELEASE_FLAG=""
           case "${{ github.ref_name }}" in
             *-*) PRERELEASE_FLAG="--prerelease" ;;

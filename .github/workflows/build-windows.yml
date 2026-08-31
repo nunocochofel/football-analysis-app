@@ -37,7 +37,7 @@ jobs:
           # User-facing per-release description — softprops/action-gh-release leaves the body
           # empty by default (no generate_release_notes here), and this project has no other
           # per-release-notes mechanism for Windows yet (see build-mac.yml's NOTES_FILE step for
-          # the equivalent there). Static text describing v0.8.51 specifically — update this block
+          # the equivalent there). Static text describing v0.8.52 specifically — update this block
           # for whatever the next release's own user-facing change actually is, same as every
           # release before this needed its own description written by hand.
           body: |
