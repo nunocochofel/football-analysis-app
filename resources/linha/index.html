@@ -2203,6 +2203,15 @@ const BUILD_MARKER = '__BUILD_SHA__ · __BUILD_DATE__';
 console.log('[LINHA] build: ' + BUILD_MARKER);
 const buildTagEl = document.getElementById('buildTag');
 if(buildTagEl) buildTagEl.textContent = 'build ' + BUILD_MARKER;
+// Opt-in export-timing instrumentation (see runExportEncode's console.log('[export-bench]', ...))
+// — normally toggled via window.__EXPORT_BENCH__ = true typed into a desktop devtools console,
+// which is exactly what an iPad/iPhone doesn't have without a Mac connected by cable for Safari's
+// remote Web Inspector. ?bench=1 in the URL is the Mac-free equivalent: type it into Safari's own
+// address bar on the device itself, no dev tools needed at all. Read-only query check, no
+// persistence — leaves normal use (the URL without it) completely unaffected.
+if(/[?&]bench=1(&|$)/.test(location.search)){
+  window.__EXPORT_BENCH__ = true;
+}
 // Installability on Android requires a registered service worker; iOS Safari's "Add to Home
 // Screen" doesn't strictly require one but treats the result as a more real PWA (offline shell,
 // update handling) with one. Electron loads this file via file:// and never needs any of it —
@@ -7184,6 +7193,26 @@ async function runExportEncode(item, bench, tItemStart, clipDurationSec, fastPat
       bench.itemTotalMs = performance.now()-tItemStart;
       bench.clipDurationSec = clipDurationSec;
       console.log('[export-bench] ' + JSON.stringify(bench));
+      // alert() (not just console.log) specifically because ?bench=1 (see PLATFORM DETECTION) is
+      // the Mac-free way to turn this on in the first place — an iPad/iPhone has no console to
+      // read the log from without Safari's remote Web Inspector, which needs a Mac connected by
+      // cable. alert() blocks and shows plain text on the device itself, no tooling required.
+      // Electron always has real devtools available (F12, wired up elsewhere in this file), so
+      // this would only be an annoying mid-workflow interruption there — skipped on purpose.
+      if(!isElectron()){
+        alert(
+          'export-bench (' + clipDurationSec.toFixed(1) + 's clip)\n' +
+          'draw: ' + Math.round(bench.drawMs||0) + 'ms\n' +
+          'h264EncodeMs: ' + Math.round(bench.h264EncodeMs||0) + 'ms\n' +
+          'h264FlushMs: ' + Math.round(bench.h264FlushMs||0) + 'ms\n' +
+          'decodeWaitMs: ' + Math.round(bench.decodeWaitMs||0) + 'ms\n' +
+          'frameCount: ' + (bench.frameCount||0) + '\n' +
+          'catchUpEvents: ' + (bench.catchUpEvents||0) + '\n' +
+          'duplicatedSamples: ' + (bench.duplicatedSamples||0) + '\n' +
+          'maxSamplesPerCallback: ' + (bench.maxSamplesPerCallback||0) + '\n' +
+          'itemTotalMs: ' + Math.round(bench.itemTotalMs||0)
+        );
+      }
     }
   }catch(err){
     finishExportItemWithError(item, err);
