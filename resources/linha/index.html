@@ -1026,6 +1026,7 @@
   .export-queue-item-bar{height:4px; border-radius:3px; background:var(--panel-alt); margin-top:5px; overflow:hidden;}
   .export-queue-item-bar-fill{height:100%; background:var(--pitch); width:0%; transition:width .2s;}
   .export-queue-item-error{font-size:11px; color:var(--crimson); margin-top:4px;}
+  .export-queue-item-warning{font-size:11px; color:var(--amber); margin-top:4px;}
   .export-queue-item-actions{display:flex; gap:4px; margin-top:6px;}
   .export-queue-item-actions button{font-size:10.5px; padding:3px 7px;}
 
@@ -6943,6 +6944,10 @@ async function captureAndEncodeClipWeb(el, tag, fps, resolution, quality, onProg
   const frameDurationUs = Math.round(1_000_000/fps);
   const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
   let sampleIndex = 0;
+  // Always tracked (not gated behind bench/?bench=1, unlike the other bench.* fields further
+  // down) — this is what beginExportItem uses to warn about a degraded export on every real
+  // export, not just an instrumented one. See the F4 comment there.
+  let duplicatedSamples = 0, catchUpEvents = 0;
 
   // Encodes the CURRENTLY DRAWN canvas content as one more output sample — used both for the
   // normal case (one sample per drawAndEncodeAt call) and for freeze holds (several samples in a
@@ -7009,10 +7014,10 @@ async function captureAndEncodeClipWeb(el, tag, fps, resolution, quality, onProg
             // Direct, internal confirmation of the duplicate-frame hypothesis: more than one
             // target sample drawn from the SAME decoded frame in this callback means the device
             // fell behind real-time between the previous callback and this one.
-            if(bench && samplesThisCall > 1){
-              bench.catchUpEvents = (bench.catchUpEvents||0) + 1;
-              bench.duplicatedSamples = (bench.duplicatedSamples||0) + (samplesThisCall-1);
-              bench.maxSamplesPerCallback = Math.max(bench.maxSamplesPerCallback||0, samplesThisCall);
+            if(samplesThisCall > 1){
+              catchUpEvents++;
+              duplicatedSamples += (samplesThisCall-1);
+              if(bench) bench.maxSamplesPerCallback = Math.max(bench.maxSamplesPerCallback||0, samplesThisCall);
             }
           }
 
@@ -7051,8 +7056,19 @@ async function captureAndEncodeClipWeb(el, tag, fps, resolution, quality, onProg
   }
   if(onProgress) onProgress(100);
   muxer.finalize();
-  if(bench) bench.frameCount = sampleIndex;
-  return new Blob([muxer.target.buffer], {type:'video/mp4'});
+  if(bench){
+    bench.frameCount = sampleIndex;
+    bench.catchUpEvents = catchUpEvents;
+    bench.duplicatedSamples = duplicatedSamples;
+  }
+  // duplicatedSamples/frameCount returned unconditionally (not just under bench) — this is what
+  // lets beginExportItem warn about a degraded export every time, see its F4 comment, not only
+  // when someone happens to have ?bench=1 on.
+  return {
+    blob: new Blob([muxer.target.buffer], {type:'video/mp4'}),
+    frameCount: sampleIndex,
+    duplicatedSamples
+  };
 }
 
 // Runs an item's capture phase (serialized — shares the one hidden <video> element) and returns
@@ -7151,12 +7167,24 @@ async function beginExportItem(item){
     // guarantee exactly as it already was rather than letting the queue loop race two exports over
     // the same element. The actual video stays in item.webBlob for the panel's download/share
     // button; runExportEncode below only needs to know the filename to report as "done".
-    const blob = await captureAndEncodeClipWeb(el, tag, CLIP_EXPORT_FPS, item.options.resolution, item.options.quality, pct => {
+    const result = await captureAndEncodeClipWeb(el, tag, CLIP_EXPORT_FPS, item.options.resolution, item.options.quality, pct => {
       item.progress = pct;
       renderExportQueuePanel();
     }, () => item.cancelRequested, bench);
     if(item.cancelRequested) throw new Error(EXPORT_CANCELLED);
-    item.webBlob = blob;
+    item.webBlob = result.blob;
+    // F4 — always on, not just under ?bench=1/window.__EXPORT_BENCH__: warn if a meaningful share
+    // of the output is duplicated frames from the device falling behind real-time capture (see
+    // captureAndEncodeClipWeb's own comment on duplicatedSamples), instead of silently handing
+    // over a clip that looks stuttery with no explanation — exactly what happened testing this on
+    // an iPhone before this existed (76% duplicated, no warning at all). 8% tolerates the odd
+    // single-frame catch-up blip that doesn't actually look choppy in practice.
+    const degradedPct = result.frameCount > 0 ? Math.round((result.duplicatedSamples/result.frameCount)*100) : 0;
+    if(degradedPct >= 8){
+      item.degraded = true;
+      item.degradedMessage = `Este dispositivo não acompanhou a captura em tempo real — ${degradedPct}% dos frames deste corte estão repetidos (a imagem pode saltar/gaguejar na reprodução).`;
+      toast('⚠ Exportação com qualidade reduzida — ' + degradedPct + '% de frames repetidos');
+    }
     return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, false, async () => item.filename) };
   }catch(err){
     finishExportItemWithError(item, err);
@@ -7418,6 +7446,7 @@ function renderExportQueuePanel(){
       </div>
       ${item.status==='processing' || item.status==='waiting' ? `<div class="export-queue-item-bar"><div class="export-queue-item-bar-fill" style="width:${item.progress}%"></div></div>` : ''}
       ${item.status==='error' ? `<p class="export-queue-item-error">${escapeHtml(item.error||'')}</p>` : ''}
+      ${item.status==='done' && item.degraded ? `<p class="export-queue-item-warning">${escapeHtml(item.degradedMessage||'')}</p>` : ''}
       <div class="export-queue-item-actions">
         ${item.status==='done' && item.webBlob ? `
           ${(typeof navigator.share==='function' && typeof navigator.canShare==='function') ? `<button class="btn" data-qact="share" data-qid="${item.id}">Partilhar</button>` : ''}
