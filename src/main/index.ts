@@ -184,16 +184,24 @@ function setupAutoUpdate(): void {
   })
 }
 
-// One-time migration from the app's previous productName ("Análise Tática", every release
-// before v0.8.47-rc2) to the current one ("LINHA"). Electron derives the userData folder from
-// the packaged executable/bundle's product name — Windows EXE VERSIONINFO, macOS CFBundleName —
-// NOT from electron-builder's appId (confirmed by extracting an old build's app.asar: no
-// top-level "productName" in package.json, and the appId change in v0.8.47-rc1 alone did not
-// move the folder). So the LINHA rename silently orphaned every existing user's projects — plain
-// localStorage blobs, see resources/linha/index.html — the first time they installed a
-// LINHA-named build. Also confirmed on-disk: Local Storage is still classic LevelDB
+// One-time migration from the userData profile of the productName this app used to have
+// ("Análise Tática", every release before v0.8.47-rc2) to whatever the CURRENT platform's
+// productName resolves to. Electron derives the userData folder from the packaged
+// executable/bundle's product name — Windows EXE VERSIONINFO, macOS CFBundleName — NOT from
+// electron-builder's appId (confirmed by extracting an old build's app.asar: no top-level
+// "productName" in package.json, and the appId change in v0.8.47-rc1 alone did not move the
+// folder). Also confirmed on-disk: Local Storage is still classic LevelDB
 // (CURRENT/LOCK/MANIFEST-*/*.ldb/*.log), not a newer SQLite-backed store, so a raw directory
 // copy of it IS the actual data, verbatim.
+//
+// As of the productName split below (global "Análise Tática" for Windows, mac.executableName +
+// extendInfo CFBundleName/CFBundleDisplayName "LINHA" for macOS — see package.json), OLD_PRODUCT_NAME
+// and the CURRENT Windows productName are the same string again, so oldLocalStorage and
+// newLocalStorage below resolve to the identical path on Windows: newAlreadyHasData is always
+// true whenever oldHasData is (there's only one folder), so the function always returns at its
+// first check on Windows — a real, harmless no-op, not dead code removed, since it still does
+// real work on macOS (where CFBundleName stays "LINHA", genuinely different from
+// OLD_PRODUCT_NAME) for anyone who somehow has old-productName mac data.
 //
 // Safe by construction: copies into a staging directory first and only renames it into place if
 // the whole copy succeeds, so a failed/interrupted copy never leaves a half-written "Local

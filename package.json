@@ -46,7 +46,7 @@
   },
   "build": {
     "appId": "com.local.analise-tatica",
-    "productName": "LINHA",
+    "productName": "Análise Tática",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -101,7 +101,15 @@
       "category": "public.app-category.sports",
       "artifactName": "${name}-${version}-${arch}.${ext}",
       "identity": "-",
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "executableName": "LINHA",
+      "extendInfo": {
+        "CFBundleName": "LINHA",
+        "CFBundleDisplayName": "LINHA"
+      }
+    },
+    "dmg": {
+      "title": "LINHA ${version}"
     }
   }
 }

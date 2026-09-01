@@ -4,6 +4,79 @@ Build produzida sempre num runner `macos-latest` real do GitHub Actions
 (`.github/workflows/build-mac.yml`) — nunca empacotada localmente a partir do
 Windows. Alvo: **arm64 (Apple Silicon)**, sem Rosetta e sem binário universal.
 
+## NUNCA acentuar o nome do bundle/executável macOS (causa um crash imediato)
+
+**Regra permanente, para nunca ser reintroduzida sem se saber porquê:** o
+`.app`, o executável interno, e o volume do `.dmg` no macOS têm de ter nomes
+só com ASCII. O nome visível "Análise Tática" (com acentos) causa um crash
+de arranque **100% reprodutível** (`EXC_BREAKPOINT`/`SIGTRAP`, thread
+`CrBrowserMain`, morre em milissegundos, antes de qualquer janela abrir) —
+isolado por uma matriz de bisseção (P0-P7) que testou cada variável de
+empacotamento isoladamente, sobre o mesmo código trivial (config aplicada via
+override do campo `build` do `package.json`, uma variável de cada vez):
+
+| Config | O que soma à referência (P0) | Exit code |
+|--------|-------------------------------|-----------|
+| P0 | referência mínima (sem identity/hardenedRuntime/entitlements/asarUnpack, nome ASCII) | 0 |
+| P1 | + identity ad-hoc | 0 |
+| P2 | + hardenedRuntime true | 0 |
+| P3 | + os 4 entitlements | 0 |
+| P4 | + asar:false | 0 |
+| P5 | **+ productName acentuado ("Análise Tática")** | **133** |
+| P6 | + asarUnpack ffmpeg/ffprobe | 0 |
+| P7 | config completa da app na altura (repete o crash relatado) | 133 |
+
+Das 6 variáveis de empacotamento testadas isoladamente (P1-P4, P6, mais a
+combinação completa em P7 sem o nome ASCII), **nenhuma sozinha reproduz o
+crash** — só o nome acentuado o faz (P5), e reaparece assim que volta a estar
+presente (P7). A versão do Electron e o código da app já tinham sido
+eliminados como causa numa ronda de diagnóstico anterior (controlo A2:
+Electron 43.4.0 virgem + `BrowserWindow` mínima, sem nada deste projeto,
+arranca sem problema).
+
+Confirma-se também nos logs do P5/P7 que não é só a *string* que aparece no
+Info.plist — o `.app`, o caminho do executável, e o ficheiro `.dmg` ficam
+todos literalmente nomeados com o acento:
+
+```
+APP_PATH=dist/mac-arm64/Análise Tática.app
+EXEC_PATH=dist/mac-arm64/Análise Tática.app/Contents/MacOS/Análise Tática
+```
+
+comparado com P0-P4/P6, todos `dist/mac-arm64/linha.app/Contents/MacOS/linha`
+— o padrão consistente com um crash de nível de caminho de ficheiro/nome de
+processo, não uma questão puramente cosmética do Info.plist. A causa exata
+dentro do Electron/Chromium nunca foi confirmada além disto — só que o nome
+acentuado, sozinho, é suficiente e necessário para reproduzir o crash.
+
+**Como isto se aplica à app hoje (Windows "Análise Tática", macOS "LINHA"):**
+o `package.json` mantém `productName` global como `"Análise Tática"` (usado
+pelo Windows: nome do `.exe`, atalhos, pasta de instalação) mas sobrepõe, só
+no bloco `mac`, tudo o que o macOS usa para nomear o bundle:
+
+```jsonc
+"mac": {
+  "executableName": "LINHA",           // pasta .app + CFBundleExecutable (o binário interno)
+  "extendInfo": {
+    "CFBundleName": "LINHA",           // o que o Finder/Dock mostram
+    "CFBundleDisplayName": "LINHA"
+  }
+},
+"dmg": {
+  "title": "LINHA ${version}"          // nome do volume ao montar o .dmg
+}
+```
+
+O electron-builder **não tem** um campo `mac.productName` — `productName` só
+existe ao nível de topo do `build`. `mac.executableName` é o que efetivamente
+renomeia o `.app`/binário interno (confirmado no código-fonte do
+electron-builder instalado, `macPackager.js`/`appInfo.js`, não só na
+documentação); `CFBundleName`/`CFBundleDisplayName` vêm sempre do
+`productName` global a não ser que `mac.extendInfo` os sobreponha; o título
+do `.dmg` vem de `build.dmg.title`. Os quatro têm de ser tratados
+explicitamente para o macOS ficar com "LINHA" em todo o lado sem tocar no
+nome que o Windows usa.
+
 ## Disparar manualmente (sem criar release)
 
 GitHub → Actions → "Build macOS" → "Run workflow" → escolhe o branch → Run.
