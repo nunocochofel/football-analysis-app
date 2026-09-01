@@ -1,6 +1,6 @@
 {
   "name": "football-analysis-app",
-  "version": "0.8.52",
+  "version": "0.8.53",
   "description": "App de análise de vídeo de futebol (MVP)",
   "main": "./out/main/index.js",
   "author": "",
@@ -46,7 +46,7 @@
   },
   "build": {
     "appId": "com.local.analise-tatica",
-    "productName": "Análise Tática",
+    "productName": "LINHA",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -101,15 +101,7 @@
       "category": "public.app-category.sports",
       "artifactName": "${name}-${version}-${arch}.${ext}",
       "identity": "-",
-      "hardenedRuntime": false,
-      "executableName": "LINHA",
-      "extendInfo": {
-        "CFBundleName": "LINHA",
-        "CFBundleDisplayName": "LINHA"
-      }
-    },
-    "dmg": {
-      "title": "LINHA ${version}"
+      "hardenedRuntime": false
     }
   }
 }

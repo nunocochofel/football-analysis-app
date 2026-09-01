@@ -194,14 +194,17 @@ function setupAutoUpdate(): void {
 // (CURRENT/LOCK/MANIFEST-*/*.ldb/*.log), not a newer SQLite-backed store, so a raw directory
 // copy of it IS the actual data, verbatim.
 //
-// As of the productName split below (global "Análise Tática" for Windows, mac.executableName +
-// extendInfo CFBundleName/CFBundleDisplayName "LINHA" for macOS — see package.json), OLD_PRODUCT_NAME
-// and the CURRENT Windows productName are the same string again, so oldLocalStorage and
-// newLocalStorage below resolve to the identical path on Windows: newAlreadyHasData is always
-// true whenever oldHasData is (there's only one folder), so the function always returns at its
-// first check on Windows — a real, harmless no-op, not dead code removed, since it still does
-// real work on macOS (where CFBundleName stays "LINHA", genuinely different from
-// OLD_PRODUCT_NAME) for anyone who somehow has old-productName mac data.
+// A per-platform productName split (global "Análise Tática" for Windows, "LINHA" only on macOS
+// via mac.executableName + extendInfo) was tried and reverted: electron-builder names the
+// Helper.app bundles (GPU/Renderer/Plugin — required by Chromium's multi-process architecture on
+// macOS) from the GLOBAL productName only, with no override available (confirmed in
+// electron-builder's own source, electron/electronMac.js — appFilename = appInfo.sanitizedProductName,
+// which ignores executableName). Electron's native bootstrap resolves Helper apps BY CFBundleName
+// (see the comment above that line, citing electron_main_delegate_mac.mm and
+// electron-builder issue #6962) — so overriding CFBundleName without the Helper folders matching
+// makes Electron unable to find them, and it crashes on launch (confirmed: reproduced exit 133 on
+// the real macOS CI runner). productName is "LINHA" globally again, on both platforms — this
+// function is real and necessary on both, exactly as it was before that detour.
 //
 // Safe by construction: copies into a staging directory first and only renames it into place if
 // the whole copy succeeds, so a failed/interrupted copy never leaves a half-written "Local

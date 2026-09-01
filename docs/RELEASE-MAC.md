@@ -49,33 +49,42 @@ processo, não uma questão puramente cosmética do Info.plist. A causa exata
 dentro do Electron/Chromium nunca foi confirmada além disto — só que o nome
 acentuado, sozinho, é suficiente e necessário para reproduzir o crash.
 
-**Como isto se aplica à app hoje (Windows "Análise Tática", macOS "LINHA"):**
-o `package.json` mantém `productName` global como `"Análise Tática"` (usado
-pelo Windows: nome do `.exe`, atalhos, pasta de instalação) mas sobrepõe, só
-no bloco `mac`, tudo o que o macOS usa para nomear o bundle:
+## `productName` é ÚNICO em toda a app — não dá para dividir por plataforma
 
-```jsonc
-"mac": {
-  "executableName": "LINHA",           // pasta .app + CFBundleExecutable (o binário interno)
-  "extendInfo": {
-    "CFBundleName": "LINHA",           // o que o Finder/Dock mostram
-    "CFBundleDisplayName": "LINHA"
-  }
-},
-"dmg": {
-  "title": "LINHA ${version}"          // nome do volume ao montar o .dmg
-}
+Foi tentado (e revertido) ter `productName` global `"Análise Tática"` para o
+Windows, com `"LINHA"` só no macOS via `mac.executableName` +
+`mac.extendInfo.CFBundleName`/`CFBundleDisplayName` + `dmg.title`. Rebentou
+outra vez (exit 133, mesmo sinal de sempre), por uma razão diferente da dos
+acentos — e vale a pena escrever porquê, para ninguém tentar isto de novo:
+
+O macOS/Chromium usa vários processos "Helper" separados (GPU, Renderer,
+Plugin — arquitetura multi-processo obrigatória), cada um o seu próprio
+`.app` dentro de `Contents/Frameworks/`. O electron-builder nomeia esses
+bundles Helper a partir do `productName` **global**, sempre — não respeita
+`mac.executableName` (confirmado no código-fonte, `electron/electronMac.js`):
+
+```js
+// Electon uses the application name (CFBundleName) to resolve helper apps
+// https://github.com/electron/electron/blob/main/shell/app/electron_main_delegate_mac.mm
+// https://github.com/electron-userland/electron-builder/issues/6962
+const appFilename = appInfo.sanitizedProductName;   // não usa executableName
 ```
 
-O electron-builder **não tem** um campo `mac.productName` — `productName` só
-existe ao nível de topo do `build`. `mac.executableName` é o que efetivamente
-renomeia o `.app`/binário interno (confirmado no código-fonte do
-electron-builder instalado, `macPackager.js`/`appInfo.js`, não só na
-documentação); `CFBundleName`/`CFBundleDisplayName` vêm sempre do
-`productName` global a não ser que `mac.extendInfo` os sobreponha; o título
-do `.dmg` vem de `build.dmg.title`. Os quatro têm de ser tratados
-explicitamente para o macOS ficar com "LINHA" em todo o lado sem tocar no
-nome que o Windows usa.
+O próprio comentário no código aponta a causa: o Electron nativo **localiza**
+os Helpers pelo `CFBundleName` do app principal. Com `extendInfo` a pôr
+`CFBundleName: "LINHA"` mas os bundles Helper em disco continuando
+`Análise Tática Helper.app` (nome vindo do `productName` global, sem
+override possível nesta versão do electron-builder), o Electron procura por
+`LINHA Helper.app` e não encontra nada com esse nome — crash no arranque.
+Não existe nenhum campo `helperExecutableName` ou equivalente nesta versão
+(26.15.3) — só existem overrides de `helperBundleId` (identidade de
+assinatura), não de nome.
+
+**Conclusão: o `productName` tem de ser o mesmo em toda a app, Windows e
+macOS incluído.** Não há forma suportada de o dividir por plataforma sem
+reescrever a lógica de nomeação dos Helpers a seguir ao empacotamento (não
+tentado — exigiria a sua própria ronda de validação). A app chama-se
+`"LINHA"` em todo o lado.
 
 ## Disparar manualmente (sem criar release)
 
