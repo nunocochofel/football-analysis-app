@@ -1,5 +1,5 @@
 import { LiveSession } from './liveIngest'
-import { resolveYouTubeUrl, type YouTubeResolveOptions } from './youtubeResolve'
+import { resolveYouTubeUrl, type YouTubeResolveOptions, type ResolvedYouTubeStream } from './youtubeResolve'
 import type { LiveEvent, LiveSourceType } from '../shared/types'
 import { logLive } from './liveLog'
 
@@ -111,9 +111,9 @@ async function connectOnce(
   // state introduced, per the task's explicit instruction.
   emit({ type: 'state', state: 'connecting' })
   emit({ type: 'log', line: 'A resolver o stream do YouTube (yt-dlp)…' })
-  let resolvedUrl: string
+  let resolved: ResolvedYouTubeStream
   try {
-    resolvedUrl = await resolveYouTubeUrl(input.url, { ytDlpBinOverride: opts.ytDlpBinOverride })
+    resolved = await resolveYouTubeUrl(input.url, { ytDlpBinOverride: opts.ytDlpBinOverride })
   } catch (err) {
     resolving = false
     const message = err instanceof Error ? err.message : String(err)
@@ -128,7 +128,13 @@ async function connectOnce(
     return
   }
   resolving = false
-  await liveSession.start(resolvedUrl, { ffmpegBinOverride: opts.ffmpegBinOverride, bufferDurationMsOverride: opts.bufferDurationMsOverride })
+  logLive(`YouTube resolvido — vídeo separado do áudio: ${resolved.audioUrl ? 'sim' : 'não'}, tem áudio: ${resolved.hasAudio}`)
+  await liveSession.start(resolved.videoUrl, {
+    ffmpegBinOverride: opts.ffmpegBinOverride,
+    bufferDurationMsOverride: opts.bufferDurationMsOverride,
+    audioUrl: resolved.audioUrl,
+    noAudio: !resolved.hasAudio
+  })
 }
 
 function scheduleReconnect(message: string): void {

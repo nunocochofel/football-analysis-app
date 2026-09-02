@@ -87,6 +87,14 @@ export interface LiveSessionStartOptions {
   // Test-only: lets tests use a tiny window (e.g. a few seconds) to actually exercise ring-buffer
   // trimming quickly, instead of waiting out the real 5-minute production default.
   bufferDurationMsOverride?: number
+  // YouTube LIVE only (see liveInput.ts) — RTMP never sets these, a single RTMP connection always
+  // already carries both. audioUrl: a SEPARATE audio-only URL to mux in via a second ffmpeg -i
+  // (YouTube LIVE never offers a single pre-muxed format — see youtubeResolve.ts's own comment for
+  // how this was confirmed, not assumed). noAudio: the resolved format genuinely has no audio
+  // anywhere — ffmpeg gets -an instead of being told to encode a track that doesn't exist, which
+  // is what silently produced zero output for two real minutes before this was found.
+  audioUrl?: string | null
+  noAudio?: boolean
 }
 
 // Fase LIVE 2 — RTMP/YouTube ingest via ffmpeg, remuxed into fMP4, split into independently
@@ -201,54 +209,59 @@ export class LiveSession {
     this.liveBuffer = liveBuffer
 
     const ffmpegBin = opts.ffmpegBinOverride || DEFAULT_FFMPEG_PATH
-    // -c:v copy: remux only, no re-encode — lowest latency/CPU, and correct as long as the RTMP
-    // source is already H.264 (true for Veo Live and virtually every RTMP encoder in practice).
+    // -c:v copy: remux only, no re-encode — lowest latency/CPU, and correct as long as the source
+    // is already H.264 (true for Veo Live and virtually every RTMP encoder in practice, and for
+    // every YouTube LIVE format observed — see youtubeResolve.ts).
+    //
+    // -reconnect/-reconnect_streamed/-reconnect_delay_max/-rw_timeout: HTTP(S)-protocol AVOptions
+    // (apply when rtmpUrl is actually http(s)://, e.g. a resolved YouTube LIVE HLS manifest — RTMP
+    // proper reuses this same start() unmodified and simply ignores options its own protocol
+    // handler doesn't recognize, confirmed against a real rtmp:// URL: no warning, no rejection).
+    // rw_timeout is in MICROSECONDS (ffmpeg's own unit for this option, not ms) — 15s, matching
+    // CONNECT_TIMEOUT_MS's own generosity for a stalled read. reconnect_delay_max caps the gap
+    // between automatic reconnect attempts ffmpeg makes internally, at the network layer —
+    // separate from and beneath the session-level auto-reconnect in liveInput.ts, which
+    // re-resolves a fresh URL entirely once ffmpeg itself gives up and exits.
+    //
+    // -reconnect_at_eof is DELIBERATELY NOT included, after real testing (v0.8.54) found it's what
+    // actually caused a whole real YouTube LIVE session to serve zero segments for two straight
+    // minutes — confirmed directly, not guessed: ran ffmpeg by hand against the exact two real HLS
+    // URLs (video-only + audio-only) that session resolved, with vs. without this one flag.
+    // With it: 0 bytes of output, stderr looping through the SAME manifest lines twice over
+    // ("Will reconnect... error=End of file", then the identical #EXT-X-DATERANGE entries again
+    // from the start). Without it: real, healthy output within seconds. A polled-playlist live HLS
+    // source reaches "EOF" on its currently-known segment list constantly, by design, as a normal
+    // part of how live HLS works — ffmpeg's own HLS demuxer already re-polls for new segments on
+    // its own; -reconnect_at_eof instead makes the underlying HTTP layer treat that completely
+    // normal condition as a dropped connection needing a protocol-level reconnect, which re-fetched
+    // stale playlist state instead of ever advancing to genuinely new segments.
+    const RECONNECT_FLAGS = ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '30', '-rw_timeout', '15000000']
+    const args = ['-loglevel', 'info', ...RECONNECT_FLAGS, '-i', rtmpUrl]
+    // YouTube LIVE only (opts.audioUrl set — see liveInput.ts/youtubeResolve.ts): a second -i for
+    // the separate audio-only stream, with explicit -map so ffmpeg knows to combine them (with a
+    // single -i, no -map is needed at all — ffmpeg includes every stream from the one input by
+    // default, which is why the RTMP path below stays exactly as it always was).
+    if (opts.audioUrl) {
+      args.push(...RECONNECT_FLAGS, '-i', opts.audioUrl, '-map', '0:v:0', '-map', '1:a:0')
+    } else if (opts.noAudio) {
+      args.push('-map', '0:v:0')
+    }
+    args.push('-c:v', 'copy')
     // -c:a aac: audio re-encoded rather than copied — negligible CPU cost, but safe against the
-    // few RTMP sources that carry a codec MP4/Chromium can't play, without the video-side latency
-    // cost a defensive video re-encode would add.
+    // few sources that carry a codec MP4/Chromium can't play, without the video-side latency cost
+    // a defensive video re-encode would add. -an (no audio output at all) only when the resolved
+    // format genuinely has none — see LiveSessionStartOptions' own comment for the real session
+    // this fixes: asking ffmpeg to encode -c:a aac from an input with no audio track at all
+    // produced zero output, silently, for a full two-minute test.
+    if (opts.noAudio) {
+      args.push('-an')
+    } else {
+      args.push('-c:a', 'aac', '-b:a', '128k')
+    }
     // frag_keyframe+empty_moov+default_base_moof: fragmented MP4, one moof+mdat pair per keyframe
     // — exactly the ftyp/moov-once-then-moof/mdat* shape mp4Boxes.ts expects to split into an init
     // segment plus a stream of independently storable fragments (see the box-handling loop below).
-    //
-    // -reconnect/-reconnect_streamed/-reconnect_at_eof/-reconnect_delay_max/-rw_timeout: HTTP(S)-
-    // protocol AVOptions (apply when rtmpUrl is actually http(s)://, e.g. a resolved YouTube LIVE
-    // HLS manifest — this function's own name/comment already cover that RTMP proper reuses this
-    // same start() unmodified). Confirmed harmless to pass unconditionally even for a real rtmp://
-    // input: ran ffmpeg directly with these flags against an rtmp:// URL — no "unrecognized option"
-    // warning, no rejection, just the normal connection attempt (protocol options ffmpeg can't
-    // apply to the input's actual protocol are silently unused, not a hard error). rw_timeout is in
-    // MICROSECONDS (ffmpeg's own unit for this option, not ms) — 15s, matching CONNECT_TIMEOUT_MS's
-    // own generosity for a stalled read. reconnect_delay_max caps the gap between automatic
-    // reconnect attempts ffmpeg makes internally, at the network layer — separate from and beneath
-    // the session-level auto-reconnect in liveInput.ts, which re-resolves a fresh URL entirely once
-    // ffmpeg itself gives up and exits.
-    const args = [
-      '-loglevel',
-      'info',
-      '-reconnect',
-      '1',
-      '-reconnect_streamed',
-      '1',
-      '-reconnect_at_eof',
-      '1',
-      '-reconnect_delay_max',
-      '30',
-      '-rw_timeout',
-      '15000000',
-      '-i',
-      rtmpUrl,
-      '-c:v',
-      'copy',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '128k',
-      '-f',
-      'mp4',
-      '-movflags',
-      'frag_keyframe+empty_moov+default_base_moof',
-      'pipe:1'
-    ]
+    args.push('-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', 'pipe:1')
     console.log('[live] a iniciar ffmpeg:', ffmpegBin, args.join(' '))
     logLive(`sessão a iniciar — ffmpeg ${ffmpegBin} ${args.join(' ')}`)
 
@@ -567,6 +580,13 @@ export class LiveSession {
       const trimmed = line.trim()
       if (!trimmed) continue
       console.log('[live][ffmpeg]', trimmed)
+      // Every line, unthrottled — found the hard way (v0.8.54, a real YouTube session that served
+      // zero segments for two minutes straight): only console.log'ing this meant the actual reason
+      // ffmpeg wasn't producing output existed ONLY in a packaged app's invisible main-process
+      // console, never in the one place that could actually be read back afterward. The throttled
+      // renderer 'log' event right below is a DIFFERENT, deliberately sparse concern (avoid
+      // spamming the on-screen panel) — this file has no such constraint.
+      logLive('ffmpeg: ' + trimmed)
       this.maybeEmitThrottledLog(trimmed)
       if (!this.streamDetected) this.tryDetectStream(trimmed)
     }
