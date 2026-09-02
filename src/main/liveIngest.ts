@@ -7,6 +7,7 @@ import ffmpegPathRaw from 'ffmpeg-static'
 import { LiveBuffer, DEFAULT_BUFFER_DURATION_MS } from './liveBuffer'
 import { Mp4BoxSplitter, extractAvcCodecString, type Mp4Box } from './mp4Boxes'
 import type { LiveEvent, LiveState, LiveStreamInfo } from '../shared/types'
+import { logLive } from './liveLog'
 
 // Same fix as src/main/ffmpeg.ts (kept duplicated rather than imported from there — see the
 // "NÃO refatores componentes existentes" constraint for this phase: importing from ffmpeg.ts
@@ -22,13 +23,32 @@ const DEFAULT_FFMPEG_PATH = unpackAsarPath(ffmpegPathRaw as unknown as string)
 // forever with its stdout pipe never drained (the OS pipe buffer would fill and ffmpeg would just
 // block writing — not a leak exactly, but a stuck, silently-doing-nothing process).
 const CONNECT_TIMEOUT_MS = 15000
-// Fase LIVE 2: with a single long-lived pipe (Fase 1) a dropped TCP connection was an unambiguous
-// "the viewer is gone" signal. With segment-based serving (many short-lived GETs, one per
-// fragment), a single request finishing is NORMAL, not a disconnect. The equivalent signal here is
-// "nobody has fetched ANY segment in a while" — re-armed on every successful segment fetch once
-// live, exactly like a heartbeat. Generous enough that normal fragment cadence (every ~1-4s,
-// governed by the source's keyframe interval) never comes close to it.
-const LIVENESS_TIMEOUT_MS = 20000
+// Fase LIVE 2 original design: re-armed on every successful segment fetch, treating "nobody
+// fetched ANY segment in 20s" as abandonment. Real-world testing (v0.8.53, a genuine YouTube LIVE
+// HLS source, not RTMP) showed this firing 20-40s into perfectly healthy sessions — tagging and
+// export both worked, the player never actually stopped. Root cause: ffmpeg reading an HLS
+// manifest has a real "catch up to the live edge, then throttle to real-time pacing" phase at
+// connect time that a continuously-pushed RTMP/MPEG-TS stream never has — one legitimate pause in
+// fragment production early in a session, which 20s was too tight to absorb. This was the actual
+// cause, not the segment-serve mechanism itself misfiring — see the git history for the fuller
+// diagnosis (no code speculatively "fixed" without first finding the real trigger).
+//
+// Two changes: (1) the window is now driven primarily by an independent renderer heartbeat (see
+// heartbeat() below) — segment-serving success still re-arms it too, but a genuinely present
+// renderer re-arms it regardless of whether ffmpeg happens to be between fragments right now,
+// which is what "is anyone actually watching" should mean. Closing the app window is ALREADY
+// handled deterministically and immediately via 'before-quit' (see index.ts) — this timeout only
+// ever has to catch a frozen/crashed renderer that never closes the window, a genuinely rare case
+// that deserves a generous window, not a tight one. (2) the timeout itself is minutes, not
+// seconds — tied to DEFAULT_BUFFER_DURATION_MS: if NEITHER a heartbeat NOR a served segment has
+// happened in as long as the entire ring buffer window, the buffer would have fully cycled with
+// zero consumption regardless — a far stronger abandonment signal than a short fixed number ever
+// was.
+//
+// LINHA_LIVE_DISABLE_LIVENESS_WATCHDOG=1 (env var) disables this timeout entirely — an escape
+// hatch for a long manual test session while this fix is still being validated in practice, not
+// meant to ship as a normal user-facing setting.
+const LIVENESS_TIMEOUT_MS = DEFAULT_BUFFER_DURATION_MS
 // After SIGTERM, how long to wait before escalating to SIGKILL — ffmpeg normally exits within a
 // few hundred ms of SIGTERM, this is just a safety net against a wedged process.
 const KILL_ESCALATION_MS = 3000
@@ -189,9 +209,32 @@ export class LiveSession {
     // frag_keyframe+empty_moov+default_base_moof: fragmented MP4, one moof+mdat pair per keyframe
     // — exactly the ftyp/moov-once-then-moof/mdat* shape mp4Boxes.ts expects to split into an init
     // segment plus a stream of independently storable fragments (see the box-handling loop below).
+    //
+    // -reconnect/-reconnect_streamed/-reconnect_at_eof/-reconnect_delay_max/-rw_timeout: HTTP(S)-
+    // protocol AVOptions (apply when rtmpUrl is actually http(s)://, e.g. a resolved YouTube LIVE
+    // HLS manifest — this function's own name/comment already cover that RTMP proper reuses this
+    // same start() unmodified). Confirmed harmless to pass unconditionally even for a real rtmp://
+    // input: ran ffmpeg directly with these flags against an rtmp:// URL — no "unrecognized option"
+    // warning, no rejection, just the normal connection attempt (protocol options ffmpeg can't
+    // apply to the input's actual protocol are silently unused, not a hard error). rw_timeout is in
+    // MICROSECONDS (ffmpeg's own unit for this option, not ms) — 15s, matching CONNECT_TIMEOUT_MS's
+    // own generosity for a stalled read. reconnect_delay_max caps the gap between automatic
+    // reconnect attempts ffmpeg makes internally, at the network layer — separate from and beneath
+    // the session-level auto-reconnect in liveInput.ts, which re-resolves a fresh URL entirely once
+    // ffmpeg itself gives up and exits.
     const args = [
       '-loglevel',
       'info',
+      '-reconnect',
+      '1',
+      '-reconnect_streamed',
+      '1',
+      '-reconnect_at_eof',
+      '1',
+      '-reconnect_delay_max',
+      '30',
+      '-rw_timeout',
+      '15000000',
       '-i',
       rtmpUrl,
       '-c:v',
@@ -207,6 +250,7 @@ export class LiveSession {
       'pipe:1'
     ]
     console.log('[live] a iniciar ffmpeg:', ffmpegBin, args.join(' '))
+    logLive(`sessão a iniciar — ffmpeg ${ffmpegBin} ${args.join(' ')}`)
 
     let proc: ChildProcess
     try {
@@ -271,6 +315,7 @@ export class LiveSession {
   // — see the class-level comment).
   async stop(reason: 'manual' | 'client-disconnected' = 'manual'): Promise<void> {
     if (this.state === 'disconnected') return
+    logLive(`stop() chamado — motivo: ${reason}`)
     this.generation++ // invalidates any still-in-flight callbacks/promises from this attempt
     this.intentionalStop = true
     this.clearTimers()
@@ -440,7 +485,7 @@ export class LiveSession {
       }
       res.writeHead(200, { 'Content-Type': 'video/mp4', 'Cache-Control': 'no-store' })
       res.end(bytes)
-      this.onSegmentServed(myGeneration)
+      this.onSegmentServed(myGeneration, id)
       return
     }
     res.writeHead(404)
@@ -451,7 +496,13 @@ export class LiveSession {
   // equivalent of Fase 1's "the one HTTP client connected" trigger for the 'live' state, just
   // moved to the segment level. Every fetch after that re-arms the liveness watchdog (see the
   // LIVENESS_TIMEOUT_MS constant).
-  private onSegmentServed(myGeneration: number): void {
+  //
+  // Logged individually (id + timestamp), not just counted — per a real request after the v0.8.53
+  // test: a long real session needs to be diagnosable from the log file alone, after the fact, no
+  // screenshots. At real-world fragment cadence (one per keyframe, typically every few seconds)
+  // this is at most a few thousand short lines over 90 minutes — negligible on disk, and exactly
+  // what "did segments stop arriving before minute 40, or did the heartbeat stop instead" needs.
+  private onSegmentServed(myGeneration: number, id: number): void {
     if (myGeneration !== this.generation) return
     if (!this.firstSegmentServed) {
       this.firstSegmentServed = true
@@ -462,16 +513,33 @@ export class LiveSession {
       console.log('[live] primeiro segmento servido — sessão LIVE confirmada')
       this.setState('live')
     }
+    logLive(`segmento ${id} servido — watchdog reiniciado`)
     this.armLivenessTimeout(myGeneration)
   }
 
   private armLivenessTimeout(myGeneration: number): void {
     if (this.livenessTimeoutId) clearTimeout(this.livenessTimeoutId)
+    if (process.env.LINHA_LIVE_DISABLE_LIVENESS_WATCHDOG === '1') return
     this.livenessTimeoutId = setTimeout(() => {
       if (myGeneration !== this.generation) return
-      console.log('[live] nenhum segmento pedido recentemente — a terminar a sessão')
+      const msg = `watchdog: sem heartbeat nem segmentos servidos há ${LIVENESS_TIMEOUT_MS}ms — a terminar a sessão`
+      console.log('[live] ' + msg)
+      logLive(msg)
       void this.stop('client-disconnected')
     }, LIVENESS_TIMEOUT_MS)
+  }
+
+  // Called periodically by the renderer (see window.api.liveHeartbeat / live:heartbeat) purely to
+  // say "a window with the LIVE panel open still exists" — independent of whether ffmpeg happens
+  // to be between fragments right now (see the LIVENESS_TIMEOUT_MS comment for why segment cadence
+  // alone was an unreliable signal). Deliberately does NOT touch firstSegmentServed/state — "the
+  // renderer is present" and "media is actually flowing" are two different signals, kept separate.
+  // A no-op before a session exists or after one has ended (state check), so a stray/late
+  // heartbeat from a just-closed session can never resurrect a stale timer.
+  heartbeat(): void {
+    if (this.state !== 'connecting' && this.state !== 'live') return
+    logLive('heartbeat recebido — watchdog reiniciado')
+    this.armLivenessTimeout(this.generation)
   }
 
   private teardownServer(): void {
@@ -559,11 +627,13 @@ export class LiveSession {
 
   private setState(state: LiveState): void {
     this.state = state
+    logLive(`estado -> ${state}`)
     this.emit({ type: 'state', state })
   }
 
   private fail(message: string): void {
     console.error('[live] erro:', message)
+    logLive('erro: ' + message)
     this.intentionalStop = false
     this.clearTimers()
     this.teardownServer()

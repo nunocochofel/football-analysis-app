@@ -113,3 +113,10 @@ export type LiveEvent =
   | { type: 'segment'; id: number; startMs: number; endMs: number; liveEdgeMs: number; oldestMs: number }
   | { type: 'log'; line: string } // curated (throttled) diagnostic line, for an optional on-screen log — full detail always goes to the main process console regardless
   | { type: 'error'; message: string }
+  // A distinct event (not just a 'log' line) for a specific reason: the app auto-reconnecting
+  // without the user noticing was flagged as its own real risk — a couple of seconds of gameplay
+  // can be lost across the gap, and a plain log line scrolls out of view within seconds under
+  // normal ffmpeg stderr traffic (see the git history for the real test that showed exactly this).
+  // The renderer keeps a persistent, visible count/timestamp from this, separate from the
+  // scrolling log, so a reconnect during a 90-minute session is never silent.
+  | { type: 'reconnect'; attempt: number; atMs: number }

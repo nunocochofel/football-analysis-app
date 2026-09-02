@@ -41,42 +41,25 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.53 specifically — update this block for whatever the next release's own
+          # v0.8.54 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Categorias: predefinições para projetos novos**
+            **LIVE (experimental): correções depois de um teste real com uma live do YouTube**
 
-            As tuas categorias (cor, tecla, tudo) podem tornar-se o ponto de partida de
-            qualquer projeto criado a seguir — gere-as na página inicial, onde crias um
-            projeto novo: edita-as diretamente, repõe as de fábrica, ou exporta/importa como
-            ficheiro (útil para levar as tuas categorias de um computador para outro). Um
-            projeto, uma vez criado, é sempre dono das suas próprias categorias — nada feito
-            na página inicial volta a alterar um projeto já existente. Também dá para
-            exportar as categorias de dentro de um projeto específico (⚙ Times & categorias →
-            Categorias), caso as tenhas editado só ali e queiras usá-las noutro projeto novo.
+            A sessão LIVE já não termina sozinha aos 30-40 segundos — a causa era um
+            temporizador demasiado apertado para o ritmo real de arranque de uma fonte HLS
+            (YouTube), que nunca chegava a acontecer com RTMP. Corrigido, com uma margem
+            generosa (minutos, não segundos) e um sinal mais fiável de que a sessão continua
+            a ser vista.
 
-            **Vês dois ícones "LINHA" depois de atualizar? Lê isto.**
+            A app agora também reconecta-se sozinha se a ligação cair a meio de uma sessão
+            longa (rede, URL do YouTube a expirar) — e mostra isso no painel LIVE (🔄), para
+            nunca ser uma reconexão silenciosa. O yt-dlp deixou de ter de ser instalado à
+            mão: a app descarrega-o e atualiza-o sozinha na primeira vez que precisares dele.
 
-            Um erro de packaging entre v0.8.47 e v0.8.52 mudou a identidade interna da app
-            (o `appId`), o que fez o instalador tratá-la como uma aplicação nova em vez de
-            atualizar a existente. Esta versão corrige isso: o `appId` volta ao original em
-            ambas as plataformas.
+            Fica tudo registado em detalhe (heartbeats, segmentos, reconexões, erros) em
+            `%APPDATA%\LINHA\logs\live-session.log`, para diagnosticar uma sessão longa sem
+            depender de screenshots.
 
-            - **Se nunca instalaste nenhuma versão entre a v0.8.47 e a v0.8.52:** esta
-              atualização é normal, um ícone só, sem nada a fazer.
-            - **Se já instalaste alguma versão nesse intervalo:** vais ficar temporariamente
-              com dois ícones "LINHA" — a tua instalação original (agora atualizada, com os
-              teus dados) e a que ficou vazia desse intervalo (GUID diferente, esta
-              atualização não lhe mexe). Como têm o mesmo nome, para os distinguir: **abre
-              cada um** — o que já mostra os teus projetos é o correto; o outro, vazio, pode
-              ser desinstalado em segurança (Definições → Aplicações) sem qualquer risco para
-              os teus dados, que vivem numa pasta completamente separada da instalação em si.
-            - **macOS:** mesma lógica — se a app não se atualizar sozinha, descarrega o
-              `.dmg` desta versão e arrasta para "Applications", substituindo a anterior. Os
-              teus dados (pasta LINHA em Application Support) não são afetados de nenhuma
-              forma, venha a atualização automaticamente ou por reinstalação manual.
-
-            Se já tinhas esta app instalada antes de se chamar LINHA (qualquer versão antes
-            da v0.8.47), a primeira vez que abrires esta versão os teus projetos antigos são
-            copiados automaticamente — não precisas de fazer nada.
+            Continua marcado como experimental — RTMP continua a ser a fonte "a sério".

@@ -122,6 +122,9 @@ const api = {
   // LIVE (Fase 1, Desktop/Electron only) — see src/main/liveIngest.ts/liveInput.ts.
   liveStart: (req: LiveStartRequest): Promise<void> => ipcRenderer.invoke('live:start', req),
   liveStop: (): Promise<void> => ipcRenderer.invoke('live:stop'),
+  // Periodic "the LIVE panel is still open" ping — see LiveSession.heartbeat()'s comment in
+  // liveIngest.ts for why this exists as a signal separate from segment-fetch activity.
+  liveHeartbeat: (): Promise<void> => ipcRenderer.invoke('live:heartbeat'),
   onLiveEvent: (cb: (event: LiveEvent) => void): void => {
     ipcRenderer.on('live:event', (_e, event: LiveEvent) => cb(event))
   },

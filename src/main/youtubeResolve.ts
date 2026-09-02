@@ -1,6 +1,5 @@
 import { spawn } from 'child_process'
-import { existsSync } from 'fs'
-import { delimiter, join } from 'path'
+import { ensureYtDlpBin } from './ytdlpProvision'
 
 // Experimental/test-only YouTube LIVE input — see the module-level comment in liveInput.ts for
 // why this exists and how it stays decoupled from the real (RTMP) LIVE engine.
@@ -51,31 +50,6 @@ export interface YouTubeResolveOptions {
 // the UI on "CONNECTING" forever.
 const YTDLP_TIMEOUT_MS = 25000
 
-// Resolves to an ABSOLUTE path by manually walking process.env.PATH, rather than handing a bare
-// "yt-dlp"/"yt-dlp.exe" name to spawn() and hoping it does its own PATH search — verified directly
-// (not assumed) that it doesn't reliably: child_process.spawn() without shell:true does NOT do
-// Windows PATH-based bare-name resolution the way a shell would, so a bare name here would leave
-// yt-dlp silently unreachable even when correctly installed and on PATH. This mirrors exactly why
-// ffmpeg-static/ffprobe-static (ffmpeg.ts) were never affected by this class of bug in the first
-// place — they've always resolved to a real absolute path, never a bare command name for spawn()
-// to guess at.
-function findExecutableOnPath(name: string): string | null {
-  const dirs = (process.env.PATH || '').split(delimiter)
-  const candidates = process.platform === 'win32' ? [name, `${name}.exe`, `${name}.cmd`, `${name}.bat`] : [name]
-  for (const dir of dirs) {
-    for (const candidate of candidates) {
-      const full = join(dir, candidate)
-      if (existsSync(full)) return full
-    }
-  }
-  return null
-}
-
-function defaultYtDlpBin(): string {
-  const name = process.platform === 'win32' ? 'yt-dlp' : 'yt-dlp'
-  return findExecutableOnPath(name) || name // falls back to the bare name if not found on PATH — spawn() will then fail fast with ENOENT, which resolveYouTubeUrl() below already turns into the clear "yt-dlp não encontrado" message
-}
-
 interface YtDlpInfo {
   is_live?: boolean
   live_status?: string
@@ -120,7 +94,11 @@ export async function resolveYouTubeUrl(youtubeUrl: string, opts: YouTubeResolve
   if (!isValidYouTubeUrl(youtubeUrl)) {
     throw new Error('URL do YouTube inválido — usa um link como https://www.youtube.com/watch?v=... ou https://youtu.be/...')
   }
-  const bin = opts.ytDlpBinOverride || defaultYtDlpBin()
+  // ensureYtDlpBin() (see ytdlpProvision.ts) already throws its own clear, actionable error — with
+  // exactly what it tried (PATH, then the download URL) and what to do about it — if it can't
+  // produce a usable yt-dlp at all, so there's no separate "not found" case to handle here anymore
+  // beyond the opts.ytDlpBinOverride test escape hatch.
+  const bin = opts.ytDlpBinOverride || (await ensureYtDlpBin())
   // -j: dump metadata as JSON instead of downloading anything.
   // -f b: "best" single format that already muxes video+audio into one URL — avoids needing to
   //   combine separate video-only/audio-only streams (which would need two -i inputs in ffmpeg).
@@ -137,7 +115,7 @@ export async function resolveYouTubeUrl(youtubeUrl: string, opts: YouTubeResolve
       // here regardless of its contents.
       proc = spawn(bin, args, { windowsHide: true })
     } catch (err) {
-      reject(new Error('yt-dlp não encontrado. Instala o yt-dlp e garante que fica acessível no PATH para testares com YouTube.'))
+      reject(new Error(`yt-dlp não encontrado em "${bin}". Verifica a tua ligação à internet (para o download automático) ou instala manualmente: winget install yt-dlp (Windows) / brew install yt-dlp (macOS).`))
       return
     }
     let stdout = ''
@@ -148,7 +126,7 @@ export async function resolveYouTubeUrl(youtubeUrl: string, opts: YouTubeResolve
       } catch {
         /* already gone */
       }
-      reject(new Error('A resolução do URL do YouTube demorou demasiado tempo.'))
+      reject(new Error(`A resolução do URL do YouTube demorou demasiado tempo (${bin} ${args.join(' ')}).`))
     }, YTDLP_TIMEOUT_MS)
     proc.stdout?.on('data', (d: Buffer) => (stdout += d.toString('utf8')))
     proc.stderr?.on('data', (d: Buffer) => {
@@ -159,7 +137,7 @@ export async function resolveYouTubeUrl(youtubeUrl: string, opts: YouTubeResolve
     proc.on('error', (err: NodeJS.ErrnoException) => {
       clearTimeout(timer)
       if (err.code === 'ENOENT') {
-        reject(new Error('yt-dlp não encontrado. Instala o yt-dlp e garante que fica acessível no PATH para testares com YouTube.'))
+        reject(new Error(`yt-dlp não encontrado em "${bin}". Verifica a tua ligação à internet (para o download automático) ou instala manualmente: winget install yt-dlp (Windows) / brew install yt-dlp (macOS).`))
       } else {
         reject(new Error('Falha ao arrancar o yt-dlp: ' + err.message))
       }

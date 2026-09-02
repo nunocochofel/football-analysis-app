@@ -19,7 +19,7 @@ import {
 } from './ffmpeg'
 import * as q from './db/queries'
 import { LiveSession } from './liveIngest'
-import { startLiveFromInput } from './liveInput'
+import { startLiveFromInput, stopLiveInput, createSupervisedLiveEmit } from './liveInput'
 import { exportLiveClip } from './liveClip'
 import type { ExportTacticFramesRequest, LiveEvent, LiveStartRequest } from '../shared/types'
 
@@ -331,9 +331,21 @@ export function registerIpcHandlers(
   const liveEmit = (event: LiveEvent): void => {
     getWindow()?.webContents.send('live:event', event)
   }
-  const liveSession = new LiveSession(liveEmit)
-  ipcMain.handle('live:start', (_e, req: LiveStartRequest) => startLiveFromInput(req, liveSession, liveEmit))
-  ipcMain.handle('live:stop', () => liveSession.stop('manual'))
+  // Wrapped ONCE here, before LiveSession even exists, and used as its ONE AND ONLY emit — see
+  // createSupervisedLiveEmit's own comment in liveInput.ts for the real bug this fixes (a wrapper
+  // built inside startLiveFromInput() instead would miss every error LiveSession raises on its
+  // own, which is most of them).
+  const supervisedLiveEmit = createSupervisedLiveEmit(liveEmit)
+  const liveSession = new LiveSession(supervisedLiveEmit)
+  ipcMain.handle('live:start', (_e, req: LiveStartRequest) => startLiveFromInput(req, liveSession, supervisedLiveEmit))
+  // Routed through stopLiveInput() (liveInput.ts), not liveSession.stop('manual') directly — it
+  // disables the auto-reconnect supervisor FIRST, so the user's own "Parar" is never immediately
+  // undone by the session trying to reconnect itself.
+  ipcMain.handle('live:stop', () => stopLiveInput(liveSession))
+  // Renderer heartbeat (see LiveSession.heartbeat()'s own comment in liveIngest.ts) — a plain
+  // fire-and-forget ping, independent of segment-fetch activity, so "is anyone actually watching"
+  // doesn't get conflated with "did a fragment happen to arrive in the last few seconds".
+  ipcMain.handle('live:heartbeat', () => liveSession.heartbeat())
 
   // Fase LIVE 3 — clip export straight from the ring buffer (see liveClip.ts). inMs/outMs are
   // wall-clock milliseconds (the same basis LiveBuffer's own segments are indexed by — the

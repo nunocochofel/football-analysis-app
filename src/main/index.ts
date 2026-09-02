@@ -185,14 +185,34 @@ function setupAutoUpdate(): void {
 }
 
 // One-time migration from the userData profile of the productName this app used to have
-// ("Análise Tática", every release before v0.8.47-rc2) to whatever the CURRENT platform's
-// productName resolves to. Electron derives the userData folder from the packaged
-// executable/bundle's product name — Windows EXE VERSIONINFO, macOS CFBundleName — NOT from
-// electron-builder's appId (confirmed by extracting an old build's app.asar: no top-level
-// "productName" in package.json, and the appId change in v0.8.47-rc1 alone did not move the
-// folder). Also confirmed on-disk: Local Storage is still classic LevelDB
-// (CURRENT/LOCK/MANIFEST-*/*.ldb/*.log), not a newer SQLite-backed store, so a raw directory
-// copy of it IS the actual data, verbatim.
+// ("Análise Tática", every release before v0.8.47-rc2) to whatever the CURRENT userData
+// profile is.
+//
+// CORRECTION (v0.8.54, found while verifying a REAL packaged Windows build, not assumed): on
+// Windows this function has almost certainly been a no-op this entire time. Electron's own
+// app.getName()/userData resolution prefers a TOP-LEVEL "productName" field in package.json over
+// "name" — but this project's package.json has never had one (checked: not in v0.8.38's packaged
+// asar, not in v0.8.53's), so Electron falls back to "name", which has been the literal constant
+// "football-analysis-app" for the project's entire git history (checked). Confirmed directly
+// against dist/win-unpacked/LINHA.exe (a real packaged build, launched with no overrides):
+// app.getPath('userData') = "...\football-analysis-app", not "...\LINHA" — unaffected by
+// productName OR appId. What earlier reasoning got right: extracting an old app.asar showed no
+// top-level productName, and the appId-alone change in v0.8.47-rc1 didn't move anything — both
+// still true. What it got wrong: concluding from that + community reports about
+// electron-builder's productName mattering, without directly testing a real non-dev, non-
+// --user-data-dir-overridden packaged build — which is what would have caught this.
+// Net effect for Windows: this function still runs, still checks, and still safely no-ops if
+// there's genuinely nothing to migrate — it just very likely never had real "Análise Tática" data
+// to find, because Windows userData was never actually keyed by productName to begin with. Kept
+// (not removed) because it's harmless and still correct AS a migration, and because macOS is NOT
+// yet verified either way — CFBundleName IS set differently at packaging time there
+// (electron-builder's own macPackager.js), but whether Electron's runtime userData resolution
+// actually reads that on macOS, the same way it reads plain "name" here, has not been checked
+// against a real Mac build. Someone should verify this on macOS before trusting either claim there.
+//
+// Confirmed on-disk (still true, unrelated to the above): Local Storage is still classic LevelDB
+// (CURRENT/LOCK/MANIFEST-*/*.ldb/*.log), not a newer SQLite-backed store, so a raw directory copy
+// of it IS the actual data, verbatim.
 //
 // A per-platform productName split (global "Análise Tática" for Windows, "LINHA" only on macOS
 // via mac.executableName + extendInfo) was tried and reverted: electron-builder names the
