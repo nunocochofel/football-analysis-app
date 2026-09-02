@@ -599,6 +599,13 @@
     border-color:transparent transparent transparent var(--flag-color,var(--amber));
   }
   .flag .flag-pole{position:absolute; top:0; left:0; width:2px; height:20px; background:var(--flag-color,var(--amber));}
+  /* Problema C / C1 — a lost/reconnected stretch on the live session touchline, drawn as a
+     hatched block instead of just letting the timeline silently skip over it. */
+  .touchline-gap{
+    position:absolute; top:0; height:100%; pointer-events:none;
+    background:repeating-linear-gradient(45deg, var(--crimson) 0, var(--crimson) 4px, transparent 4px, transparent 9px);
+    opacity:.45;
+  }
   .flag:hover::after{
     content:attr(data-label); position:absolute; bottom:24px; left:50%; transform:translateX(-50%);
     background:var(--panel-alt); border:1px solid var(--line); color:var(--chalk); font-size:11px;
@@ -3620,6 +3627,22 @@ function currentTimeValue(){
 const DEFAULT_PRE_ROLL = 15;
 const DEFAULT_POST_ROLL = 15;
 
+// Problema C / C1 — declared HERE, at true top-level scope, NOT inside the `if(isElectron()){...}`
+// block further down that sets up the rest of the LIVE panel. Real bug caught by this feature's
+// own testing: `let`/`const` inside that if-block are block-scoped, invisible to createTag() below
+// (which lives outside it) — a first attempt at putting these next to the other LIVE panel state
+// threw "liveSessionEpochMs is not defined" on every single tag, live or not. See the isElectron()
+// block for where these are actually SET/reset (resetLiveSessionClock, the onLiveEvent handler for
+// 'sessionEpoch'/'error'/'reconnect') — this is only the declaration site.
+let liveSessionEpochMs = null;
+let liveReconnectGaps = [];
+let livePendingGapDownMs = null;
+function resetLiveSessionClock(){
+  liveSessionEpochMs = null;
+  liveReconnectGaps = [];
+  livePendingGapDownMs = null;
+}
+
 // forceTeamId: used by the per-team quick-tag buttons to attribute the event to a specific team
 // regardless of whichever team/player happens to be selected in the sidebar. Since that team was
 // chosen explicitly (not implied by a selected player), playerId is left unset rather than
@@ -3638,12 +3661,26 @@ function createTag(catId, forceTeamId, overrideRange){
   // Marcada aqui, na criação, porque é o único momento em que sabemos com certeza qual era a
   // estratégia de reprodução ativa — beginExportItem() lê este campo depois, sem ter de adivinhar.
   const isLiveTag = videoEl.dataset.strategy === 'live';
+  const inSec = overrideRange ? overrideRange.inSec : Math.max(0, t - DEFAULT_PRE_ROLL);
+  const outSec = overrideRange ? overrideRange.outSec : t + DEFAULT_POST_ROLL;
+  // Problema C / C1 — the continuous session-clock position, computed directly from Date.now()
+  // against liveSessionEpochMs (set once per logical session, survives every reconnect — see its
+  // own comment above), NOT derived from inSec/outSec/t (which live in THIS attempt's MediaSource
+  // time and are meaningless the moment a reconnect creates a new one). The pre/post-roll deltas
+  // are carried over as-is (same fixed durations either way) so liveSessionInSec/OutSec span the
+  // same real amount of time around the moment marked, just anchored to the clock that survives.
+  let liveSessionSec = null, liveSessionInSec = null, liveSessionOutSec = null;
+  if(isLiveTag && liveSessionEpochMs != null){
+    liveSessionSec = (Date.now() - liveSessionEpochMs) / 1000;
+    liveSessionInSec = liveSessionSec - (t - inSec);
+    liveSessionOutSec = liveSessionSec + (outSec - t);
+  }
   const tag = {
     id:uid(),
     createdAt: Date.now(),
     time: t,
-    inSec: overrideRange ? overrideRange.inSec : Math.max(0, t - DEFAULT_PRE_ROLL),
-    outSec: overrideRange ? overrideRange.outSec : t + DEFAULT_POST_ROLL,
+    inSec,
+    outSec,
     half: activeHalf,
     categoryId: catId,
     teamId,
@@ -3652,6 +3689,9 @@ function createTag(catId, forceTeamId, overrideRange){
     y: pendingLoc ? pendingLoc.y : null,
     mode: mode,
     live: isLiveTag,
+    liveSessionSec,
+    liveSessionInSec,
+    liveSessionOutSec,
     shapes: [],
     zoom: null,
     freezes: [],
@@ -4380,6 +4420,25 @@ if(isElectron()){
     liveReconnectBadge.style.display = '';
   }
 
+  // Problema C / C1 — liveSessionEpochMs/liveReconnectGaps/livePendingGapDownMs/
+  // resetLiveSessionClock() are declared at TOP LEVEL now (near createTag(), see that
+  // declaration's own comment for why) — this comment stays here because this IS where they're
+  // actually driven: liveSessionEpochMs is set once from the main process's 'sessionEpoch' event
+  // (one per logical session, never per reconnect — see startLiveFromInput's own comment in
+  // liveInput.ts), and every live tag's position is computed directly from Date.now() against it
+  // at the moment the tag is created (see createTag()) — never converted through any per-attempt
+  // mapping like liveTimelinePoints (which stays per-attempt, reset by resetLiveMseState() on
+  // every reconnect, unchanged — still used only for export's own wall-clock lookup within a
+  // single still-live attempt). This is the whole fix: a tag's session position can no longer be
+  // lost or shifted by a reconnect, because nothing about it depends on which MediaSource attempt
+  // happened to be active when it was made.
+  //
+  // liveReconnectGaps records each [downAtMs, backAtMs) pair so the timeline can draw the lost
+  // stretch as a visible hole instead of silently compressing it away — livePendingGapDownMs holds
+  // the open end while a gap is in progress (set on ANY 'error' event; most are followed by a
+  // 'reconnect' that closes the gap, a terminal one just leaves it unclosed and harmless until the
+  // next fresh "Ligar" resets everything).
+
   document.getElementById('btnLiveOpen').addEventListener('click', e=>{
     e.stopPropagation();
     livePanel.classList.toggle('pinned');
@@ -4444,7 +4503,7 @@ if(isElectron()){
       liveLastStreamInfo = null;
       if(videoEl.dataset.strategy==='live') resetLiveMseState();
     }
-    if(state==='disconnected'){ liveStreamInfoLabel.textContent=''; liveLogLabel.textContent=''; resetLiveReconnectBadge(); }
+    if(state==='disconnected'){ liveStreamInfoLabel.textContent=''; liveLogLabel.textContent=''; resetLiveReconnectBadge(); resetLiveSessionClock(); }
   }
   setLiveStatusUI('disconnected');
 
@@ -4459,6 +4518,11 @@ if(isElectron()){
       liveBufferRow.style.display = 'none';
       return;
     }
+    // Piggybacks on the same native timeupdate/progress cadence this function already runs on
+    // (see the event listeners just below) — the session-clock touchline needs to keep growing
+    // even without a new tag, since elapsed time itself is the x-axis now, not just a one-off
+    // re-render trigger.
+    renderLiveTouchlineFlags();
     liveBufferRow.style.display = '';
     const start = videoEl.seekable.start(0);
     const end = videoEl.seekable.end(0);
@@ -4520,6 +4584,7 @@ if(isElectron()){
     liveStreamInfoLabel.textContent = '';
     liveLogLabel.textContent = '';
     resetLiveReconnectBadge();
+    resetLiveSessionClock();
     try{
       await window.api.liveStart({ sourceType, url });
     }catch(err){
@@ -4552,13 +4617,29 @@ if(isElectron()){
       else livePendingSegments.push(event);
     } else if(event.type==='log'){
       liveLogLabel.textContent = event.line;
+    } else if(event.type==='sessionEpoch'){
+      // Once per logical session (never per reconnect) — see the field's own comment above.
+      liveSessionEpochMs = event.epochMs;
+      liveReconnectGaps = [];
+      livePendingGapDownMs = null;
     } else if(event.type==='reconnect'){
       bumpLiveReconnectBadge(event.atMs);
       toast('LIVE: a reconectar automaticamente (tentativa '+event.attempt+')…');
+      // Closes the gap opened by the 'error' branch below — if a reconnect fires without a prior
+      // recorded drop (shouldn't happen, but defensive), there's nothing to close and this no-ops.
+      if(livePendingGapDownMs != null){
+        liveReconnectGaps.push({startMs: livePendingGapDownMs, endMs: event.atMs});
+        livePendingGapDownMs = null;
+        renderLiveTouchlineFlags();
+      }
     } else if(event.type==='error'){
       liveErrorLabel.style.display = '';
       liveErrorLabel.textContent = event.message;
       toast('LIVE: '+event.message);
+      // Opens a gap — closed by the 'reconnect' branch above if a reconnect actually follows (the
+      // ordinary case); a terminal error (no reconnect) just leaves this set, harmlessly, until the
+      // next fresh "Ligar" calls resetLiveSessionClock().
+      if(liveSessionEpochMs != null) livePendingGapDownMs = Date.now();
     }
   });
 }
@@ -5265,13 +5346,50 @@ function renderTouchlineTicks(){
 }
 renderTouchlineTicks();
 
+// Problema C / C1 — the live-session equivalent of renderTouchlineFlags() below: draws over
+// [0, elapsed-session-seconds] (growing as the session continues) using each tag's
+// liveSessionSec (see createTag()'s own comment), never videoEl.currentTime/duration — so flags
+// never move or vanish because a reconnect happened. Gaps recorded in liveReconnectGaps are drawn
+// as a distinct hatched block spanning the lost stretch, so a tag placed just after a reconnect
+// visibly sits AFTER a hole instead of silently reading as an earlier minute than it really was.
+function renderLiveTouchlineFlags(){
+  touchline.querySelectorAll('.flag, .touchline-gap').forEach(f=>f.remove());
+  if(liveSessionEpochMs == null) return;
+  const nowSec = (Date.now() - liveSessionEpochMs) / 1000;
+  const liveTags = state.tags.filter(t => t.live && t.liveSessionSec != null);
+  const dur = Math.max(1, nowSec, ...liveTags.map(t=>t.liveSessionSec+1));
+  liveReconnectGaps.forEach(gap=>{
+    const startSec = (gap.startMs - liveSessionEpochMs) / 1000;
+    const endSec = (gap.endMs - liveSessionEpochMs) / 1000;
+    if(endSec <= startSec) return;
+    const startPct = clamp((startSec/dur)*100, 0, 100);
+    const endPct = clamp((endSec/dur)*100, 0, 100);
+    const g = document.createElement('div');
+    g.className = 'touchline-gap';
+    g.style.left = startPct+'%'; g.style.width = Math.max(0.3, endPct-startPct)+'%';
+    g.title = 'Ligação perdida — '+Math.round(endSec-startSec)+'s sem imagem (reconectou sozinho)';
+    touchline.appendChild(g);
+  });
+  liveTags.forEach(tag=>{
+    if(tag.mode==='stopwatch') return;
+    const cat = catById(tag.categoryId); if(!cat) return;
+    const pct = clamp((tag.liveSessionSec/dur)*100, 0, 100);
+    const f = document.createElement('div');
+    f.className='flag'; f.style.left=pct+'%'; f.style.setProperty('--flag-color', cat.color);
+    const p = playerById(tag.teamId, tag.playerId);
+    f.dataset.label = fmtTime(tag.liveSessionSec)+' · '+cat.label+(p?' · '+p.name:'');
+    f.innerHTML = '<div class="flag-pole"></div>';
+    // No click-to-seek here (unlike the normal video path) — a live tag's position on THIS
+    // continuous timeline doesn't correspond to any single seekable point once older segments
+    // have aged out of the ring buffer; exporting (which resolves the real buffer position at
+    // that moment) is the reliable way to actually get back to the moment, not a seek.
+    touchline.appendChild(f);
+  });
+}
 function renderTouchlineFlags(){
   touchline.querySelectorAll('.flag').forEach(f=>f.remove());
   if(trimWindow) return; // the range block replaces individual flags while trimming
-  // Fase LIVE 2: marcações LIVE are explicitly out of scope this phase (see task constraints), and
-  // videoEl.duration is Infinity for 'live' by design (see startLiveMse) — would otherwise feed
-  // Infinity into the Math.max/pct math below for no useful result.
-  if(videoEl.dataset.strategy==='live'){ return; }
+  if(videoEl.dataset.strategy==='live'){ renderLiveTouchlineFlags(); return; }
   const dur = videoEl.duration || Math.max(1, ...state.tags.map(t=>t.time+1), 60);
   state.tags.forEach(tag=>{
     if(tag.mode==='stopwatch') return; // stopwatch tags aren't on the video timeline

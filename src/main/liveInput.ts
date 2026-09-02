@@ -207,5 +207,13 @@ export async function startLiveFromInput(
   autoReconnectEnabled = true
   reconnectAttempt = 0
 
+  // Emitted exactly once per logical session, HERE (the one call site that's a real user "Ligar",
+  // never an internal reconnect — scheduleReconnect() calls connectOnce() directly, bypassing this
+  // function entirely) — see LiveEvent's own comment for why this has to be a wall-clock anchor
+  // the renderer keeps across every reconnect, not something re-sent per attempt.
+  const sessionEpochMs = Date.now()
+  logLive('sessão lógica a iniciar — sessionEpochMs=' + sessionEpochMs)
+  emit({ type: 'sessionEpoch', epochMs: sessionEpochMs })
+
   await connectOnce(input, liveSession, emit, opts)
 }

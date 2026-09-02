@@ -41,30 +41,25 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.55 specifically — update this block for whatever the next release's own
+          # v0.8.56 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **LIVE (experimental): a live do YouTube agora chega mesmo a ter imagem**
+            **LIVE (experimental): as marcações já não perdem a posição numa reconexão**
 
-            v0.8.54 corrigiu a sessão a morrer sozinha aos 30-40 segundos, mas um teste real
-            logo a seguir mostrou que ficava LIVE sem nunca carregar um único segmento.
-            Causa, confirmada correndo o ffmpeg à mão contra os URLs reais: o YouTube LIVE
-            nunca oferece um formato só com vídeo+áudio já juntos — a app pedia um formato
-            desses na mesma, e ficava com um URL só de vídeo, sem áudio, à espera de uma
-            faixa que nunca ia chegar. Corrigido: pede vídeo e áudio como duas fontes
-            separadas e junta-as. Uma segunda causa, também confirmada à mão: um dos flags
-            de reconexão adicionados em v0.8.54 (`-reconnect_at_eof`) fazia o ffmpeg tratar o
-            comportamento normal de uma live (reler a playlist à procura de segmentos novos)
-            como uma queda de ligação, preso num ciclo a reler sempre o mesmo troço antigo.
-            Removido — os restantes flags de reconexão continuam.
+            Até agora, se a sessão LIVE reconectasse sozinha a meio de um jogo, o relógio
+            interno voltava a 00:00 — uma marcação feita aos 42 minutos podia passar a
+            parecer estar no minuto 2. Corrigido: existe agora um relógio de sessão contínuo,
+            que começa no "Ligar" e nunca é reiniciado por uma reconexão. Cada marcação
+            guarda a sua posição nesse relógio, não no tempo interno do leitor de vídeo (que
+            esse sim reinicia a cada reconexão). A faixa de marcações mostra também, como um
+            traço a tracejado, exatamente onde e quanto tempo se perdeu em cada queda — para
+            nunca confundires um corte de antes de uma reconexão com um de depois.
 
-            Testado de ponta a ponta contra uma live real e pública do YouTube (não simulada):
-            liga, mantém-se LIVE, marca e exporta um corte com sucesso.
+            Testado com uma reconexão real forçada durante uma live real do YouTube: a
+            marcação feita depois da reconexão ficou 18 segundos à frente da anterior — nunca
+            voltou a zero.
 
-            O log detalhado (heartbeats, segmentos, reconexões, todo o stderr do ffmpeg, não
-            só as linhas relevantes) fica em
-            `%APPDATA%\football-analysis-app\logs\live-session.log` — não em `LINHA`, como
-            uma nota anterior indicava incorretamente.
-
-            Continua marcado como experimental — RTMP continua a ser a fonte "a sério".
+            Continua marcado como experimental — RTMP continua a ser a fonte "a sério". O
+            buffer de vídeo em disco ainda é limpo em cada reconexão (só o relógio e as
+            marcações sobrevivem por agora) — é o próximo passo, maior, já planeado.

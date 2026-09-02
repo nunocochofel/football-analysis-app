@@ -113,6 +113,12 @@ export type LiveEvent =
   | { type: 'segment'; id: number; startMs: number; endMs: number; liveEdgeMs: number; oldestMs: number }
   | { type: 'log'; line: string } // curated (throttled) diagnostic line, for an optional on-screen log — full detail always goes to the main process console regardless
   | { type: 'error'; message: string }
+  // C1 (Problema C, Fase LIVE 2 follow-up) — the session-level wall-clock anchor, emitted ONCE per
+  // logical session (a user's "Ligar", not a per-attempt reconnect — see liveInput.ts's own
+  // startLiveFromInput, the one place that knows the difference). The renderer uses this instead
+  // of videoEl.currentTime to place tags on a timeline that survives reconnects: currentTime comes
+  // from THIS attempt's MediaSource and resets to ~0 on every reconnect, epochMs never does.
+  | { type: 'sessionEpoch'; epochMs: number }
   // A distinct event (not just a 'log' line) for a specific reason: the app auto-reconnecting
   // without the user noticing was flagged as its own real risk — a couple of seconds of gameplay
   // can be lost across the gap, and a plain log line scrolls out of view within seconds under
