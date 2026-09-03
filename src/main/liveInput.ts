@@ -92,12 +92,16 @@ async function connectOnce(
   input: { sourceType: LiveSourceType; url: string },
   liveSession: LiveSession,
   emit: (event: LiveEvent) => void,
-  opts: LiveInputStartOptions
+  opts: LiveInputStartOptions,
+  // C2.1 — true ONLY when called from scheduleReconnect()'s retry timer (see its own call site
+  // below); startLiveFromInput() (a real user "Ligar") never passes this, so a fresh manual
+  // connect always gets a fresh buffer, exactly as before.
+  reuseBuffer = false
 ): Promise<void> {
   if (input.sourceType === 'rtmp') {
     // Byte-for-byte the Fase 1 behavior — LiveSession does its own URL validation and everything
     // else exactly as before.
-    await liveSession.start(input.url, { ffmpegBinOverride: opts.ffmpegBinOverride, bufferDurationMsOverride: opts.bufferDurationMsOverride })
+    await liveSession.start(input.url, { ffmpegBinOverride: opts.ffmpegBinOverride, bufferDurationMsOverride: opts.bufferDurationMsOverride, reuseBuffer })
     return
   }
 
@@ -133,7 +137,8 @@ async function connectOnce(
     ffmpegBinOverride: opts.ffmpegBinOverride,
     bufferDurationMsOverride: opts.bufferDurationMsOverride,
     audioUrl: resolved.audioUrl,
-    noAudio: !resolved.hasAudio
+    noAudio: !resolved.hasAudio,
+    reuseBuffer
   })
 }
 
@@ -157,7 +162,9 @@ function scheduleReconnect(message: string): void {
     // retry actually starts, not merely when it was scheduled, so the timestamp is the moment
     // that matters for correlating with what was being tagged at the time.
     emit({ type: 'reconnect', attempt, atMs: Date.now() })
-    connectOnce(input, liveSession, emit, opts).catch((err) => {
+    // reuseBuffer=true — the whole point of C2.1: an auto-reconnect keeps whatever's already in
+    // the ring buffer from before the drop, instead of LiveSession.start() creating a fresh one.
+    connectOnce(input, liveSession, emit, opts, true).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err)
       logLive('reconnect: tentativa ' + attempt + ' falhou ao arrancar: ' + msg)
       emit({ type: 'state', state: 'error' })

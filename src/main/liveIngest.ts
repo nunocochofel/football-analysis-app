@@ -95,6 +95,11 @@ export interface LiveSessionStartOptions {
   // is what silently produced zero output for two real minutes before this was found.
   audioUrl?: string | null
   noAudio?: boolean
+  // C2.1 — set by liveInput.ts's reconnect supervisor ONLY (never by a real user "Ligar", see its
+  // own comment) to say "this is the same logical session as before, keep whatever's already in
+  // the ring buffer instead of starting a fresh one". See start()'s own comment for why this is
+  // safe: fail() no longer disposes the buffer on its own, precisely so this can work.
+  reuseBuffer?: boolean
 }
 
 // Fase LIVE 2 — RTMP/YouTube ingest via ffmpeg, remuxed into fMP4, split into independently
@@ -195,15 +200,35 @@ export class LiveSession {
     this.writeQueue = Promise.resolve()
     this.setState('connecting')
 
-    const sessionDir = join(tmpdir(), 'linha-live', `${myGeneration}-${Date.now()}`)
-    const liveBuffer = new LiveBuffer(sessionDir, opts.bufferDurationMsOverride ?? DEFAULT_BUFFER_DURATION_MS)
-    try {
-      await liveBuffer.init()
-    } catch (err) {
-      if (myGeneration === this.generation) {
-        this.fail('Não foi possível preparar o buffer temporal: ' + (err instanceof Error ? err.message : String(err)))
+    // C2.1 — a reconnect within the same logical session (opts.reuseBuffer, set only by
+    // liveInput.ts's supervisor) keeps the EXISTING LiveBuffer instance instead of creating a new
+    // one: same sessionDir (new fragments just keep landing in it), same nextId counter (so IDs
+    // stay globally unique across the whole session, not per-attempt), and — the actual point —
+    // the fragments already in it from before the drop are never touched. Any OTHER buffer still
+    // sitting in this.liveBuffer at this point belongs to a genuinely different, already-ended
+    // logical session (e.g. a terminal error nobody explicitly Stop'd yet) and gets disposed here,
+    // since a fresh, non-reconnect start() is exactly the point at which it's safe to say that
+    // session is really over.
+    let liveBuffer: LiveBuffer
+    if (opts.reuseBuffer && this.liveBuffer && !this.liveBuffer.isDisposed) {
+      liveBuffer = this.liveBuffer
+      logLive(`buffer reutilizado (reconexão) — ${liveBuffer.segmentCount} fragmento(s) já guardados desde o início da sessão`)
+    } else {
+      if (this.liveBuffer) {
+        const orphaned = this.liveBuffer
+        this.liveBuffer = null
+        void orphaned.dispose()
       }
-      return
+      const sessionDir = join(tmpdir(), 'linha-live', `${myGeneration}-${Date.now()}`)
+      liveBuffer = new LiveBuffer(sessionDir, opts.bufferDurationMsOverride ?? DEFAULT_BUFFER_DURATION_MS)
+      try {
+        await liveBuffer.init()
+      } catch (err) {
+        if (myGeneration === this.generation) {
+          this.fail('Não foi possível preparar o buffer temporal: ' + (err instanceof Error ? err.message : String(err)))
+        }
+        return
+      }
     }
     if (myGeneration !== this.generation) return // superseded while the temp dir was being created
     this.liveBuffer = liveBuffer
@@ -651,15 +676,21 @@ export class LiveSession {
     this.emit({ type: 'state', state })
   }
 
+  // C2.1 — deliberately does NOT dispose this.liveBuffer anymore (it used to, unconditionally).
+  // fail() has no way to know, at the point it runs, whether liveInput.ts's supervisor is about to
+  // reconnect within the same logical session (see LiveSessionStartOptions.reuseBuffer) — disposing
+  // here would delete everything captured so far right before a reconnect that was specifically
+  // built to keep it. The buffer is now only ever disposed by stop() (a real Parar, or the rare
+  // client-disconnected watchdog path) or by the NEXT start() if it turns out NOT to be a
+  // reconnect (see start()'s own "orphaned" branch) — so a terminal error (no reconnect follows)
+  // still leaves the buffer intact and exportable until the user acts, instead of silently
+  // deleting the one thing that would let them recover something from a session that just failed.
   private fail(message: string): void {
     console.error('[live] erro:', message)
     logLive('erro: ' + message)
     this.intentionalStop = false
     this.clearTimers()
     this.teardownServer()
-    const buffer = this.liveBuffer
-    this.liveBuffer = null
-    if (buffer) void buffer.dispose() // fire-and-forget — fail() is called from sync contexts and can't easily become async; dispose() already swallows its own errors
     this.setState('error')
     this.emit({ type: 'error', message })
   }

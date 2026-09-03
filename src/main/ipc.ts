@@ -337,7 +337,9 @@ export function registerIpcHandlers(
   // own, which is most of them).
   const supervisedLiveEmit = createSupervisedLiveEmit(liveEmit)
   const liveSession = new LiveSession(supervisedLiveEmit)
-  ipcMain.handle('live:start', (_e, req: LiveStartRequest) => startLiveFromInput(req, liveSession, supervisedLiveEmit))
+  ipcMain.handle('live:start', (_e, req: LiveStartRequest) =>
+    startLiveFromInput(req, liveSession, supervisedLiveEmit, { bufferDurationMsOverride: req.bufferDurationMs })
+  )
   // Routed through stopLiveInput() (liveInput.ts), not liveSession.stop('manual') directly — it
   // disables the auto-reconnect supervisor FIRST, so the user's own "Parar" is never immediately
   // undone by the session trying to reconnect itself.

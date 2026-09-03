@@ -111,6 +111,14 @@ export class LiveBuffer {
     return this.segments.length
   }
 
+  // C2.1 — lets LiveSession.start() know whether a buffer it's holding onto from a previous
+  // attempt is still a legitimate thing to reuse (a reconnect within the SAME logical session)
+  // versus something orphaned from an earlier session that needs disposing before a genuinely
+  // fresh one starts.
+  get isDisposed(): boolean {
+    return this.disposed
+  }
+
   // Deletes every fragment file plus the init segment and the session directory itself — called on
   // stop()/fail() so a LIVE session never leaves temp files behind (Teste 10 in the task's own list
   // checks exactly this).

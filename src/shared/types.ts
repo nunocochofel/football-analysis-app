@@ -80,6 +80,11 @@ export type LiveSourceType = 'rtmp' | 'youtube'
 export interface LiveStartRequest {
   sourceType: LiveSourceType
   url: string
+  // C2.1 — the user's chosen ring-buffer window, in ms. Omitted (undefined) keeps LiveSession's
+  // own DEFAULT_BUFFER_DURATION_MS (5 min); the renderer's UI never actually omits it in practice
+  // (its <select> always has a value), this is just here so an older/hypothetical caller without
+  // the new control still gets the same default as before.
+  bufferDurationMs?: number
 }
 
 export interface LiveStreamInfo {

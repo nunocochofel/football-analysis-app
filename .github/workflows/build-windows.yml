@@ -41,25 +41,32 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.56 specifically — update this block for whatever the next release's own
+          # v0.8.57 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **LIVE (experimental): as marcações já não perdem a posição numa reconexão**
+            **LIVE (experimental): o buffer em disco já sobrevive a uma reconexão**
 
-            Até agora, se a sessão LIVE reconectasse sozinha a meio de um jogo, o relógio
-            interno voltava a 00:00 — uma marcação feita aos 42 minutos podia passar a
-            parecer estar no minuto 2. Corrigido: existe agora um relógio de sessão contínuo,
-            que começa no "Ligar" e nunca é reiniciado por uma reconexão. Cada marcação
-            guarda a sua posição nesse relógio, não no tempo interno do leitor de vídeo (que
-            esse sim reinicia a cada reconexão). A faixa de marcações mostra também, como um
-            traço a tracejado, exatamente onde e quanto tempo se perdeu em cada queda — para
-            nunca confundires um corte de antes de uma reconexão com um de depois.
+            A v0.8.56 corrigiu o relógio das marcações; esta versão corrige o próprio vídeo.
+            Até agora, uma reconexão automática apagava o buffer em disco e começava outro do
+            zero — os segundos/minutos antes da queda deixavam de poder ser exportados como
+            clip. Corrigido: uma reconexão automática (nunca um "Ligar" manual novo) reutiliza
+            o buffer já existente em vez de o substituir, por isso um clip que atravesse o
+            momento da queda continua disponível para exportar depois de reconectar.
 
-            Testado com uma reconexão real forçada durante uma live real do YouTube: a
-            marcação feita depois da reconexão ficou 18 segundos à frente da anterior — nunca
-            voltou a zero.
+            Também novo: a janela do buffer em disco passa a ser configurável (5 min / 30 min /
+            sessão completa), com "sessão completa" como valor por omissão para lives do
+            YouTube — o caso de uso real é o jogo inteiro, não só os últimos minutos. Medição
+            real (não extrapolada do bitrate nominal do yt-dlp): cerca de 1,3 GB para 90 minutos
+            a 1080p. RTMP mantém "5 minutos" por omissão, como sempre foi; quem preferir poupar
+            disco pode escolher uma janela mais curta em qualquer uma das fontes.
 
-            Continua marcado como experimental — RTMP continua a ser a fonte "a sério". O
-            buffer de vídeo em disco ainda é limpo em cada reconexão (só o relógio e as
-            marcações sobrevivem por agora) — é o próximo passo, maior, já planeado.
+            Testado com uma reconexão real forçada (o processo ffmpeg da ingestão morto a
+            meio da sessão): o mesmo segmento anterior à queda continuou a poder ser pedido e
+            exportado depois de a app reconectar sozinha.
+
+            Continua marcado como experimental. Ainda não há forma de recuperar uma sessão LIVE
+            se a app fechar ou o PC desligar a meio — os fragmentos ficam em disco, mas a app
+            não os deteta ainda ao reabrir. E o buffer, por agora, é sempre a mesma janela
+            deslizante: ainda não existe um botão para "fechar o jogo" e transformar tudo o que
+            foi guardado num ficheiro normal do projeto — é o próximo passo, maior, já planeado.

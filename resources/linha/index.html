@@ -243,6 +243,7 @@
   .live-status.is-live{ background:#3F9142; color:#08110A; }
   .live-status.is-error{ background:var(--crimson); color:#fff; }
   .live-panel-info{ font-size:11px; color:var(--muted); font-family:'IBM Plex Mono', monospace; }
+  .live-panel-hint{ font-size:11px; color:var(--muted); }
   .live-reconnect-badge{ font-size:11px; color:var(--amber); font-family:'IBM Plex Mono', monospace; background:rgba(242,194,48,.12); border-radius:6px; padding:4px 8px; }
   .live-panel-error{ font-size:11px; color:var(--crimson); }
   .live-panel-log{
@@ -1542,6 +1543,20 @@
               <div class="live-panel-row">
                 <label for="liveUrl" id="liveUrlLabel">URL RTMP</label>
                 <input type="text" id="liveUrl" placeholder="rtmp://..." autocomplete="off" spellcheck="false">
+              </div>
+              <!-- C2.1 — janela do buffer em disco. Omissão depende da fonte (ver o listener do
+                   liveSourceRadios mais abaixo): "sessão completa" para YouTube (caso de uso real,
+                   ~1,3 GB/90min, medido a sério — ver o comentário da opção), "5 min" para RTMP
+                   (como sempre foi). #liveBufferSizeHint mostra uma estimativa de espaço só
+                   quando "sessão completa" está selecionada. -->
+              <div class="live-panel-row">
+                <label for="liveBufferDuration" id="liveBufferDurationLabel">Buffer</label>
+                <select id="liveBufferDuration">
+                  <option value="5">5 minutos</option>
+                  <option value="30">30 minutos</option>
+                  <option value="full">Sessão completa</option>
+                </select>
+                <span class="live-panel-hint" id="liveBufferSizeHint" style="display:none;"></span>
               </div>
               <div class="live-panel-row">
                 <button class="btn primary" id="btnLiveConnect">Ligar</button>
@@ -4403,6 +4418,23 @@ if(isElectron()){
   const liveDelayLabelEl = document.getElementById('liveDelayLabel');
   const btnGoLiveEl = document.getElementById('btnGoLive');
   const liveReconnectBadge = document.getElementById('liveReconnectBadge');
+  const liveBufferDurationEl = document.getElementById('liveBufferDuration');
+  const liveBufferSizeHintEl = document.getElementById('liveBufferSizeHint');
+
+  // C2.1 — 1,3 GB/90min é uma medição real desta sessão (captura de 3 min a 1080p contra uma live
+  // real do YouTube: 44,15 MB, ~2057 kbps combinados, extrapolado), não um número de catálogo do
+  // yt-dlp — ver o histórico desta conversa. Só um aviso informativo, não uma leitura de espaço
+  // livre real em disco (evitaria código novo específico do SO para um valor que o utilizador só
+  // precisa de usar como referência, não como limite exato).
+  function updateLiveBufferSizeHint(){
+    if(liveBufferDurationEl.value === 'full'){
+      liveBufferSizeHintEl.textContent = '~1,3 GB/90min a 1080p (estimativa, medição real)';
+      liveBufferSizeHintEl.style.display = '';
+    } else {
+      liveBufferSizeHintEl.style.display = 'none';
+    }
+  }
+  liveBufferDurationEl.addEventListener('change', updateLiveBufferSizeHint);
 
   // Persistent for the whole session (see the HTML comment on #liveReconnectBadge) — reset only on
   // a genuinely NEW session: a manual "Ligar" click, or reaching 'disconnected' (the one state that
@@ -4461,12 +4493,22 @@ if(isElectron()){
     rtmp: { test: u => /^rtmps?:\/\/\S+$/i.test(u), label: 'URL RTMP', placeholder: 'rtmp://...', hint: 'URL RTMP inválido — tem de começar por rtmp:// ou rtmps://.' },
     youtube: { test: u => /^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\/\S+$/i.test(u), label: 'URL do YouTube', placeholder: 'https://www.youtube.com/watch?v=...', hint: 'URL do YouTube inválido — usa um link como https://www.youtube.com/watch?v=... ou https://youtu.be/...' }
   };
+  // C2.1 — "sessão completa" por omissão para YouTube (é o caso de uso real: uma live inteira,
+  // 1,3 GB é aceitável), "5 min" por omissão para RTMP (como sempre foi). Só toca no valor
+  // quando a fonte muda — se o utilizador já tiver escolhido outra coisa à mão, respeita isso
+  // até à próxima mudança de fonte.
+  function applyDefaultBufferDurationForSource(){
+    liveBufferDurationEl.value = selectedLiveSourceType()==='youtube' ? 'full' : '5';
+    updateLiveBufferSizeHint();
+  }
   liveSourceRadios.forEach(r => r.addEventListener('change', ()=>{
     const cfg = LIVE_URL_VALIDATORS[selectedLiveSourceType()];
     liveUrlLabel.textContent = cfg.label;
     liveUrlInput.placeholder = cfg.placeholder;
     liveErrorLabel.style.display = 'none';
+    applyDefaultBufferDurationForSource();
   }));
+  applyDefaultBufferDurationForSource(); // RTMP is checked by default in the HTML — set the matching default here too
 
   // Independent of segment-fetch cadence on purpose — see LiveSession.heartbeat()'s own comment
   // in liveIngest.ts. Started on 'connecting'/'live', stopped on any terminal state, so a session
@@ -4491,6 +4533,7 @@ if(isElectron()){
     liveStopBtn.style.display = busy ? '' : 'none';
     liveStopBtn.disabled = state==='stopping';
     liveUrlInput.disabled = busy;
+    liveBufferDurationEl.disabled = busy;
     liveSourceRadios.forEach(r => r.disabled = busy);
     if(state!=='error') liveErrorLabel.style.display = 'none';
     if(state==='connecting' || state==='live') startLiveHeartbeat(); else stopLiveHeartbeat();
@@ -4585,8 +4628,12 @@ if(isElectron()){
     liveLogLabel.textContent = '';
     resetLiveReconnectBadge();
     resetLiveSessionClock();
+    // C2.1 — the <select>'s value is "5"/"30" (minutes) or "full" (effectively unbounded; matches
+    // the sentinel liveBuffer.ts's trim() already treats as "never trims" — see LiveBuffer.trim()'s
+    // own comparison, which just needs a number no real session's elapsed ms could ever reach).
+    const bufferDurationMs = liveBufferDurationEl.value === 'full' ? Number.MAX_SAFE_INTEGER : Number(liveBufferDurationEl.value) * 60 * 1000;
     try{
-      await window.api.liveStart({ sourceType, url });
+      await window.api.liveStart({ sourceType, url, bufferDurationMs });
     }catch(err){
       liveErrorLabel.style.display = '';
       liveErrorLabel.textContent = (err && err.message) ? err.message : 'Não foi possível iniciar a ligação LIVE.';
