@@ -41,26 +41,29 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.59 specifically — update this block for whatever the next release's own
+          # v0.8.60 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Bastidores: o quadro tático e as anotações de vídeo passam a partilhar um único
-            desenhador**
+            **Quadro tático: selecionar, apagar e desfazer, finalmente a sério**
 
-            Sem mudança visível nenhuma. Até agora, o quadro tático e as anotações sobre o vídeo
-            tinham cada um a sua própria cópia da lógica que desenha linhas, setas, zonas e
-            texto — duas versões que já tinham começado a divergir sem ninguém decidir isso (por
-            exemplo, arrastar uma forma já existente só funcionava no vídeo, não no quadro).
-            Unificadas num único desenhador partilhado pelos dois.
+            É a maior mudança de sempre nas ferramentas de desenho, e a base para tudo o que vem
+            a seguir. Antes de hoje, um desenho no quadro tático não era um objeto — não havia
+            como o selecionar, e apagar era só a borracha ou limpar tudo. Isso muda agora:
 
-            É trabalho de preparação: a partir de agora, cada ferramenta nova construída para o
-            quadro tático (seleção, mover, redimensionar, undo/redo a sério, etc. — nas próximas
-            versões) fica automaticamente disponível para o vídeo também, sem ser preciso
-            reescrever nada quando chegar a vez.
+            - Clicar em qualquer desenho ou boneco seleciona-o (contorno azul a indicar). Shift+clique
+            acrescenta à seleção; arrastar sobre uma área vazia seleciona tudo o que apanhar.
+            - Apagar funciona por três caminhos, todos com o rato: selecionar e premir Delete,
+            clicar com o botão direito → Apagar, ou o novo botão 🗑 na barra de ferramentas.
+            - Desfazer/Refazer a sério (Ctrl+Z / Ctrl+Shift+Z, ou os novos botões ↶/↷), cobrindo
+            tudo — desenhar, mover, rodar, redimensionar, apagar, trocar de formação. Cada modo de
+            quadro (Campo Inteiro, Zonas, Área, Profundidade) tem o seu próprio histórico.
+            - Escrever numa caixa de texto nunca mais mexe no quadro por trás — Delete e Ctrl+Z
+            ficam desligados do quadro enquanto estiveres a editar texto.
 
-            Testado com formas de todos os tipos em ambas as superfícies, e a exportação de
-            vídeo das cenas do quadro tático (a que gera o MP4 da sequência) confirmada
-            ponta-a-ponta com ffmpeg real — inclui comparar o conteúdo real dos pixels exportados
-            com e sem desenhos, não só se o ficheiro foi criado. Projetos existentes abrem
-            exatamente iguais.
+            Testado (41 verificações reais, Playwright + Electron): seleção simples, em grupo e por
+            área; apagar pelos três caminhos, sozinho e em grupo (um só Ctrl+Z desfaz o grupo
+            inteiro); histórico independente por modo de quadro; escrever texto sem interferir no
+            quadro; uma cena gravada antes desta versão continua a abrir e a funcionar na mesma
+            (sem reescrever nada no disco só por abrir); a exportação de vídeo das cenas (MP4)
+            validada ponta-a-ponta com ffmpeg real.

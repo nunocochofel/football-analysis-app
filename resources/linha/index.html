@@ -752,6 +752,22 @@
   .tactic-pitch.depth-mode{max-width:900px; aspect-ratio:1050/640;}
   .tactic-pitch svg{width:100%; height:100%; display:block; border-radius:8px;}
   .tactic-pitch #tacticCanvas{position:absolute; top:0; left:0; width:100%; height:100%;}
+  /* Fase 2 — rubber-band select box, shown/positioned in JS during a drag over empty canvas. */
+  .tactic-select-box{
+    display:none; position:absolute; z-index:6; pointer-events:none;
+    border:1.5px dashed #4F8FC9; background:rgba(79,143,201,.12);
+  }
+  /* Fase 2 — right-click context menu. Positioned via JS (left/top set to the click point);
+     display:none by default and toggled the same way #tacticContextMenu's other visibility. */
+  .tactic-context-menu{
+    display:none; position:fixed; z-index:50; background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); box-shadow:var(--shadow); padding:4px; min-width:120px;
+  }
+  .tactic-context-menu button{
+    display:block; width:100%; text-align:left; padding:7px 10px; border:none; background:none;
+    color:var(--crimson); font-size:13px; border-radius:6px; cursor:pointer;
+  }
+  .tactic-context-menu button:hover{ background:rgba(209,73,91,.12); }
   .token{
     position:absolute; width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center;
     font-size:10px; font-weight:700; color:#08110A; cursor:grab; border:2px solid rgba(0,0,0,.35);
@@ -825,6 +841,10 @@
     border:2px solid var(--amber);
   }
   .token:active{cursor:grabbing;}
+  /* Fase 2 — selection indicator. outline (not border) so it never affects layout/sizing, and
+     isn't clipped by any token's own overflow:hidden/clip-path (the ball's hexagon panels, the
+     goal's net) since the outline box sits outside the element's own painting area. */
+  .token.selected{ outline:2.5px solid #4F8FC9; outline-offset:2px; }
 
   /* Rotation: a small handle above each token; drag it around the token to
      set its facing direction. It rides along with the token's own rotation
@@ -1818,7 +1838,7 @@
         <button class="tool-btn mobile-toolbar-primary" data-ttool="arrow" title="Seta">➔</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="zone" title="Zona">▱</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="text" title="Texto">🔤</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (o botão direito também apaga, com qualquer ferramenta)">🧹</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (também podes selecionar e premir Delete, ou clicar com o botão direito → Apagar)">🧹</button>
         <div class="toolbar-sep"></div>
         <div id="tacticColorSwatches" style="display:flex; gap:6px;"></div>
         <div class="toolbar-sep"></div>
@@ -1828,7 +1848,9 @@
           <button class="tool-btn" data-lstyle="dotted" title="Linha pontilhada">┈</button>
         </div>
         <div class="toolbar-sep"></div>
-        <button class="btn icon mobile-toolbar-primary" id="btnTacticUndo" title="Desfazer">↶</button>
+        <button class="btn icon mobile-toolbar-primary" id="btnTacticUndo" title="Desfazer (Ctrl+Z)" disabled>↶</button>
+        <button class="btn icon" id="btnTacticRedo" title="Refazer (Ctrl+Shift+Z)" disabled>↷</button>
+        <button class="btn icon" id="btnTacticDelete" title="Apagar seleção (Delete)" disabled>🗑</button>
         <button class="btn icon" id="btnTacticClear" title="Limpar desenhos">✕</button>
         <!-- Mobile only: reveals color swatches/line-style/clear/+Objeto/+Jogador/+Imagem/export —
              same mobile-toolbar-primary/mobile-tools-open pattern as #videoToolbar. -->
@@ -1871,7 +1893,16 @@
       <div class="tactic-pitch-wrap">
         <div class="tactic-pitch" id="tacticPitch">
           <canvas id="tacticCanvas"></canvas>
+          <!-- Fase 2 — rubber-band drag-select overlay, positioned/sized in JS during the drag
+               (see tBoxSelect / updateTacticPointerMove / finishTacticBoxSelect). -->
+          <div class="tactic-select-box" id="tacticSelectBox"></div>
         </div>
+      </div>
+      <!-- Fase 2 — right-click context menu ("clique direito → apagar"), shared by shapes and
+           tokens. Positioned in JS (openTacticContextMenu); only ever shows "Apagar" for now —
+           more actions (duplicar, camadas) join it in a later fase. -->
+      <div class="tactic-context-menu" id="tacticContextMenu">
+        <button id="tacticContextMenuDelete">🗑 Apagar</button>
       </div>
       <div class="scenes-strip" id="scenesStrip">
         <button class="scene-add" id="btnAddScene" title="Salvar cena atual">+</button>
@@ -5779,6 +5810,58 @@ function shapeHitTest(shape, px, py, canvas){
   }
   return false;
 }
+// Fase 2 (quadro tático) — a bounding box in the same canvas-pixel space as shapeHitTest, used for
+// drag-to-select (does this shape's box overlap the rubber-band rect?) and for drawing a selection
+// outline. Deliberately mirrors shapeHitTest's own per-type approximations (e.g. text width from
+// character count, not real font metrics) rather than inventing a second, possibly-inconsistent
+// notion of a shape's extent — also the foundation Fase 3's generic transform handles need, so it's
+// built as one shared function now instead of being redone per-type again later.
+function getShapeBounds(shape, canvas){
+  const toP = p => ({x:p.x*canvas.width, y:p.y*canvas.height});
+  const pad = 6;
+  if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler'){
+    const a=toP(shape.p1), b=toP(shape.p2);
+    return {x:Math.min(a.x,b.x)-pad, y:Math.min(a.y,b.y)-pad, width:Math.abs(b.x-a.x)+pad*2, height:Math.abs(b.y-a.y)+pad*2};
+  }
+  if(shape.type==='spot'){
+    const c = toP(shape.center);
+    const r = Math.max(13, canvas.width*0.014)+pad;
+    return {x:c.x-r, y:c.y-r, width:r*2, height:r*2};
+  }
+  if(shape.type==='vignette'){
+    const c = toP(shape.center);
+    const r = Math.max(18, (shape.radius||0.15)*canvas.width)+pad;
+    return {x:c.x-r, y:c.y-r, width:r*2, height:r*2};
+  }
+  if(shape.type==='zone'){
+    if(!shape.points.length) return {x:0,y:0,width:0,height:0};
+    const pts = shape.points.map(toP);
+    const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+    return {x:Math.min(...xs)-pad, y:Math.min(...ys)-pad, width:Math.max(...xs)-Math.min(...xs)+pad*2, height:Math.max(...ys)-Math.min(...ys)+pad*2};
+  }
+  if(shape.type==='text'){
+    const c = toP(shape.p);
+    const scale = shape.fontScale||1;
+    if(!shape.text){
+      const w = Math.max(150, canvas.width*0.16)*scale, h = Math.max(34, canvas.width*0.035)*scale;
+      return {x:c.x, y:c.y-h/2, width:w, height:h};
+    }
+    const halfW = Math.max(20, (shape.text||'').length*6*scale);
+    return {x:c.x-halfW, y:c.y-14*scale, width:halfW*2, height:28*scale};
+  }
+  if(shape.type==='image'){
+    const c = toP(shape.p);
+    const img = getShapeImage(shape.imageUrl);
+    const w = canvas.width*0.14*(shape.scale||1);
+    const h = img.naturalWidth ? w*(img.naturalHeight/img.naturalWidth) : w;
+    return {x:c.x-w/2, y:c.y-h/2, width:w, height:h};
+  }
+  return {x:0,y:0,width:0,height:0};
+}
+// Rect-rect overlap (used by drag-to-select: does a shape's bounds intersect the rubber band?).
+function rectsOverlap(a, b){
+  return a.x < b.x+b.width && a.x+a.width > b.x && a.y < b.y+b.height && a.y+a.height > b.y;
+}
 // Shared by both drawing surfaces (video canvas + tactic-board export frames) so an uploaded
 // image is only ever decoded once no matter how many shapes/tokens reuse the same data URL.
 const shapeImageCache = new Map();
@@ -6030,6 +6113,13 @@ document.getElementById('textEditSizeUp').addEventListener('click', ()=>{
   updateTextEditStyleButtons();
 });
 document.getElementById('textEditClose').addEventListener('click', closeTextEditPanel);
+// Fase 2 — "atalhos desativados enquanto escrevo texto... só Esc (terminar edição) e os de Ctrl
+// continuam ativos": Esc cancels out of the panel (discarding unsaved edits, same as clicking ✕),
+// without needing to know any button exists. Scoped to only fire while the panel is genuinely
+// open — this listener would otherwise catch every Escape press across the whole app.
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && textEditSession) closeTextEditPanel();
+});
 document.getElementById('textEditSave').addEventListener('click', ()=>{
   if(!textEditSession) return;
   textEditSession.opts.onSave({...textEditSession.working});
@@ -6389,10 +6479,39 @@ document.addEventListener('keydown', e=>{
       pushShape(clone);
       saveState(); renderShapeTimeline(); redrawShapes();
     } else {
+      // Fase 2 — clone is a deep copy of the ORIGINAL hovered shape, so it still carries that
+      // shape's id unless given a fresh one here: two shapes sharing an id would make selection
+      // (a Set of ids) and getShapeBounds/hit lookups by id ambiguous between them.
+      pushTacticHistory();
+      clone.id = uid();
       tacticShapes.push(clone);
       redrawTactic();
     }
     toast('Desenho colado.');
+  }
+});
+
+// Fase 2 (quadro tático) — Delete/Backspace apaga a seleção, Ctrl+Z/Ctrl+Shift+Z desfaz/refaz.
+// Gated exactly like the tag-quickcreate handler above and the Ctrl+C/V one: bails out whenever
+// focus is on an input/textarea/select/contenteditable, so backspacing a player's name or a text
+// shape's own content never also deletes/undoes something on the board behind it — the app-wide
+// rule from this fase's own brief ("atalhos desativados enquanto escrevo texto"), applied to the
+// two literal keys this fase introduces, not just the future per-tool letter shortcuts. Scoped to
+// the tactic tab being active — the video tab has no selection/undo model yet (out of scope here).
+document.addEventListener('keydown', e=>{
+  if(!document.getElementById('tab-tactic').classList.contains('active')) return;
+  const activeEl = document.activeElement;
+  const activeTag = activeEl ? activeEl.tagName : '';
+  if(activeTag==='INPUT' || activeTag==='SELECT' || activeTag==='TEXTAREA' || (activeEl && activeEl.isContentEditable)) return;
+  if((e.key==='Delete' || e.key==='Backspace') && !e.ctrlKey && !e.metaKey && !e.altKey){
+    if(tacticSelectionEmpty()) return;
+    e.preventDefault();
+    deleteTacticSelection();
+    return;
+  }
+  if((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase()==='z'){
+    e.preventDefault();
+    if(e.shiftKey) tacticRedo(); else tacticUndo();
   }
 });
 
@@ -7978,6 +8097,11 @@ let tTool = 'move';
 let tColor = state.drawColors[1];
 let tLineStyle = 'solid'; // 'solid' | 'dashed' | 'dotted' — applies to line/arrow
 let tDragId = null;
+// Fase 2 — true only once pushTacticHistory() has already run for the CURRENT drag/rotate gesture
+// (set false at gesture start, true on its first actual mutation in updateTacticPointerMove) — a
+// gesture that starts but never actually moves anything pushes nothing, and one that moves 50
+// times pushes exactly once, not 50.
+let tDragHistoryPushed = false;
 let tacticShapeDragSession = null; // {shape, startX, startY, orig} — dragging a canvas text shape
 // Which single Touch.identifier currently owns whichever single-finger gesture (token drag, rotate,
 // shape drag, drawing) is active — null when none is, or when the active gesture started with the
@@ -7993,6 +8117,76 @@ let tActiveTouchId = null;
 // finger-contact jitter. Left null for a mouse-originated drag, which needs no such threshold.
 let tDragTouchStart = null;
 const TACTIC_TOUCH_DRAG_THRESHOLD = 6;
+
+// Fase 2 — persistent selection, kept as two id sets rather than one (tokens and tacticShapes are
+// different collections with different id spaces) instead of a single tagged list, since every
+// caller already knows which collection it's working with and a tagged union would just add
+// parsing for no benefit. Selection is intentionally NOT part of `state`/scenes — it's transient
+// interaction state, reset on every scene load / board-mode switch (see loadScene/setBoardMode).
+let selectedShapeIds = new Set();
+let selectedTokenIds = new Set();
+function clearTacticSelection(){ selectedShapeIds.clear(); selectedTokenIds.clear(); }
+function tacticSelectionEmpty(){ return selectedShapeIds.size===0 && selectedTokenIds.size===0; }
+
+// Fase 2 — real undo/redo, one stack PER BOARD MODE (not a single global one) because
+// full/zones/box/depth already keep fully independent tokens/shapes via boardBuffers — a single
+// shared stack would let an undo meant for one board silently rewrite a completely different one
+// after switching modes. Snapshot-based (whole tokens+shapes clone) rather than a diff/command
+// list: the board is small (a handful of tokens/shapes), so the extra memory is negligible, and a
+// snapshot can never drift out of sync with a mutation someone forgot to wrap in a command object.
+const TACTIC_HISTORY_LIMIT = 50;
+const tacticHistoryByMode = { full: [], box: [], zones: [], depth: [] };
+const tacticRedoByMode = { full: [], box: [], zones: [], depth: [] };
+function snapshotTacticBoard(){
+  return { tokens: JSON.parse(JSON.stringify(tokens)), shapes: JSON.parse(JSON.stringify(tacticShapes)) };
+}
+// Call BEFORE mutating tokens/tacticShapes — captures the state being left behind, not the one
+// about to exist. Clears the redo stack: a fresh action invalidates whatever "future" undo had
+// previously stepped back from, same as every other undo/redo implementation.
+function pushTacticHistory(){
+  const h = tacticHistoryByMode[boardMode];
+  h.push(snapshotTacticBoard());
+  if(h.length > TACTIC_HISTORY_LIMIT) h.shift();
+  tacticRedoByMode[boardMode].length = 0;
+  updateTacticUndoRedoButtons();
+}
+function tacticUndo(){
+  const h = tacticHistoryByMode[boardMode];
+  if(!h.length) return;
+  tacticRedoByMode[boardMode].push(snapshotTacticBoard());
+  const prev = h.pop();
+  tokens = prev.tokens; tacticShapes = prev.shapes;
+  clearTacticSelection();
+  renderTokens(); redrawTactic();
+  updateTacticUndoRedoButtons();
+}
+function tacticRedo(){
+  const r = tacticRedoByMode[boardMode];
+  if(!r.length) return;
+  tacticHistoryByMode[boardMode].push(snapshotTacticBoard());
+  const next = r.pop();
+  tokens = next.tokens; tacticShapes = next.shapes;
+  clearTacticSelection();
+  renderTokens(); redrawTactic();
+  updateTacticUndoRedoButtons();
+}
+function updateTacticUndoRedoButtons(){
+  const undoBtn = document.getElementById('btnTacticUndo');
+  const redoBtn = document.getElementById('btnTacticRedo');
+  if(undoBtn) undoBtn.disabled = tacticHistoryByMode[boardMode].length===0;
+  if(redoBtn) redoBtn.disabled = tacticRedoByMode[boardMode].length===0;
+}
+// Debounced history push for continuous gestures driven by repeated small events (mouse wheel
+// resize) that have no discrete "start"/"end" of their own — without this, every single wheel
+// tick would become its own undo step, so undoing one resize would take a dozen presses of Ctrl+Z.
+// A pause longer than the threshold between ticks starts a new "gesture" (and a new undo step);
+// ticks arriving faster than that just extend the current one.
+let lastTacticWheelHistoryAt = 0;
+function pushTacticHistoryDebounced(){
+  const now = Date.now();
+  if(now - lastTacticWheelHistoryAt > 500) pushTacticHistory();
+  lastTacticWheelHistoryAt = now;
+}
 
 // "Campo Inteiro", "Campo p/ Zonas", "Área" and "Na Profundidade" are independent boards sharing
 // one DOM/canvas — switching mode snapshots the outgoing board's live tokens/shapes into an
@@ -8046,6 +8240,11 @@ function setBoardMode(mode){
   else { defaultTokens(); tacticShapes = []; }
   tZonePts = [];
   activeSceneIndex = null; // each board mode has its own separate scene list
+  // Fase 2 — selection from the outgoing board makes no sense pointed at the incoming one's ids;
+  // undo/redo is NOT reset here on purpose — each mode already keeps its own independent history
+  // stack (tacticHistoryByMode), so switching away and back preserves it exactly, same as
+  // boardBuffers already does for the live tokens/shapes themselves.
+  clearTacticSelection();
   initPitchSVG();
   tacticPitch.classList.toggle('box-mode', boardMode==='box');
   tacticPitch.classList.toggle('depth-mode', boardMode==='depth');
@@ -8056,6 +8255,7 @@ function setBoardMode(mode){
   requestAnimationFrame(sizeTacticCanvas);
   renderTokens();
   renderScenesStrip();
+  updateTacticUndoRedoButtons();
 }
 document.querySelectorAll('#boardModeFlyout [data-boardmode]').forEach(b=>{
   b.addEventListener('click', ()=>{
@@ -8102,6 +8302,7 @@ function formationCoords(formation, teamId){
 }
 document.querySelectorAll('[data-formation]').forEach(b=>{
   b.addEventListener('click', ()=>{
+    pushTacticHistory();
     const coords = formationCoords(b.dataset.formation, b.dataset.fteam);
     Object.keys(tokens).forEach(k=>{ if(k.startsWith(b.dataset.fteam+'-')) delete tokens[k]; });
     Object.assign(tokens, coords);
@@ -8132,7 +8333,7 @@ function renderTokens(){
     const angle = tk.angle || 0;
     const scale = tk.scale || 1;
     const el = document.createElement('div');
-    el.className='token'+(kind!=='player' ? ' '+kind : '');
+    el.className='token'+(kind!=='player' ? ' '+kind : '')+(selectedTokenIds.has(id) ? ' selected' : '');
     el.style.left=tk.x+'%'; el.style.top=tk.y+'%';
     el.style.transform = `translate(-50%,-50%) rotate(${angle}deg) scale(${scale})`;
     if(kind==='ball') el.style.background = tk.color;
@@ -8152,10 +8353,27 @@ function renderTokens(){
     const handle = document.createElement('div');
     handle.className='token-rotate-handle';
     handle.title='Arrasta para rodar';
+    // Fase 2 — a plain click replaces the selection with just this token, UNLESS it's already
+    // part of a bigger selection (clicking one of several already-selected tokens keeps the whole
+    // group selected — the usual convention, and what a future group-drag in Fase 3 needs). Shift
+    // toggles this one token's membership without touching the rest. Runs on every mousedown that
+    // reaches here regardless of whether a drag follows, same as any selection click would.
+    function updateSelectionOnTokenPointerDown(e){
+      if(tTool!=='move') return;
+      const shift = !!(e.shiftKey);
+      if(shift){
+        if(selectedTokenIds.has(id)) selectedTokenIds.delete(id); else selectedTokenIds.add(id);
+      } else if(!selectedTokenIds.has(id)){
+        selectedShapeIds.clear(); selectedTokenIds.clear(); selectedTokenIds.add(id);
+      }
+      renderTokens(); updateTacticDeleteButton();
+    }
     function startRotate(e){
       if(tTool!=='move') return;
       e.stopPropagation(); e.preventDefault();
+      updateSelectionOnTokenPointerDown(e);
       tRotateId = id;
+      tDragHistoryPushed = false;
       tActiveTouchId = e.changedTouches ? e.changedTouches[0].identifier : null;
     }
     handle.addEventListener('mousedown', startRotate);
@@ -8171,7 +8389,9 @@ function renderTokens(){
     el.appendChild(hitArea);
     function startDrag(e){
       if(tTool!=='move') return;
+      updateSelectionOnTokenPointerDown(e);
       tDragId=id;
+      tDragHistoryPushed = false;
       if(e.changedTouches){
         const t = e.changedTouches[0];
         tActiveTouchId = t.identifier;
@@ -8190,13 +8410,28 @@ function renderTokens(){
     el.addEventListener('wheel', e=>{
       if(tTool!=='move') return;
       e.preventDefault(); e.stopPropagation();
+      pushTacticHistoryDebounced();
       tk.scale = clamp((tk.scale||1) + (e.deltaY<0 ? 0.12 : -0.12), 0.4, 3);
       renderTokens();
     }, {passive:false});
     el.addEventListener('dblclick', e=>{
       e.stopPropagation();
+      pushTacticHistory();
+      selectedTokenIds.delete(id);
       delete tokens[id];
       renderTokens();
+    });
+    // Fase 2 — tokens are plain DOM elements (siblings of tacticCanvas, not children of it), so a
+    // right-click here never reaches tacticCanvas's own 'contextmenu' listener — needs its own,
+    // mirroring the same select-then-open-menu behavior shapes get.
+    el.addEventListener('contextmenu', e=>{
+      e.preventDefault(); e.stopPropagation();
+      if(tTool!=='move') return;
+      if(!selectedTokenIds.has(id)){
+        selectedShapeIds.clear(); selectedTokenIds.clear(); selectedTokenIds.add(id);
+        renderTokens(); updateTacticDeleteButton();
+      }
+      openTacticContextMenu(e.clientX, e.clientY);
     });
     tacticPitch.appendChild(el);
   });
@@ -8204,6 +8439,7 @@ function renderTokens(){
 renderTokens();
 
 function addObject(kind){
+  pushTacticHistory();
   const id = kind+'_'+uid();
   const colors = {ball:'#fff', cone:'#E2A63B', goal:'#fff', minigoal:'#fff', marker:'#E2A63B', pole:'#fff', hurdle:'#C1533D', ladder:'#E2A63B'};
   tokens[id] = {x:50, y:50, kind, color:colors[kind] || '#fff', angle:0};
@@ -8228,6 +8464,7 @@ document.addEventListener('click', e=>{
 // usable on both the full-pitch and the box board; the flyout is rebuilt on open so it always
 // reflects the current roster.
 function addPlayer(teamId, player){
+  pushTacticHistory();
   const id = teamId+'-p'+uid(); // uid()-suffixed so it never collides with formation ids (teamId+'-'+i)
   tokens[id] = {x:50, y:50, teamId, num:player.num, color: resolvePlayerColor(teamId, player), appearance: resolvePlayerAppearance(teamId, player), pid: player.id};
   renderTokens();
@@ -8259,6 +8496,7 @@ document.querySelector('#playerFlyoutWrap > .btn').addEventListener('click', e=>
 // "+ Imagem" — reuses the token drag/rotate/scale machinery already built for objects; an image
 // is just another token kind with a background-image instead of a flat color.
 function addImageToken(dataUrl){
+  pushTacticHistory();
   const id = 'image_'+uid();
   tokens[id] = {x:50, y:50, kind:'image', imageUrl:dataUrl, angle:0, scale:1};
   renderTokens();
@@ -8292,10 +8530,21 @@ document.getElementById('fileTacticImage').addEventListener('change', e=>{
 
 let tRotateId = null;
 function updateTacticPointerMove(clientX, clientY){
+  if(tBoxSelect){
+    const r = tacticPitch.getBoundingClientRect();
+    const x1 = clamp(tBoxSelect.startClientX - r.left, 0, r.width), y1 = clamp(tBoxSelect.startClientY - r.top, 0, r.height);
+    const x2 = clamp(clientX - r.left, 0, r.width), y2 = clamp(clientY - r.top, 0, r.height);
+    const left = Math.min(x1,x2), top = Math.min(y1,y2), w = Math.abs(x2-x1), h = Math.abs(y2-y1);
+    tacticSelectBoxEl.style.display = 'block';
+    tacticSelectBoxEl.style.left = left+'px'; tacticSelectBoxEl.style.top = top+'px';
+    tacticSelectBoxEl.style.width = w+'px'; tacticSelectBoxEl.style.height = h+'px';
+    return;
+  }
   if(tRotateId){
     const tk = tokens[tRotateId];
     const el = tacticPitch.querySelector('.token[data-id="'+tRotateId+'"]');
     if(tk && el){
+      if(!tDragHistoryPushed){ pushTacticHistory(); tDragHistoryPushed = true; }
       const rect = el.getBoundingClientRect();
       const cx = rect.left+rect.width/2, cy = rect.top+rect.height/2;
       const deg = Math.atan2(clientY-cy, clientX-cx) * 180/Math.PI + 90;
@@ -8320,6 +8569,7 @@ function updateTacticPointerMove(clientX, clientY){
     return;
   }
   if(tDragId){
+    if(!tDragHistoryPushed){ pushTacticHistory(); tDragHistoryPushed = true; }
     const r = tacticPitch.getBoundingClientRect();
     const x = clamp(((clientX-r.left)/r.width)*100,0,100);
     const y = clamp(((clientY-r.top)/r.height)*100,0,100);
@@ -8403,6 +8653,7 @@ window.addEventListener('touchcancel', e=>{ if(tacticTouchGestureEnded(e)) endTa
 
 function updateTacticShapeDrag(clientX, clientY){
   if(!tacticShapeDragSession) return;
+  if(!tDragHistoryPushed){ pushTacticHistory(); tDragHistoryPushed = true; }
   const r = tacticPitch.getBoundingClientRect();
   const dx = (clientX-tacticShapeDragSession.startX)/r.width;
   const dy = (clientY-tacticShapeDragSession.startY)/r.height;
@@ -8446,15 +8697,37 @@ function eraseTacticShapeAt(e){
   const p = tRelPt(e);
   const px = p.x*tacticCanvas.width, py = p.y*tacticCanvas.height;
   for(let i=tacticShapes.length-1;i>=0;i--){
-    if(shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){ tacticShapes.splice(i,1); return true; }
+    if(shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){
+      pushTacticHistory();
+      selectedShapeIds.delete(tacticShapes[i].id);
+      tacticShapes.splice(i,1);
+      return true;
+    }
   }
   return false;
 }
+// Fase 2 — right-click used to erase instantly; now it opens a real menu instead ("clique direito
+// → apagar", not "clique direito → já era"), consistent with the rule that nothing here is allowed
+// to happen from a keyboard/gesture shortcut alone. Right-clicking a shape/token that ISN'T already
+// part of the selection selects just that one first — right-clicking one that already IS selected
+// keeps the whole current selection intact, so the menu's "Apagar" can act on a whole group.
 tacticCanvas.addEventListener('contextmenu', e=>{
   e.preventDefault();
-  if(eraseTacticShapeAt(e)) redrawTactic();
+  const hitShape = findVisibleTacticShapeAt(e);
+  if(hitShape){
+    if(!selectedShapeIds.has(hitShape.id)){
+      selectedShapeIds.clear(); selectedTokenIds.clear(); selectedShapeIds.add(hitShape.id);
+      renderTokens(); redrawTactic(); updateTacticDeleteButton();
+    }
+    openTacticContextMenu(e.clientX, e.clientY);
+  }
 });
 let tErasing = false;
+// Fase 2 — rubber-band drag-select over empty canvas. {startClientX, startClientY, additive} while
+// active, null otherwise. additive = Shift was held when the drag started, meaning the shapes/
+// tokens it ends up covering get ADDED to whatever was already selected rather than replacing it.
+let tBoxSelect = null;
+const tacticSelectBoxEl = document.getElementById('tacticSelectBox');
 function startTacticCanvasInteraction(e){
   // A right-click fires its own mousedown (button 2) before the separate 'contextmenu' event that
   // actually erases below — without this check, whichever drawing tool was active would ALSO treat
@@ -8468,20 +8741,39 @@ function startTacticCanvasInteraction(e){
   // so a genuinely idle pitch still lets a two-finger touch start a pinch.
   const touchId = e.changedTouches ? e.changedTouches[0].identifier : null;
   if(tTool==='move'){
-    // Tokens (players/objects/images) are DOM elements and already drag via their own mousedown/
-    // touchstart handlers — this is the equivalent for canvas-drawn text shapes, which have no
-    // such handle.
+    // Tokens (players/objects/images) are DOM elements with their own mousedown/touchstart
+    // handlers (selection + drag) — this only has to deal with canvas-drawn shapes. ANY shape type
+    // gets selected by a click now, not just text (text additionally starts a drag session here —
+    // dragging any other type is Fase 3's job, via the generic transform handles).
     const p = tRelPt(e);
     const px = p.x*tacticCanvas.width, py = p.y*tacticCanvas.height;
     const clientPt = clientXY(e);
+    let hit = null;
     for(let i=tacticShapes.length-1;i>=0;i--){
-      if(tacticShapes[i].type==='text' && shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){
-        e.preventDefault();
-        tacticShapeDragSession = {shape:tacticShapes[i], startX:clientPt.x, startY:clientPt.y, orig:cloneShapeGeometry(tacticShapes[i])};
-        tActiveTouchId = touchId;
-        break;
-      }
+      if(shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){ hit = tacticShapes[i]; break; }
     }
+    if(hit){
+      e.preventDefault();
+      const shift = !!e.shiftKey;
+      if(shift){
+        if(selectedShapeIds.has(hit.id)) selectedShapeIds.delete(hit.id); else selectedShapeIds.add(hit.id);
+      } else if(!selectedShapeIds.has(hit.id)){
+        selectedShapeIds.clear(); selectedTokenIds.clear(); selectedShapeIds.add(hit.id);
+      }
+      redrawTactic(); updateTacticDeleteButton();
+      if(hit.type==='text' && (!shift || selectedShapeIds.has(hit.id))){
+        tacticShapeDragSession = {shape:hit, startX:clientPt.x, startY:clientPt.y, orig:cloneShapeGeometry(hit)};
+        tDragHistoryPushed = false;
+        tActiveTouchId = touchId;
+      }
+      return;
+    }
+    // Empty canvas: start a rubber-band selection. A plain click-and-release-in-place (no actual
+    // drag) clears the selection instead, handled where the box-select gesture ends.
+    e.preventDefault();
+    if(!e.shiftKey){ clearTacticSelection(); redrawTactic(); renderTokens(); updateTacticDeleteButton(); }
+    tBoxSelect = { startClientX: clientPt.x, startClientY: clientPt.y, additive: !!e.shiftKey };
+    tActiveTouchId = touchId;
     return;
   }
   if(tTool==='eraser'){ e.preventDefault(); tErasing=true; tActiveTouchId = touchId; if(eraseTacticShapeAt(e)) redrawTactic(); return; }
@@ -8489,7 +8781,8 @@ function startTacticCanvasInteraction(e){
   if(tTool==='zone'){ e.preventDefault(); tZonePts.push(p); return; }
   if(tTool==='text'){
     e.preventDefault();
-    tacticShapes.push({type:'text', p, text:'', color:tColor, bold:true, italic:false, fontScale:1});
+    pushTacticHistory();
+    tacticShapes.push({id:uid(), type:'text', p, text:'', color:tColor, bold:true, italic:false, fontScale:1});
     redrawTactic();
     // Back to the move tool immediately — otherwise it stays armed and a follow-up double-click
     // meant to EDIT the box you just placed instead drops two more on top of it (same fix as the
@@ -8518,10 +8811,10 @@ tacticCanvas.addEventListener('touchstart', e=>{
 function openTextEditPanelForTacticShape(shape, e){
   openTextEditPanel(shape, e.clientX, e.clientY, {
     colors: state.drawColors,
-    onSave: patch=>{ Object.assign(shape, patch); redrawTactic(); },
+    onSave: patch=>{ pushTacticHistory(); Object.assign(shape, patch); redrawTactic(); },
     onDelete: ()=>{
       const i = tacticShapes.indexOf(shape);
-      if(i>=0){ tacticShapes.splice(i,1); redrawTactic(); }
+      if(i>=0){ pushTacticHistory(); selectedShapeIds.delete(shape.id); tacticShapes.splice(i,1); redrawTactic(); updateTacticDeleteButton(); }
     }
   });
 }
@@ -8535,6 +8828,7 @@ tacticCanvas.addEventListener('wheel', e=>{
   }
   if(!hit) return;
   e.preventDefault(); e.stopPropagation();
+  pushTacticHistoryDebounced();
   hit.fontScale = clamp((hit.fontScale||1) + (e.deltaY<0?0.1:-0.1), 0.4, 4);
   redrawTactic();
 }, {passive:false});
@@ -8558,7 +8852,8 @@ function findVisibleTacticShapeAt(e){
 }
 tacticCanvas.addEventListener('dblclick', e=>{
   if(tTool==='zone' && tZonePts.length>=3){
-    tacticShapes.push({type:'zone', points:tZonePts.slice(), color:tColor});
+    pushTacticHistory();
+    tacticShapes.push({id:uid(), type:'zone', points:tZonePts.slice(), color:tColor});
     tZonePts=[]; redrawTactic();
     return;
   }
@@ -8573,7 +8868,41 @@ tacticCanvas.addEventListener('dblclick', e=>{
     }
   }
 });
+// Fase 2 — resolves the rubber-band box into an actual selection once the drag ends. Shapes are
+// tested via getShapeBounds+rectsOverlap (same pixel space tacticSelectBoxEl was drawn in, since
+// tacticCanvas's internal width/height are set 1:1 from tacticPitch's own rect in sizeTacticCanvas
+// — no extra DPR scale factor anywhere in this file); tokens (percent-positioned DOM elements, no
+// canvas geometry of their own) are tested as a single point instead.
+function finishTacticBoxSelect(clientX, clientY){
+  const r = tacticPitch.getBoundingClientRect();
+  const x1 = clamp(tBoxSelect.startClientX - r.left, 0, r.width), y1 = clamp(tBoxSelect.startClientY - r.top, 0, r.height);
+  const x2 = clamp(clientX - r.left, 0, r.width), y2 = clamp(clientY - r.top, 0, r.height);
+  const box = { x: Math.min(x1,x2), y: Math.min(y1,y2), width: Math.abs(x2-x1), height: Math.abs(y2-y1) };
+  tacticSelectBoxEl.style.display = 'none';
+  const additive = tBoxSelect.additive;
+  tBoxSelect = null;
+  // A click-and-release with no real drag was already handled (selection cleared) at mousedown —
+  // don't let a near-zero-size box additionally "select" whatever tiny sliver it happened to cover.
+  if(box.width < 3 && box.height < 3) return;
+  if(!additive) clearTacticSelection();
+  tacticShapes.forEach(s=>{ if(rectsOverlap(getShapeBounds(s, tacticCanvas), box)) selectedShapeIds.add(s.id); });
+  Object.entries(tokens).forEach(([id,tk])=>{
+    const px = tk.x/100*r.width, py = tk.y/100*r.height;
+    if(px>=box.x && px<=box.x+box.width && py>=box.y && py<=box.y+box.height) selectedTokenIds.add(id);
+  });
+  redrawTactic(); renderTokens(); updateTacticDeleteButton();
+}
 function finishTacticDrawing(e){
+  if(tBoxSelect){
+    if(e.type==='touchend'){
+      const t = findTrackedChangedTouch(e);
+      tacticTouchGestureEnded(e);
+      if(t) finishTacticBoxSelect(t.clientX, t.clientY); else { tacticSelectBoxEl.style.display='none'; tBoxSelect=null; }
+    } else {
+      finishTacticBoxSelect(e.clientX, e.clientY);
+    }
+    return;
+  }
   if(tErasing){ if(e.type!=='touchend' || tacticTouchGestureEnded(e)) tErasing=false; return; }
   if(!tDrawing) return;
   let p;
@@ -8591,7 +8920,8 @@ function finishTacticDrawing(e){
   tDrawing=false;
   const dx=p.x-tStart.x, dy=p.y-tStart.y;
   if(Math.hypot(dx,dy)>0.005){
-    tacticShapes.push({type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
+    pushTacticHistory();
+    tacticShapes.push({id:uid(), type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
   }
   redrawTactic();
 }
@@ -8659,6 +8989,18 @@ tacticPitch.addEventListener('touchend', e=>{
 function redrawTactic(){
   tctx.clearRect(0,0,tacticCanvas.width, tacticCanvas.height);
   tacticShapes.forEach(s=>drawShapeOnCtx(tctx, tacticCanvas, s));
+  // Fase 2 — selection outline, drawn as a second pass over getShapeBounds so it never depends on
+  // (or has to duplicate) each shape type's own drawing code.
+  if(selectedShapeIds.size){
+    tctx.save();
+    tctx.strokeStyle = '#4F8FC9'; tctx.lineWidth = 1.5; tctx.setLineDash([5,4]);
+    tacticShapes.forEach(s=>{
+      if(!selectedShapeIds.has(s.id)) return;
+      const b = getShapeBounds(s, tacticCanvas);
+      tctx.strokeRect(b.x, b.y, b.width, b.height);
+    });
+    tctx.restore();
+  }
 }
 // Fase 1 — see the long comment above renderShape (video section) for why this is now a thin
 // wrapper instead of a hand-duplicated copy. tactic: 0.03, matches the pre-unification constant
@@ -8672,8 +9014,53 @@ function redrawTactic(){
 // ctx.restore() either way — never visibly different (every shape sets its own strokeStyle/
 // fillStyle/lineWidth up front rather than relying on inherited state), just no longer leaks.
 function drawShapeOnCtx(ctx, canvas, s){ renderShape(ctx, canvas, s, 0.03); }
-document.getElementById('btnTacticUndo').addEventListener('click', ()=>{ tacticShapes.pop(); redrawTactic(); });
-document.getElementById('btnTacticClear').addEventListener('click', ()=>{ tacticShapes=[]; tZonePts=[]; redrawTactic(); });
+document.getElementById('btnTacticUndo').addEventListener('click', tacticUndo);
+document.getElementById('btnTacticRedo').addEventListener('click', tacticRedo);
+document.getElementById('btnTacticClear').addEventListener('click', ()=>{
+  pushTacticHistory();
+  clearTacticSelection();
+  tacticShapes=[]; tZonePts=[]; redrawTactic(); updateTacticDeleteButton();
+});
+// Fase 2 — uniform delete: works on whatever's currently selected (any mix of shapes and tokens),
+// regardless of which of the three paths triggered it (Delete/Backspace key, this toolbar button,
+// or "Apagar" in the right-click context menu — see openTacticContextMenu). One history entry for
+// the whole group, not one per item, so undoing a 5-item group-delete is a single Ctrl+Z.
+function deleteTacticSelection(){
+  if(tacticSelectionEmpty()) return;
+  pushTacticHistory();
+  tacticShapes = tacticShapes.filter(s=>!selectedShapeIds.has(s.id));
+  selectedTokenIds.forEach(id=>{ delete tokens[id]; });
+  clearTacticSelection();
+  redrawTactic(); renderTokens(); updateTacticDeleteButton();
+}
+function updateTacticDeleteButton(){
+  const btn = document.getElementById('btnTacticDelete');
+  if(btn) btn.disabled = tacticSelectionEmpty();
+}
+document.getElementById('btnTacticDelete').addEventListener('click', deleteTacticSelection);
+
+// Fase 2 — the right-click context menu. Callers (tacticCanvas's contextmenu handler, each
+// token's own) already select the right-clicked item before calling this — it only positions and
+// shows the menu, clamped so it never renders off the right/bottom edge of the window.
+const tacticContextMenuEl = document.getElementById('tacticContextMenu');
+function openTacticContextMenu(clientX, clientY){
+  tacticContextMenuEl.style.display = 'block';
+  const w = tacticContextMenuEl.offsetWidth || 130, h = tacticContextMenuEl.offsetHeight || 40;
+  tacticContextMenuEl.style.left = Math.min(clientX, window.innerWidth - w - 6) + 'px';
+  tacticContextMenuEl.style.top = Math.min(clientY, window.innerHeight - h - 6) + 'px';
+}
+function closeTacticContextMenu(){ tacticContextMenuEl.style.display = 'none'; }
+document.getElementById('tacticContextMenuDelete').addEventListener('click', ()=>{
+  closeTacticContextMenu();
+  deleteTacticSelection();
+});
+// Dismiss on any click elsewhere, or Escape — a context menu that only closes by picking an item
+// (or never, if you change your mind) fails "tudo acessível... sem nunca precisar de saber um
+// atalho" in the other direction: the mouse alone must also be enough to back out of it.
+document.addEventListener('click', e=>{
+  if(!e.target.closest('#tacticContextMenu')) closeTacticContextMenu();
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeTacticContextMenu(); });
 
 /* ---------- Scenes (save/playback of tactical board arrangements) ---------- */
 // Tracks which scene was last loaded/edited in THIS board mode, so "💾" on a thumbnail knows
@@ -8738,8 +9125,16 @@ document.getElementById('btnAddScene').addEventListener('click', ()=>{
   toast('Cena salva ('+scenes.length+').');
 });
 function loadScene(sc){
+  pushTacticHistory();
+  clearTacticSelection();
   tokens = JSON.parse(JSON.stringify(sc.tokens));
   tacticShapes = JSON.parse(JSON.stringify(sc.shapes));
+  // Compatibilidade — a scene saved before Fase 2 has shapes with no `id` at all (id was only
+  // ever added at creation time going forward). Backfilled here, in memory, on every load; never
+  // written back to the scene's own stored data unless the user explicitly re-saves it (clicking
+  // 💾 on the scene, same as any other edit) — matches how t.freezes/category relabeling already
+  // do this same in-memory-only backfill elsewhere in loadState().
+  tacticShapes.forEach(s=>{ if(!s.id) s.id = uid(); });
   renderTokens(); redrawTactic();
 }
 function easeInOutQuad(t){ return t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2; }
