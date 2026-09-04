@@ -768,6 +768,18 @@
     color:var(--crimson); font-size:13px; border-radius:6px; cursor:pointer;
   }
   .tactic-context-menu button:hover{ background:rgba(209,73,91,.12); }
+  /* Fase 3 — generic transform handles. The wrapper sits at (0,0) in tacticPitch (zero size, just
+     a positioning anchor); each handle is placed by JS via left/top in that same coordinate space. */
+  .tactic-transform-handles{ position:absolute; top:0; left:0; width:0; height:0; }
+  .tt-handle{
+    position:absolute; transform:translate(-50%,-50%); z-index:7;
+    background:var(--chalk); border:2px solid #4F8FC9; box-shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+  .tt-corner{ width:9px; height:9px; border-radius:2px; cursor:nwse-resize; }
+  .tt-edge-ns{ width:16px; height:7px; border-radius:2px; cursor:ns-resize; }
+  .tt-edge-ew{ width:7px; height:16px; border-radius:2px; cursor:ew-resize; }
+  .tt-rotate{ width:11px; height:11px; border-radius:50%; cursor:grab; }
+  .tt-rotate:active{ cursor:grabbing; }
   .token{
     position:absolute; width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center;
     font-size:10px; font-weight:700; color:#08110A; cursor:grab; border:2px solid rgba(0,0,0,.35);
@@ -1896,6 +1908,21 @@
           <!-- Fase 2 — rubber-band drag-select overlay, positioned/sized in JS during the drag
                (see tBoxSelect / updateTacticPointerMove / finishTacticBoxSelect). -->
           <div class="tactic-select-box" id="tacticSelectBox"></div>
+          <!-- Fase 3 — generic transform handles (P2): shown when exactly one shape/token is
+               selected, positioned entirely in JS (updateTacticTransformHandles) — each handle's
+               left/top is a tacticPitch-relative px coordinate, since this wrapper itself sits at
+               (0,0) within tacticPitch and establishes their containing block. -->
+          <div class="tactic-transform-handles" id="tacticTransformHandles" style="display:none;">
+            <div class="tt-handle tt-corner" data-handle="nw" title="Arrasta para redimensionar (Shift mantém a proporção)"></div>
+            <div class="tt-handle tt-edge-ns" data-handle="n" title="Arrasta para redimensionar (altura)"></div>
+            <div class="tt-handle tt-corner" data-handle="ne" title="Arrasta para redimensionar (Shift mantém a proporção)"></div>
+            <div class="tt-handle tt-edge-ew" data-handle="e" title="Arrasta para redimensionar (largura)"></div>
+            <div class="tt-handle tt-corner" data-handle="se" title="Arrasta para redimensionar (Shift mantém a proporção)"></div>
+            <div class="tt-handle tt-edge-ns" data-handle="s" title="Arrasta para redimensionar (altura)"></div>
+            <div class="tt-handle tt-corner" data-handle="sw" title="Arrasta para redimensionar (Shift mantém a proporção)"></div>
+            <div class="tt-handle tt-edge-ew" data-handle="w" title="Arrasta para redimensionar (largura)"></div>
+            <div class="tt-handle tt-rotate" data-handle="rotate" title="Arrasta para rodar"></div>
+          </div>
         </div>
       </div>
       <!-- Fase 2 — right-click context menu ("clique direito → apagar"), shared by shapes and
@@ -5760,7 +5787,22 @@ function distToSegment(p, a, b){
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(p.x-(a.x+t*(b.x-a.x)), p.y-(a.y+t*(b.y-a.y)));
 }
+// Fase 3 — rotation-transparent for anything WITHOUT a rotation (every video shape, every tactic
+// shape from before Fase 3): shape.rotation is only ever set by the new generic transform handles
+// on the tactic board, so this branch is dead code everywhere else. Rather than store rotated
+// point data (which would make undo/redo, editing, and re-reading the raw p1/p2/points fields all
+// harder), a shape's stored geometry always stays in its own unrotated local space — rotation is
+// applied at render time (see renderShape) and undone here by rotating the CLICK point by the
+// inverse angle before testing against that same unrotated geometry.
 function shapeHitTest(shape, px, py, canvas){
+  if(shape.rotation){
+    const b = getShapeBounds(shape, canvas);
+    const cx = b.x+b.width/2, cy = b.y+b.height/2;
+    const rad = -shape.rotation*Math.PI/180;
+    const dx = px-cx, dy = py-cy;
+    px = cx + dx*Math.cos(rad) - dy*Math.sin(rad);
+    py = cy + dx*Math.sin(rad) + dy*Math.cos(rad);
+  }
   const toP = p => ({x:p.x*canvas.width, y:p.y*canvas.height});
   const tol = 12;
   if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler'){
@@ -6244,6 +6286,17 @@ function drawTextPlaceholderBox(ctx, c, fontSize){
 function renderShape(ctx, canvas, s, textFontBase){
   const toP = p => ({x:p.x*canvas.width, y:p.y*canvas.height});
   ctx.save();
+  // Fase 3 — see the matching comment on shapeHitTest: rotation is a render-time transform around
+  // the shape's own unrotated bounds-center, never baked into the stored p1/p2/points/p fields.
+  // A shape without .rotation (everything except what the new tactic-board transform handles set)
+  // skips this branch entirely — zero behavior change for anything that existed before Fase 3.
+  if(s.rotation){
+    const b = getShapeBounds(s, canvas);
+    const cx = b.x+b.width/2, cy = b.y+b.height/2;
+    ctx.translate(cx, cy);
+    ctx.rotate(s.rotation*Math.PI/180);
+    ctx.translate(-cx, -cy);
+  }
   ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth=2.5; ctx.lineCap='round';
   if(s.dashed) ctx.setLineDash([6,5]);
   if((s.type==='line' || s.type==='arrow' || s.type==='ruler') && s.lineStyle && s.lineStyle!=='solid'){
@@ -8091,6 +8144,11 @@ document.getElementById('btnExportAll').addEventListener('click', () => {
 const tacticPitch = document.getElementById('tacticPitch');
 const tacticCanvas = document.getElementById('tacticCanvas');
 const tctx = tacticCanvas.getContext('2d');
+// Fase 3 — declared up here (not next to the rest of the transform-handle code, much further
+// down) because renderTokens() — called for the first time before that code even runs — needs to
+// reference it too; a `const` referenced before its own declaration line throws, even though
+// function declarations that USE it are hoisted fine.
+const tacticTransformHandlesEl = document.getElementById('tacticTransformHandles');
 let tokens = {}; // id -> {x,y (0-100), teamId|'ball', num,label,color}
 let tacticShapes = [];
 let tTool = 'move';
@@ -8150,13 +8208,23 @@ function pushTacticHistory(){
   tacticRedoByMode[boardMode].length = 0;
   updateTacticUndoRedoButtons();
 }
+// Fase 3 — undo/redo keeps selection pointed at the same id(s) when they still exist in the
+// restored state (a resize/rotate/move never changes a shape's or token's own id, only its
+// geometry), instead of blanket-clearing it. Matters a lot more now that handles exist: undo a
+// resize and the shape stays selected/handled, ready for another try, instead of forcing a
+// re-click every single time. Falls back to dropping an id if the restored state genuinely no
+// longer has it (e.g. undoing past its own creation).
+function pruneTacticSelectionToExisting(){
+  selectedShapeIds.forEach(id=>{ if(!tacticShapes.some(s=>s.id===id)) selectedShapeIds.delete(id); });
+  selectedTokenIds.forEach(id=>{ if(!tokens[id]) selectedTokenIds.delete(id); });
+}
 function tacticUndo(){
   const h = tacticHistoryByMode[boardMode];
   if(!h.length) return;
   tacticRedoByMode[boardMode].push(snapshotTacticBoard());
   const prev = h.pop();
   tokens = prev.tokens; tacticShapes = prev.shapes;
-  clearTacticSelection();
+  pruneTacticSelectionToExisting();
   renderTokens(); redrawTactic();
   updateTacticUndoRedoButtons();
 }
@@ -8166,7 +8234,7 @@ function tacticRedo(){
   tacticHistoryByMode[boardMode].push(snapshotTacticBoard());
   const next = r.pop();
   tokens = next.tokens; tacticShapes = next.shapes;
-  clearTacticSelection();
+  pruneTacticSelectionToExisting();
   renderTokens(); redrawTactic();
   updateTacticUndoRedoButtons();
 }
@@ -8353,17 +8421,20 @@ function renderTokens(){
     const handle = document.createElement('div');
     handle.className='token-rotate-handle';
     handle.title='Arrasta para rodar';
-    // Fase 2 — a plain click replaces the selection with just this token, UNLESS it's already
-    // part of a bigger selection (clicking one of several already-selected tokens keeps the whole
-    // group selected — the usual convention, and what a future group-drag in Fase 3 needs). Shift
-    // toggles this one token's membership without touching the rest. Runs on every mousedown that
-    // reaches here regardless of whether a drag follows, same as any selection click would.
+    // Fase 2 — a plain click always replaces the selection with just this token; Shift toggles
+    // this one token's membership without touching the rest. Runs on every mousedown that reaches
+    // here regardless of whether a drag follows, same as any selection click would.
+    // Fase 3 note: a plain click on an item ALREADY part of a multi-selection used to leave the
+    // whole group selected (for a hypothetical future group-drag) — changed to always collapse to
+    // a single selection instead, now that there's a real, immediate reason to want that: the
+    // generic transform handles only ever show for exactly one selected item, and there is still
+    // no group-drag/group-transform feature to have kept the old behavior for.
     function updateSelectionOnTokenPointerDown(e){
       if(tTool!=='move') return;
       const shift = !!(e.shiftKey);
       if(shift){
         if(selectedTokenIds.has(id)) selectedTokenIds.delete(id); else selectedTokenIds.add(id);
-      } else if(!selectedTokenIds.has(id)){
+      } else {
         selectedShapeIds.clear(); selectedTokenIds.clear(); selectedTokenIds.add(id);
       }
       renderTokens(); updateTacticDeleteButton();
@@ -8435,6 +8506,9 @@ function renderTokens(){
     });
     tacticPitch.appendChild(el);
   });
+  // Fase 3 — a token click updates selection here without going through redrawTactic(), so the
+  // transform handles need their own refresh call too, not just the one inside redrawTactic().
+  updateTacticTransformHandles();
 }
 renderTokens();
 
@@ -8679,6 +8753,9 @@ function setTacticTool(tool){
   b.classList.add('active');
   tTool = tool;
   tacticCanvas.style.cursor = tTool==='move' ? 'default' : (tTool==='eraser' ? 'cell' : 'crosshair');
+  // Fase 3 — handles only ever make sense in the 'move' tool; switching to any drawing tool with
+  // something still selected must hide them immediately, not leave them floating over the canvas.
+  updateTacticTransformHandles();
 }
 document.querySelectorAll('[data-ttool]').forEach(b=>{
   b.addEventListener('click', ()=>setTacticTool(b.dataset.ttool));
@@ -8745,6 +8822,9 @@ function startTacticCanvasInteraction(e){
     // handlers (selection + drag) — this only has to deal with canvas-drawn shapes. ANY shape type
     // gets selected by a click now, not just text (text additionally starts a drag session here —
     // dragging any other type is Fase 3's job, via the generic transform handles).
+    // Fase 3 note: a plain click always collapses to just this one shape now, even if it was
+    // already part of a multi-selection — see the matching comment on the token version of this
+    // logic (updateSelectionOnTokenPointerDown) for why that changed from Fase 2's original.
     const p = tRelPt(e);
     const px = p.x*tacticCanvas.width, py = p.y*tacticCanvas.height;
     const clientPt = clientXY(e);
@@ -8757,7 +8837,7 @@ function startTacticCanvasInteraction(e){
       const shift = !!e.shiftKey;
       if(shift){
         if(selectedShapeIds.has(hit.id)) selectedShapeIds.delete(hit.id); else selectedShapeIds.add(hit.id);
-      } else if(!selectedShapeIds.has(hit.id)){
+      } else {
         selectedShapeIds.clear(); selectedTokenIds.clear(); selectedShapeIds.add(hit.id);
       }
       redrawTactic(); updateTacticDeleteButton();
@@ -8997,10 +9077,21 @@ function redrawTactic(){
     tacticShapes.forEach(s=>{
       if(!selectedShapeIds.has(s.id)) return;
       const b = getShapeBounds(s, tacticCanvas);
-      tctx.strokeRect(b.x, b.y, b.width, b.height);
+      // Fase 3 — same rotation transform renderShape applies, so the dashed box actually frames a
+      // rotated shape instead of a stale axis-aligned box around its unrotated geometry.
+      if(s.rotation){
+        const cx = b.x+b.width/2, cy = b.y+b.height/2;
+        tctx.save();
+        tctx.translate(cx,cy); tctx.rotate(s.rotation*Math.PI/180); tctx.translate(-cx,-cy);
+        tctx.strokeRect(b.x, b.y, b.width, b.height);
+        tctx.restore();
+      } else {
+        tctx.strokeRect(b.x, b.y, b.width, b.height);
+      }
     });
     tctx.restore();
   }
+  updateTacticTransformHandles();
 }
 // Fase 1 — see the long comment above renderShape (video section) for why this is now a thin
 // wrapper instead of a hand-duplicated copy. tactic: 0.03, matches the pre-unification constant
@@ -9061,6 +9152,202 @@ document.addEventListener('click', e=>{
   if(!e.target.closest('#tacticContextMenu')) closeTacticContextMenu();
 });
 document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeTacticContextMenu(); });
+
+/* ===================================================================
+   Fase 3 — generic transformation handles (P2)
+   Built ONCE, applies uniformly to whatever's selected — a shape (line/arrow/zone/text/image) or
+   a token — instead of type-specific code. Eight resize handles (corners resize both axes, side
+   midpoints resize one axis only) plus a rotation handle, PowerPoint-style: Shift while dragging a
+   corner keeps the original aspect ratio, released it's free/distorting.
+   Only shows when EXACTLY ONE shape or token is selected — resizing/rotating a whole group at once
+   is out of scope here (nothing in the approved plan asked for it yet).
+=================================================================== */
+function rotatePt(x, y, cx, cy, deg){
+  if(!deg) return {x,y};
+  const rad = deg*Math.PI/180;
+  const dx=x-cx, dy=y-cy;
+  return { x: cx + dx*Math.cos(rad) - dy*Math.sin(rad), y: cy + dx*Math.sin(rad) + dy*Math.cos(rad) };
+}
+// One adapter per transformable kind — the ONLY place that knows "a shape's bounds come from
+// getShapeBounds" vs "a token's bounds come from its DOM element". Everything past this point
+// (drag math, handle placement, aspect-lock) works purely in terms of {x,y,width,height} rects and
+// a rotation-in-degrees, never on shape/token fields directly.
+function makeShapeTransformTarget(shape){
+  return {
+    kind: 'shape', id: shape.id,
+    getBoundsPx(){ return getShapeBounds(shape, tacticCanvas); },
+    getRotation(){ return shape.rotation||0; },
+    setRotation(deg){ shape.rotation = deg; },
+    applyBounds(next, orig){ resizeShapeToBoundsPx(shape, orig, next, tacticCanvas); }
+  };
+}
+function makeTokenTransformTarget(id){
+  return {
+    kind: 'token', id,
+    getBoundsPx(){
+      const el = tacticPitch.querySelector('.token[data-id="'+id+'"]');
+      const tk = tokens[id];
+      const r = tacticPitch.getBoundingClientRect();
+      if(!el || !tk || !r.width) return {x:0,y:0,width:0,height:0};
+      // offsetWidth/Height reflect the element's declared CSS box size, unaffected by its own
+      // `transform` (scale+rotate are paint-time only) — multiplying by tk.scale here gives the
+      // token's CURRENT visual size with rotation factored back out, the same "local/unrotated"
+      // convention getShapeBounds already uses for canvas shapes.
+      const w = el.offsetWidth * (tk.scale||1), h = el.offsetHeight * (tk.scale||1);
+      const cx = tk.x/100*r.width, cy = tk.y/100*r.height;
+      return { x: cx-w/2, y: cy-h/2, width: w, height: h };
+    },
+    getRotation(){ const tk = tokens[id]; return tk ? (tk.angle||0) : 0; },
+    setRotation(deg){ const tk = tokens[id]; if(tk) tk.angle = deg; },
+    applyBounds(next, orig){
+      const tk = tokens[id]; if(!tk || !orig.width || !orig.height) return;
+      const sf = Math.sqrt((next.width/orig.width) * (next.height/orig.height));
+      tk.scale = clamp((tk.scale||1)*sf, 0.4, 3);
+      const r = tacticPitch.getBoundingClientRect();
+      tk.x = clamp((next.x+next.width/2)/r.width*100, 0, 100);
+      tk.y = clamp((next.y+next.height/2)/r.height*100, 0, 100);
+    }
+  };
+}
+// Generic resize: shapes with real point geometry (line/arrow/ruler/zone) get every point remapped
+// from its fractional position inside `orig` to the same fractional position inside `next` — an
+// affine map that needs no per-type logic beyond "does this shape have p1/p2 or points[]". Shapes
+// whose "size" is really a single scalar (text's fontScale, image's scale, vignette's radius) get
+// that scalar rescaled by the geometric mean of the width/height ratio instead, since they have no
+// independent width and height to remap two points against.
+function resizeShapeToBoundsPx(shape, orig, next, canvas){
+  const remapPt = p=>{
+    const px = p.x*canvas.width, py = p.y*canvas.height;
+    const fx = orig.width ? (px-orig.x)/orig.width : 0.5;
+    const fy = orig.height ? (py-orig.y)/orig.height : 0.5;
+    return { x: (next.x+fx*next.width)/canvas.width, y: (next.y+fy*next.height)/canvas.height };
+  };
+  if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler'){
+    shape.p1 = remapPt(shape.p1); shape.p2 = remapPt(shape.p2);
+  } else if(shape.type==='zone'){
+    shape.points = shape.points.map(remapPt);
+  } else if(!orig.width || !orig.height){
+    /* degenerate origin box (a fresh zero-size shape) — nothing sane to scale from, skip */
+  } else if(shape.type==='vignette'){
+    const sf = Math.sqrt((next.width/orig.width)*(next.height/orig.height));
+    shape.radius = Math.max(0.02, (shape.radius||0.15)*sf);
+    shape.center = remapPt(shape.center);
+  } else if(shape.type==='text'){
+    const sf = Math.sqrt((next.width/orig.width)*(next.height/orig.height));
+    shape.fontScale = clamp((shape.fontScale||1)*sf, 0.4, 4);
+    shape.p = remapPt(shape.p);
+  } else if(shape.type==='image'){
+    const sf = Math.sqrt((next.width/orig.width)*(next.height/orig.height));
+    shape.scale = clamp((shape.scale||1)*sf, 0.2, 6);
+    shape.p = remapPt(shape.p);
+  }
+}
+const HANDLE_NAMES = ['nw','n','ne','e','se','s','sw','w'];
+function computeHandlePositions(bounds, rotationDeg){
+  const cx = bounds.x+bounds.width/2, cy = bounds.y+bounds.height/2;
+  const local = {
+    nw:{x:bounds.x,y:bounds.y}, n:{x:cx,y:bounds.y}, ne:{x:bounds.x+bounds.width,y:bounds.y},
+    e:{x:bounds.x+bounds.width,y:cy}, se:{x:bounds.x+bounds.width,y:bounds.y+bounds.height},
+    s:{x:cx,y:bounds.y+bounds.height}, sw:{x:bounds.x,y:bounds.y+bounds.height}, w:{x:bounds.x,y:cy}
+  };
+  const out = {};
+  HANDLE_NAMES.forEach(k=>{ out[k] = rotatePt(local[k].x, local[k].y, cx, cy, rotationDeg||0); });
+  const ROTATE_HANDLE_DIST = 22;
+  const dx = out.n.x-cx, dy = out.n.y-cy, len = Math.hypot(dx,dy)||1;
+  out.rotate = { x: out.n.x + dx/len*ROTATE_HANDLE_DIST, y: out.n.y + dy/len*ROTATE_HANDLE_DIST };
+  return out;
+}
+// The single selected shape/token these handles currently belong to — null whenever selection is
+// empty, mixed, or has more than one item (see updateTacticTransformHandles).
+function currentSingleTransformTarget(){
+  if(selectedShapeIds.size===1 && selectedTokenIds.size===0){
+    const shape = tacticShapes.find(s=>selectedShapeIds.has(s.id));
+    return shape ? makeShapeTransformTarget(shape) : null;
+  }
+  if(selectedTokenIds.size===1 && selectedShapeIds.size===0){
+    const id = [...selectedTokenIds][0];
+    return tokens[id] ? makeTokenTransformTarget(id) : null;
+  }
+  return null;
+}
+function updateTacticTransformHandles(){
+  const target = currentSingleTransformTarget();
+  if(!target || tTool!=='move'){ tacticTransformHandlesEl.style.display='none'; return; }
+  const bounds = target.getBoundsPx();
+  if(!bounds.width && !bounds.height){ tacticTransformHandlesEl.style.display='none'; return; }
+  const positions = computeHandlePositions(bounds, target.getRotation());
+  tacticTransformHandlesEl.style.display='block';
+  tacticTransformHandlesEl.querySelectorAll('[data-handle]').forEach(el=>{
+    const p = positions[el.dataset.handle];
+    el.style.left = p.x+'px'; el.style.top = p.y+'px';
+  });
+}
+let tacticTransformSession = null; // {target, handle, origBoundsPx, origRotation}
+function startTacticTransform(handle, clientX, clientY){
+  const target = currentSingleTransformTarget();
+  if(!target) return;
+  pushTacticHistory();
+  tacticTransformSession = { target, handle, origBoundsPx: target.getBoundsPx(), origRotation: target.getRotation() };
+}
+function updateTacticTransform(clientX, clientY, shiftHeld){
+  if(!tacticTransformSession) return;
+  const { target, handle, origBoundsPx, origRotation } = tacticTransformSession;
+  const r = tacticPitch.getBoundingClientRect();
+  const mx = clientX-r.left, my = clientY-r.top;
+  const cx = origBoundsPx.x+origBoundsPx.width/2, cy = origBoundsPx.y+origBoundsPx.height/2;
+  if(handle==='rotate'){
+    target.setRotation(Math.atan2(my-cy, mx-cx)*180/Math.PI + 90);
+    redrawTactic(); renderTokens();
+    return;
+  }
+  const local = rotatePt(mx, my, cx, cy, -origRotation);
+  const isCorner = handle.length===2;
+  let next;
+  if(isCorner){
+    const anchor = {
+      x: handle.includes('w') ? origBoundsPx.x+origBoundsPx.width : origBoundsPx.x,
+      y: handle.includes('n') ? origBoundsPx.y+origBoundsPx.height : origBoundsPx.y
+    };
+    let w = Math.abs(local.x-anchor.x), h = Math.abs(local.y-anchor.y);
+    if(shiftHeld && origBoundsPx.width && origBoundsPx.height){
+      const aspect = origBoundsPx.width/origBoundsPx.height;
+      if(w/Math.max(h,0.0001) > aspect) h = w/aspect; else w = h*aspect;
+    }
+    const signX = local.x>=anchor.x ? 1 : -1, signY = local.y>=anchor.y ? 1 : -1;
+    next = { x: Math.min(anchor.x, anchor.x+signX*w), y: Math.min(anchor.y, anchor.y+signY*h), width:w, height:h };
+  } else {
+    let x0=origBoundsPx.x, y0=origBoundsPx.y, x1=origBoundsPx.x+origBoundsPx.width, y1=origBoundsPx.y+origBoundsPx.height;
+    if(handle==='w') x0=local.x; else if(handle==='e') x1=local.x;
+    if(handle==='n') y0=local.y; else if(handle==='s') y1=local.y;
+    next = { x:Math.min(x0,x1), y:Math.min(y0,y1), width:Math.abs(x1-x0), height:Math.abs(y1-y0) };
+  }
+  target.applyBounds(next, origBoundsPx);
+  redrawTactic(); renderTokens();
+}
+function endTacticTransform(){ tacticTransformSession = null; }
+tacticTransformHandlesEl.querySelectorAll('[data-handle]').forEach(el=>{
+  el.addEventListener('mousedown', e=>{
+    e.preventDefault(); e.stopPropagation();
+    startTacticTransform(el.dataset.handle, e.clientX, e.clientY);
+  });
+  el.addEventListener('touchstart', e=>{
+    e.preventDefault(); e.stopPropagation();
+    const t = e.changedTouches[0];
+    startTacticTransform(el.dataset.handle, t.clientX, t.clientY);
+  }, {passive:false});
+});
+window.addEventListener('mousemove', e=>{
+  if(tacticTransformSession) updateTacticTransform(e.clientX, e.clientY, e.shiftKey);
+});
+window.addEventListener('touchmove', e=>{
+  if(!tacticTransformSession) return;
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  updateTacticTransform(t.clientX, t.clientY, false);
+}, {passive:false});
+window.addEventListener('mouseup', endTacticTransform);
+window.addEventListener('touchend', endTacticTransform);
+window.addEventListener('touchcancel', endTacticTransform);
 
 /* ---------- Scenes (save/playback of tactical board arrangements) ---------- */
 // Tracks which scene was last loaded/edited in THIS board mode, so "💾" on a thumbnail knows

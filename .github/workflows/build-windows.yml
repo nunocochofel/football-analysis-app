@@ -41,29 +41,32 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.60 specifically — update this block for whatever the next release's own
+          # v0.8.61 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: selecionar, apagar e desfazer, finalmente a sério**
+            **Quadro tático: redimensionar e rodar qualquer desenho ou boneco, com alças de
+            arrastar**
 
-            É a maior mudança de sempre nas ferramentas de desenho, e a base para tudo o que vem
-            a seguir. Antes de hoje, um desenho no quadro tático não era um objeto — não havia
-            como o selecionar, e apagar era só a borracha ou limpar tudo. Isso muda agora:
+            Depois de selecionar e apagar (versão anterior), agora dá para pegar e transformar.
+            Selecionaste um desenho ou um boneco? Aparecem oito alças à volta — quatro nos cantos,
+            quatro no meio dos lados — mais uma alça de rodar. Funciona exactamente na mesma para
+            uma linha, uma zona, um texto, uma imagem ou um jogador — a mesma ferramenta para tudo:
 
-            - Clicar em qualquer desenho ou boneco seleciona-o (contorno azul a indicar). Shift+clique
-            acrescenta à seleção; arrastar sobre uma área vazia seleciona tudo o que apanhar.
-            - Apagar funciona por três caminhos, todos com o rato: selecionar e premir Delete,
-            clicar com o botão direito → Apagar, ou o novo botão 🗑 na barra de ferramentas.
-            - Desfazer/Refazer a sério (Ctrl+Z / Ctrl+Shift+Z, ou os novos botões ↶/↷), cobrindo
-            tudo — desenhar, mover, rodar, redimensionar, apagar, trocar de formação. Cada modo de
-            quadro (Campo Inteiro, Zonas, Área, Profundidade) tem o seu próprio histórico.
-            - Escrever numa caixa de texto nunca mais mexe no quadro por trás — Delete e Ctrl+Z
-            ficam desligados do quadro enquanto estiveres a editar texto.
+            - Os cantos redimensionam livremente (largura e altura independentes); os do meio dos
+            lados só mexem numa direção. Mantém Shift enquanto arrastas um canto para preservar a
+            proporção original.
+            - A alça de rodar roda à volta do centro, com o resto (alças incluídas) a acompanhar.
+            - Undo/redo cobre tudo isto também, e agora mantém o objeto selecionado depois de
+            desfazer — voltas a tentar sem teres de voltar a clicar nele.
 
-            Testado (41 verificações reais, Playwright + Electron): seleção simples, em grupo e por
-            área; apagar pelos três caminhos, sozinho e em grupo (um só Ctrl+Z desfaz o grupo
-            inteiro); histórico independente por modo de quadro; escrever texto sem interferir no
-            quadro; uma cena gravada antes desta versão continua a abrir e a funcionar na mesma
-            (sem reescrever nada no disco só por abrir); a exportação de vídeo das cenas (MP4)
-            validada ponta-a-ponta com ffmpeg real.
+            As alças só aparecem quando tens exactamente um objeto selecionado — transformar vários
+            de uma vez fica para uma versão futura.
+
+            Testado (26 verificações reais, Playwright + Electron): redimensionar por cada um dos
+            oito tipos de alça, com e sem Shift, num desenho e num boneco; o canto oposto ao que
+            arrastas fica sempre fixo; rodar define o ângulo correctamente; desfazer reverte o
+            redimensionamento mantendo a seleção; mudar de ferramenta esconde as alças de imediato;
+            um desenho gravado antes desta versão (sem o novo campo de rotação) continua a abrir e
+            a funcionar sem alterações; a exportação de vídeo das cenas (MP4) confirmada
+            ponta-a-ponta com ffmpeg real.
