@@ -41,29 +41,30 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.65 specifically — update this block for whatever the next release's own
+          # v0.8.66 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: paleta maior, cor livre, recentes/favoritas, e preenchimento com cor
-            própria**
+            **Quadro tático: texto com sublinhado, alinhamento, tipo de letra e caixa de fundo**
 
-            - **Paleta alargada** — 16 cores em vez de 5, mais um seletor de cor livre (roda/hex,
-            o do próprio sistema) para qualquer cor exata que precises.
-            - **Cores recentes** — as últimas cores usadas ficam à mão, automaticamente.
-            **Favoritas** — guarda as tuas cores de sempre com um clique, e ficam disponíveis em
-            todos os projetos (não é preciso repetir por projeto).
-            - **Contorno e preenchimento com cor independente** — zona, elipse, retângulo e
-            triângulo passam a ter dois seletores de cor separados na barra: um para o contorno,
-            outro para o preenchimento.
+            - **Sublinhado** e **alinhamento** (esquerda/centro/direita) para qualquer texto do
+            quadro tático.
+            - **Tipo de letra** — 5 opções (Inter, IBM Plex Mono, Georgia, Courier New, Trebuchet
+            MS), além do tamanho que já existia.
+            - **Caixa de fundo** — cor e transparência configuráveis, com contorno opcional, para
+            o texto continuar legível em cima de qualquer traço ou zona do quadro.
 
-            O vídeo mantém a paleta simples de sempre — esta mudança é só no quadro tático.
+            O vídeo mantém o editor de texto simples de sempre — esta mudança é só no quadro
+            tático. Os atalhos de teclado (Delete, Ctrl+D, etc.) ficam sempre suspensos enquanto
+            estás a escrever dentro da caixa de texto, para nunca apagar nem duplicar nada por
+            engano enquanto escreves.
 
-            Testado (18 verificações reais, Playwright + Electron): cor escolhida na paleta
-            alargada aplicada corretamente; cor livre via o seletor nativo aplicada e guardada
-            nas recentes; recentes confirmadas a sobreviver a fechar e reabrir a aplicação
-            (preferência da app, não do projeto); guardar e reutilizar uma favorita; contorno e
-            preenchimento gravados com cores diferentes quando escolhidas separadamente; uma
-            forma gravada antes desta versão (sem cor de preenchimento própria) continua a
-            mostrar o preenchimento na mesma cor do contorno, como sempre mostrou; a exportação
-            de vídeo das cenas (MP4) confirmada ponta-a-ponta com ffmpeg real.
+            Testado (35 verificações reais, Playwright + Electron): sublinhado, alinhamento, tipo
+            de letra e caixa de fundo aplicados e gravados corretamente; atalhos da app (Delete/
+            Ctrl+D) confirmados suspensos com o foco na caixa de texto; uma forma de texto gravada
+            antes desta versão (sem nenhum destes campos) abre com os valores por omissão
+            corretos — alinhamento à esquerda, sem sublinhado, sem caixa de fundo — a mesma
+            aparência que sempre teve; confirmado igual depois de fechar e reabrir a aplicação; o
+            editor de texto do vídeo confirmado a NÃO ganhar nenhum destes campos novos (exclusivos
+            do quadro tático); a exportação de vídeo das cenas (MP4) confirmada ponta-a-ponta com
+            ffmpeg real, incluindo uma forma de texto desta versão numa das cenas.

@@ -660,6 +660,11 @@
     color:var(--chalk); border-radius:var(--radius-sm); font-size:14px; cursor:pointer;
   }
   .text-edit-style-btn.active{background:var(--amber); border-color:var(--amber); color:#08110A;}
+  /* Fase 8 */
+  .text-edit-select{
+    width:100%; background:var(--panel-alt); border:1px solid var(--line); color:var(--chalk);
+    border-radius:var(--radius-sm); padding:6px 8px; font-size:13px;
+  }
   .text-edit-footer{display:flex; gap:8px; padding:12px; border-top:1px solid var(--line);}
   .text-edit-footer .btn{flex:1; justify-content:center;}
 
@@ -2264,6 +2269,11 @@
   <div class="text-edit-tabs">
     <button class="text-edit-tab active" data-tep-tab="texto">Texto</button>
     <button class="text-edit-tab" data-tep-tab="estilo">Estilo</button>
+    <!-- Fase 8 — quadro tático apenas: openTextEditPanelForVideoShape nunca passa opts.extended,
+         por isso este separador fica escondido (ver toggleExtendedTextEditControls) sempre que o
+         painel é aberto a partir do vídeo — a mesma infraestrutura partilhada, sem novidades
+         activadas aí ainda. -->
+    <button class="text-edit-tab tep-extended-only" data-tep-tab="fundo">Fundo</button>
   </div>
   <div class="text-edit-body" data-tep-panel="texto">
     <label class="text-edit-label">Texto</label>
@@ -2276,12 +2286,57 @@
     <div class="text-edit-style-row">
       <button class="text-edit-style-btn" id="textEditBold" title="Negrito"><b>N</b></button>
       <button class="text-edit-style-btn" id="textEditItalic" title="Itálico"><i>I</i></button>
+      <button class="text-edit-style-btn tep-extended-only" id="textEditUnderline" title="Sublinhado"><u>S</u></button>
+    </div>
+    <div class="tep-extended-only">
+      <label class="text-edit-label">Alinhamento</label>
+      <div class="text-edit-style-row">
+        <button class="text-edit-style-btn" id="textEditAlignLeft" title="Esquerda">◀</button>
+        <button class="text-edit-style-btn" id="textEditAlignCenter" title="Centro">▬</button>
+        <button class="text-edit-style-btn" id="textEditAlignRight" title="Direita">▶</button>
+      </div>
+      <label class="text-edit-label">Tipo de letra</label>
+      <select id="textEditFontFamily" class="text-edit-select">
+        <option value="Inter, sans-serif">Inter (padrão)</option>
+        <option value="'IBM Plex Mono', monospace">IBM Plex Mono</option>
+        <option value="Georgia, serif">Georgia</option>
+        <option value="'Courier New', monospace">Courier New</option>
+        <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+      </select>
     </div>
     <label class="text-edit-label">Tamanho da letra</label>
     <div class="text-edit-style-row">
       <button class="btn icon" id="textEditSizeDown" title="Diminuir">−</button>
       <span class="mono" id="textEditSizeVal" style="min-width:44px; text-align:center;">100%</span>
       <button class="btn icon" id="textEditSizeUp" title="Aumentar">+</button>
+    </div>
+  </div>
+  <!-- Fase 8 — caixa de fundo, essencial para legibilidade sobre o campo/vídeo. tep-extended-only
+       (ver acima): só relevante para quem já vê o separador "Fundo". -->
+  <div class="text-edit-body tep-extended-only" data-tep-panel="fundo" style="display:none;">
+    <label class="text-edit-label">
+      <input type="checkbox" id="textEditBgEnabled" style="vertical-align:middle; margin-right:6px;">
+      Caixa de fundo
+    </label>
+    <div id="textEditBgControls">
+      <label class="text-edit-label">Cor de fundo</label>
+      <div class="cp-custom-row">
+        <input type="color" id="textEditBgColor" value="#08110A">
+        <span class="cp-empty-hint">cor de fundo</span>
+      </div>
+      <label class="text-edit-label">Transparência do fundo</label>
+      <div class="text-edit-style-row">
+        <input type="range" id="textEditBgOpacity" min="0" max="100" value="70" style="width:110px;">
+        <span class="mono" id="textEditBgOpacityVal" style="min-width:3em;">70%</span>
+      </div>
+      <label class="text-edit-label">
+        <input type="checkbox" id="textEditBgBorderEnabled" style="vertical-align:middle; margin-right:6px;">
+        Contorno da caixa
+      </label>
+      <div class="cp-custom-row">
+        <input type="color" id="textEditBgBorderColor" value="#ECEFF2">
+        <span class="cp-empty-hint">cor do contorno</span>
+      </div>
     </div>
   </div>
   <div class="text-edit-footer">
@@ -6434,9 +6489,25 @@ function renderTextEditColorSwatches(){
 }
 function updateTextEditStyleButtons(){
   if(!textEditSession) return;
-  document.getElementById('textEditBold').classList.toggle('active', textEditSession.working.bold);
-  document.getElementById('textEditItalic').classList.toggle('active', textEditSession.working.italic);
-  document.getElementById('textEditSizeVal').textContent = Math.round(textEditSession.working.fontScale*100)+'%';
+  const w = textEditSession.working;
+  document.getElementById('textEditBold').classList.toggle('active', w.bold);
+  document.getElementById('textEditItalic').classList.toggle('active', w.italic);
+  document.getElementById('textEditSizeVal').textContent = Math.round(w.fontScale*100)+'%';
+  // Fase 8 — the extended controls exist in the DOM regardless (see .tep-extended-only, hidden via
+  // CSS for a non-extended/video session) so unconditionally syncing them here is harmless either
+  // way; only actually visible/reachable when opts.extended is true.
+  document.getElementById('textEditUnderline').classList.toggle('active', w.underline);
+  ['Left','Center','Right'].forEach(a=>{
+    document.getElementById('textEditAlign'+a).classList.toggle('active', w.align===a.toLowerCase());
+  });
+  document.getElementById('textEditFontFamily').value = w.fontFamily;
+  document.getElementById('textEditBgEnabled').checked = w.bgEnabled;
+  document.getElementById('textEditBgColor').value = w.bgColor;
+  document.getElementById('textEditBgOpacity').value = Math.round(w.bgOpacity*100);
+  document.getElementById('textEditBgOpacityVal').textContent = Math.round(w.bgOpacity*100)+'%';
+  document.getElementById('textEditBgBorderEnabled').checked = w.bgBorderEnabled;
+  document.getElementById('textEditBgBorderColor').value = w.bgBorderColor;
+  document.getElementById('textEditBgControls').style.display = w.bgEnabled ? '' : 'none';
 }
 function closeTextEditPanel(){
   textEditSession = null;
@@ -6445,17 +6516,31 @@ function closeTextEditPanel(){
 // shape: the live shape object (or a fresh placeholder already pushed into its array).
 // opts.colors: palette to offer. opts.onSave(patch): called with the edited fields on "Guardar".
 // opts.onDelete(): called on "Eliminar" — caller is responsible for actually removing the shape.
+// opts.extended (Fase 8, tactic-only — see openTextEditPanelForTacticShape vs …ForVideoShape):
+// reveals underline/align/font/background-box. Every default below reproduces EXACTLY what every
+// text shape from before Fase 8 already rendered like: align defaults to 'left', matching
+// rendering's own un-set ctx.textAlign (canvas default 'start'/left) — NOT 'center', even though
+// getShapeBounds/shapeHitTest's own approximation for text-with-content already (pre-Fase-8)
+// assumed a centered anchor; that's a separate, pre-existing hit-test/render mismatch this fase
+// doesn't touch. Defaulting the EDITOR to 'center' here would have looked harmless but silently
+// shifted any old shape's rendered position to center-anchored the moment someone just re-saved
+// it for an unrelated edit (color, text) — exactly the kind of change "estender, nunca alterar"
+// rules out.
 function openTextEditPanel(shape, x, y, opts){
   textEditSession = {
     working: {
       text: shape.text||'', color: shape.color, bold: shape.bold!==false,
-      italic: !!shape.italic, fontScale: shape.fontScale||1
+      italic: !!shape.italic, fontScale: shape.fontScale||1,
+      underline: !!shape.underline, align: shape.align||'left', fontFamily: shape.fontFamily||'Inter, sans-serif',
+      bgEnabled: !!shape.bgEnabled, bgColor: shape.bgColor||'#08110A', bgOpacity: shape.bgOpacity!=null ? shape.bgOpacity : 0.7,
+      bgBorderEnabled: !!shape.bgBorderEnabled, bgBorderColor: shape.bgBorderColor||'#ECEFF2'
     },
     opts
   };
   document.getElementById('textEditTextarea').value = textEditSession.working.text;
   document.querySelectorAll('.text-edit-tab').forEach((t,i)=>t.classList.toggle('active', i===0));
   document.querySelectorAll('.text-edit-body').forEach((b,i)=>{ b.style.display = i===0 ? '' : 'none'; });
+  document.querySelectorAll('.tep-extended-only').forEach(el=>{ el.style.display = opts.extended ? '' : 'none'; });
   renderTextEditColorSwatches();
   updateTextEditStyleButtons();
   const panel = document.getElementById('textEditPanel');
@@ -6499,6 +6584,47 @@ document.getElementById('textEditSizeUp').addEventListener('click', ()=>{
   textEditSession.working.fontScale = clamp(textEditSession.working.fontScale+0.1, 0.4, 4);
   updateTextEditStyleButtons();
 });
+// Fase 8 (extended/tactic-only controls — inert for a video session, since it never reaches this
+// panel's "Fundo" tab or these buttons to click them at all, but wired unconditionally same as
+// Bold/Italic above: one shared listener set, not two).
+document.getElementById('textEditUnderline').addEventListener('click', ()=>{
+  if(!textEditSession) return;
+  textEditSession.working.underline = !textEditSession.working.underline;
+  updateTextEditStyleButtons();
+});
+[['textEditAlignLeft','left'],['textEditAlignCenter','center'],['textEditAlignRight','right']].forEach(([id,val])=>{
+  document.getElementById(id).addEventListener('click', ()=>{
+    if(!textEditSession) return;
+    textEditSession.working.align = val;
+    updateTextEditStyleButtons();
+  });
+});
+document.getElementById('textEditFontFamily').addEventListener('change', e=>{
+  if(!textEditSession) return;
+  textEditSession.working.fontFamily = e.target.value;
+});
+document.getElementById('textEditBgEnabled').addEventListener('change', e=>{
+  if(!textEditSession) return;
+  textEditSession.working.bgEnabled = e.target.checked;
+  updateTextEditStyleButtons();
+});
+document.getElementById('textEditBgColor').addEventListener('input', e=>{
+  if(!textEditSession) return;
+  textEditSession.working.bgColor = e.target.value;
+});
+document.getElementById('textEditBgOpacity').addEventListener('input', e=>{
+  if(!textEditSession) return;
+  textEditSession.working.bgOpacity = Number(e.target.value)/100;
+  document.getElementById('textEditBgOpacityVal').textContent = e.target.value+'%';
+});
+document.getElementById('textEditBgBorderEnabled').addEventListener('change', e=>{
+  if(!textEditSession) return;
+  textEditSession.working.bgBorderEnabled = e.target.checked;
+});
+document.getElementById('textEditBgBorderColor').addEventListener('input', e=>{
+  if(!textEditSession) return;
+  textEditSession.working.bgBorderColor = e.target.value;
+});
 document.getElementById('textEditClose').addEventListener('click', closeTextEditPanel);
 // Fase 2 — "atalhos desativados enquanto escrevo texto... só Esc (terminar edição) e os de Ctrl
 // continuam ativos": Esc cancels out of the panel (discarding unsaved edits, same as clicking ✕),
@@ -6509,7 +6635,14 @@ document.addEventListener('keydown', e=>{
 });
 document.getElementById('textEditSave').addEventListener('click', ()=>{
   if(!textEditSession) return;
-  textEditSession.opts.onSave({...textEditSession.working});
+  const w = textEditSession.working;
+  // Fase 8 — a non-extended (video) session never writes the new fields at all, even as their own
+  // no-op defaults: saving a video text shape must not start silently growing its schema with
+  // fields nothing there reads yet, matching "estender, nunca alterar" for real, not just visually.
+  const patch = textEditSession.opts.extended
+    ? {...w}
+    : {text:w.text, color:w.color, bold:w.bold, italic:w.italic, fontScale:w.fontScale};
+  textEditSession.opts.onSave(patch);
   closeTextEditPanel();
 });
 document.getElementById('textEditDelete').addEventListener('click', ()=>{
@@ -6749,19 +6882,61 @@ function renderShape(ctx, canvas, s, textFontBase){
     } else {
       const weight = s.bold===false ? '400' : '700';
       const styleStr = s.italic ? 'italic ' : '';
-      ctx.font = `${styleStr}${weight} ${fontSize}px Inter, sans-serif`;
+      // Fase 8 — fontFamily optional: absent (every text shape from before this fase) falls back
+      // to the exact same 'Inter, sans-serif' that was hardcoded here.
+      ctx.font = `${styleStr}${weight} ${fontSize}px ${s.fontFamily||'Inter, sans-serif'}`;
       ctx.textBaseline = 'middle';
+      // align optional: absent keeps canvas's own default ('start'/left, never explicitly set
+      // before this fase either) — see the long comment on openTextEditPanel for why the default
+      // has to be 'left', not the 'center' that hit-testing separately (already, pre-Fase-8)
+      // assumes.
+      const align = s.align || 'left';
+      ctx.textAlign = align;
       ctx.lineJoin = 'round';
       ctx.strokeStyle = 'rgba(8,17,10,.85)';
       ctx.lineWidth = fontSize/5;
-      ctx.fillStyle = s.color;
       const lines = String(s.text).split('\n');
       const lineHeight = fontSize*1.15;
       const startY = c.y - (lines.length-1)*lineHeight/2;
+      // Fase 8 — background box, drawn BEFORE the text so it sits behind it. Measured from the
+      // widest line (canvas has no native multi-line measureText) at THIS font, so it always fits
+      // snugly regardless of alignment or how many lines there are.
+      if(s.bgEnabled){
+        const widths = lines.map(l=>ctx.measureText(l).width);
+        const maxW = Math.max(...widths, 1);
+        const padX = fontSize*0.4, padY = fontSize*0.25;
+        const boxW = maxW+padX*2, boxH = lines.length*lineHeight+padY*2;
+        const boxX = align==='center' ? c.x-boxW/2 : align==='right' ? c.x-boxW+padX : c.x-padX;
+        const boxY = startY - lineHeight/2 - padY;
+        ctx.save();
+        ctx.globalAlpha = s.bgOpacity!=null ? s.bgOpacity : 0.7;
+        ctx.fillStyle = s.bgColor || '#08110A';
+        ctx.fillRect(boxX, boxY, boxW, boxH);
+        if(s.bgBorderEnabled){
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = s.bgBorderColor || '#ECEFF2';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(boxX, boxY, boxW, boxH);
+        }
+        ctx.restore();
+      }
+      ctx.fillStyle = s.color;
       lines.forEach((line, i)=>{
         const y = startY + i*lineHeight;
         ctx.strokeText(line, c.x, y);
         ctx.fillText(line, c.x, y);
+        // underline optional (Fase 8): measured per-line, positioned to match whichever alignment
+        // the text itself is using — same anchor math getShapeBounds would need if it ever grows
+        // to account for align (it doesn't yet, see the comment on openTextEditPanel).
+        if(s.underline){
+          const w = ctx.measureText(line).width;
+          const lx = align==='center' ? c.x-w/2 : align==='right' ? c.x-w : c.x;
+          const uy = y + fontSize*0.38;
+          ctx.save();
+          ctx.strokeStyle = s.color; ctx.lineWidth = Math.max(1, fontSize*0.06); ctx.setLineDash([]);
+          ctx.beginPath(); ctx.moveTo(lx, uy); ctx.lineTo(lx+w, uy); ctx.stroke();
+          ctx.restore();
+        }
       });
     }
   } else if(s.type==='image'){
@@ -9421,6 +9596,7 @@ tacticCanvas.addEventListener('touchstart', e=>{
 function openTextEditPanelForTacticShape(shape, e){
   openTextEditPanel(shape, e.clientX, e.clientY, {
     colors: state.drawColors,
+    extended: true, // Fase 8 — reveals underline/align/font/background, tactic-only (see the HTML comment on .tep-extended-only)
     onSave: patch=>{ pushTacticHistory(); Object.assign(shape, patch); redrawTactic(); },
     onDelete: ()=>{
       const i = tacticShapes.indexOf(shape);
