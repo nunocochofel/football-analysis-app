@@ -41,22 +41,28 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.69 specifically — update this block for whatever the next release's own
+          # v0.8.70 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: exportar como imagem em alta resolução**
+            **Quadro tático: atalhos de teclado, uma letra por ferramenta**
 
-            - Novo botão "📷 Exportar imagem" — tira o que o quadro tático mostra agora e grava
-            como PNG em alta resolução (2400px no lado maior), em **paisagem** ou **retrato**.
-            - Opção de **fundo transparente**: PNG só com as marcações do campo, jogadores e
-            desenhos, sem o relvado — para sobrepor a outro fundo (uma apresentação, um vídeo,
-            etc.).
-            - Acrescenta-se à exportação de vídeo das cenas (MP4/GIF) que já existia — essa
-            continua exatamente igual, para a sequência de cenas animada; esta é para uma imagem
-            só, direta do que está no ecrã.
+            - Cada ferramenta de desenho tem agora uma tecla própria: **R** Linha · **S** Seta ·
+            **V** Seta poligonal · **L** Mão livre · **C** Curva · **Z** Zona · **O** Oval/elipse
+            · **T** Texto. A letra aparece na dica (tooltip) do próprio botão.
+            - **?** abre o Tutorial, com a lista completa de atalhos.
+            - Os atalhos ficam sempre suspensos enquanto escreves em qualquer campo de texto
+            (nome de jogador, categoria, caixa de texto do quadro, etc.) — nenhuma tecla troca de
+            ferramenta ou apaga nada por engano a meio da escrita.
+            - Todas as ferramentas continuam com botão visível na barra — os atalhos são um
+            atalho, nunca a única forma de usar uma ferramenta.
+            - A borracha (🧹) fica sem tecla própria de propósito: com seleção pelo rato + Delete
+            já a funcionar desde há várias versões, deixou de ser a única forma de apagar.
 
-            Testado (12 verificações reais, Playwright + Electron): paisagem e retrato exportados
-            com a resolução e orientação corretas; fundo transparente confirmado píxel a píxel
-            (canto fora do campo com transparência total); exportação de vídeo das cenas (MP4)
-            confirmada a continuar a funcionar sem alterações.
+            Testado (29 verificações reais, Playwright + Electron): as 8 teclas confirmadas a
+            ativar a ferramenta certa; tooltips com a letra confirmadas; a frase "TEXTO ZONA
+            CURVA RETA SETA OVAL" escrita dentro de uma caixa de texto e também no nome de um
+            jogador, confirmando que nenhuma ferramenta mudou nem nada foi apagado em nenhum dos
+            dois campos; "?" a abrir o Tutorial confirmado; as 12 ferramentas confirmadas com
+            botão visível; sem qualquer interferência com os atalhos de categoria do vídeo (letras
+            só reagem com a aba do quadro tático ativa).

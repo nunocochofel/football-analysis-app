@@ -1887,16 +1887,16 @@
         </div>
         <div class="toolbar-sep"></div>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="move" title="Mover jogadores">✋</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="line" title="Linha">╱</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="arrow" title="Seta">➔</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="polyarrow" title="Seta poligonal (clica para cada dobra, duplo-clique termina; os pontos ficam editáveis depois)">⤳</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="freehand" title="Mão livre">✎</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="curve" title="Curva (arrasta para desenhar; depois de criada, dois pontos de controlo ficam arrastáveis para a moldar)">〜</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="zone" title="Zona (polígono livre)">▱</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="ellipse" title="Elipse/círculo — arrasta a partir do centro">◯</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="line" title="Linha (R)">╱</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="arrow" title="Seta (S)">➔</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="polyarrow" title="Seta poligonal (V) — clica para cada dobra, duplo-clique termina; os pontos ficam editáveis depois">⤳</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="freehand" title="Mão livre (L)">✎</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="curve" title="Curva (C) — arrasta para desenhar; depois de criada, dois pontos de controlo ficam arrastáveis para a moldar">〜</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="zone" title="Zona (Z) — polígono livre">▱</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="ellipse" title="Elipse/círculo (O) — arrasta a partir do centro">◯</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="rect" title="Retângulo">▭</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="triangle" title="Triângulo">△</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="text" title="Texto">🔤</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="text" title="Texto (T)">🔤</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (também podes selecionar e premir Delete, ou clicar com o botão direito → Apagar)">🧹</button>
         <div class="toolbar-sep"></div>
         <!-- Fase 7 — mounted dynamically by mountColorPicker() (JS), one flyout per picker,
@@ -2220,8 +2220,17 @@
         <li>Tecla da categoria — inicia/termina a marcação em dois toques.</li>
         <li>Espaço — play/pause do vídeo.</li>
         <li>← / → — recua/avança 5s.</li>
-        <li>Ctrl+C / Ctrl+V — copiar/colar o desenho por baixo do rato.</li>
+        <li>Ctrl+C / Ctrl+V — copiar/colar o desenho por baixo do rato (vídeo) ou a seleção (quadro tático).</li>
         <li>Esc — cancela uma gravação de corte em curso, uma zona a meio de ser desenhada, ou fecha o menu de contexto de um corte.</li>
+        <li><b>?</b> — abre este tutorial, em qualquer separador.</li>
+      </ul>
+
+      <h4 class="tut-h">Atalhos do quadro tático (uma letra por ferramenta)</h4>
+      <ul class="info-list">
+        <li><b>R</b> Linha · <b>S</b> Seta · <b>V</b> Seta poligonal · <b>L</b> Mão livre · <b>C</b> Curva · <b>Z</b> Zona · <b>O</b> Oval/elipse · <b>T</b> Texto.</li>
+        <li>Sem letra própria (só o botão da barra) — ✋ mover, ▭ retângulo, △ triângulo, 🧹 borracha: com a seleção pelo rato e Delete a funcionarem para apagar, a borracha deixou de ser a única forma de o fazer.</li>
+        <li>Delete/Backspace apaga a seleção · Ctrl+Z desfaz · Ctrl+Shift+Z refaz · Ctrl+D duplica · [ / ] envia para trás / traz para a frente.</li>
+        <li>Todos suspensos automaticamente enquanto estiveres a escrever em qualquer campo de texto (nome de jogador, categoria, caixa de texto do quadro, etc.) — nenhuma letra troca de ferramenta nem apaga nada por engano a meio da escrita.</li>
       </ul>
 
       <p style="margin-top:12px; color:var(--muted); font-size:12px;">Cada projeto (equipas, marcações, cenas) fica guardado separadamente. Usa "← Projetos" no topo para voltar à lista e abrir/criar outro. A app guarda também um <b>backup automático em disco</b> a cada poucos minutos (independente do armazenamento do navegador) — vê "🗄 Backups" na lista de projetos para abrir a pasta; um ficheiro de backup pode ser recuperado a qualquer momento com "⬆ Importar projeto".</p>
@@ -7242,14 +7251,21 @@ document.addEventListener('keydown', e=>{
   }
 });
 
+// Fase 11 (parte 2) — uma letra por ferramenta, aprovadas pelo utilizador: V=seta poligonal (o
+// "V" é visualmente uma linha com uma dobra — o mesmo desenho da própria ferramenta), L=mão Livre,
+// S=Seta, C=Curva, Z=Zona, T=Texto, O=Oval/elipse, R=Reta (linha). Deliberadamente SEM letra:
+// ✋ mover (é o estado de repouso, não precisa de ser "ativado"), ▭ retângulo e △ triângulo (menos
+// usados, ficam só no botão), e 🧹 borracha (a decisão explícita foi deixar cair o X — com seleção
+// pelo rato + Delete já a existir desde a Fase 2, a borracha deixou de ser a única forma de apagar).
+const TACTIC_TOOL_SHORTCUTS = { l:'freehand', s:'arrow', v:'polyarrow', c:'curve', z:'zone', t:'text', o:'ellipse', r:'line' };
 // Fase 2/4 (quadro tático) — Delete/Backspace apaga, Ctrl+Z/Ctrl+Shift+Z desfaz/refaz, Ctrl+D
-// duplica, [ / ] envia para trás / traz para a frente. Gated exactly like the tag-quickcreate
-// handler above and the Ctrl+C/V one: bails out whenever focus is on an input/textarea/select/
-// contenteditable, so backspacing a player's name or a text shape's own content never also
-// deletes/undoes something on the board behind it — the app-wide rule from Fase 2's own brief
-// ("atalhos desativados enquanto escrevo texto"), applied to every literal key these two fases
-// introduce, not just the future per-tool letter shortcuts. Scoped to the tactic tab being active
-// — the video tab has no selection/undo model yet (out of scope here).
+// duplica, [ / ] envia para trás / traz para a frente, e (Fase 11) uma letra por ferramenta. Gated
+// exactly like the tag-quickcreate handler above and the Ctrl+C/V one: bails out whenever focus is
+// on an input/textarea/select/contenteditable, so backspacing a player's name, a text shape's own
+// content, or just typing into any field never also deletes/undoes/switches tools on the board
+// behind it — the app-wide rule from Fase 2's own brief ("atalhos desativados enquanto escrevo
+// texto"), applied to every literal key these fases introduce, letter shortcuts included. Scoped to
+// the tactic tab being active — the video tab has no selection/undo model yet (out of scope here).
 document.addEventListener('keydown', e=>{
   if(!document.getElementById('tab-tactic').classList.contains('active')) return;
   const activeEl = document.activeElement;
@@ -7276,7 +7292,24 @@ document.addEventListener('keydown', e=>{
     if(tacticSelectionEmpty()) return;
     e.preventDefault();
     reorderTacticSelectionLayer(e.key===']');
+    return;
   }
+  if(!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey){
+    const tool = TACTIC_TOOL_SHORTCUTS[e.key.toLowerCase()];
+    if(tool){ e.preventDefault(); setTacticTool(tool); }
+  }
+});
+// Fase 11 — "?" (Shift+/) abre o Tutorial, que já tem a lista completa de atalhos — mais barato e
+// mais fácil de manter do que um painel novo só para isto. Funciona em qualquer separador (o
+// Tutorial cobre vídeo e quadro tático), mas com a mesma proteção de nunca disparar a escrever
+// dentro de um campo — "?" é um caráter perfeitamente normal de aparecer a meio de texto.
+document.addEventListener('keydown', e=>{
+  if(e.key!=='?' || e.ctrlKey || e.metaKey || e.altKey) return;
+  const activeEl = document.activeElement;
+  const activeTag = activeEl ? activeEl.tagName : '';
+  if(activeTag==='INPUT' || activeTag==='SELECT' || activeTag==='TEXTAREA' || (activeEl && activeEl.isContentEditable)) return;
+  e.preventDefault();
+  openModal('infoModal');
 });
 
 /* ---------- Quick-create a new tag category straight from an unmapped key ---------- */
