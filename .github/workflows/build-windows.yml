@@ -41,29 +41,29 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.64 specifically — update this block for whatever the next release's own
+          # v0.8.65 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: elipse, retângulo, triângulo, padrões de preenchimento e
-            transparência**
+            **Quadro tático: paleta maior, cor livre, recentes/favoritas, e preenchimento com cor
+            própria**
 
-            - **Três formas novas** — elipse ◯, retângulo ▭ e triângulo △, ao lado da zona já
-            existente. Clicar em qualquer ponto DENTRO de uma forma preenchida seleciona-a, não
-            só o contorno.
-            - **Padrão de preenchimento** — sólido, riscas (com ângulo escolhível), pontinhos,
-            quadrícula, ou sem preenchimento nenhum (só o contorno). Aplica-se também à zona.
-            - **Transparência ajustável** — um slider (0–100%) controla o quão transparente fica
-            o preenchimento, em vez do valor fixo de sempre.
-            - **Espessura do contorno** — fina/média/grossa, e o contorno de qualquer forma
-            preenchida aceita agora os mesmos estilos de linha (tracejado, pontilhado, etc.) que
-            já existiam para linhas e setas.
+            - **Paleta alargada** — 16 cores em vez de 5, mais um seletor de cor livre (roda/hex,
+            o do próprio sistema) para qualquer cor exata que precises.
+            - **Cores recentes** — as últimas cores usadas ficam à mão, automaticamente.
+            **Favoritas** — guarda as tuas cores de sempre com um clique, e ficam disponíveis em
+            todos os projetos (não é preciso repetir por projeto).
+            - **Contorno e preenchimento com cor independente** — zona, elipse, retângulo e
+            triângulo passam a ter dois seletores de cor separados na barra: um para o contorno,
+            outro para o preenchimento.
 
-            Testado (23 verificações reais, Playwright + Electron): as três formas novas criadas
-            corretamente; clicar no interior de cada uma seleciona-a; opacidade/padrão/ângulo/
-            espessura escolhidos na barra gravados corretamente na forma criada a seguir; as
-            alças de redimensionar (Fase 3) e apagar (Fase 2) confirmadas a funcionar nas formas
-            novas; uma zona gravada antes desta versão (sem os campos novos) continua a abrir,
-            selecionável e clicável por dentro exatamente como antes; a exportação de vídeo das
-            cenas (MP4) confirmada ponta-a-ponta com ffmpeg real, incluindo as formas novas na
-            cena exportada.
+            O vídeo mantém a paleta simples de sempre — esta mudança é só no quadro tático.
+
+            Testado (18 verificações reais, Playwright + Electron): cor escolhida na paleta
+            alargada aplicada corretamente; cor livre via o seletor nativo aplicada e guardada
+            nas recentes; recentes confirmadas a sobreviver a fechar e reabrir a aplicação
+            (preferência da app, não do projeto); guardar e reutilizar uma favorita; contorno e
+            preenchimento gravados com cores diferentes quando escolhidas separadamente; uma
+            forma gravada antes desta versão (sem cor de preenchimento própria) continua a
+            mostrar o preenchimento na mesma cor do contorno, como sempre mostrou; a exportação
+            de vídeo das cenas (MP4) confirmada ponta-a-ponta com ffmpeg real.

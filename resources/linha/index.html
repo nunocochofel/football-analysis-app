@@ -307,6 +307,21 @@
   .btn.icon.plain:hover{background:var(--panel); border-color:var(--line);}
   .color-swatch{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);cursor:pointer;}
   .color-swatch.active{border-color:var(--chalk);}
+  /* Fase 7 — richer color picker (quadro tático only): a .tool-flyout-wrap trigger button showing
+     the currently-picked color, opening a flyout with a full palette grid, a native color input
+     (the "seletor livre" — roda/hex, browser-provided, not reinvented here), a recent-colors row,
+     and a favorites row with its own toggle. */
+  .color-picker-trigger{ width:26px; height:26px; border-radius:6px; padding:0; }
+  .color-picker-trigger .cp-swatch{ display:block; width:100%; height:100%; border-radius:4px; border:1px solid var(--line); }
+  .color-picker-flyout{ width:168px; }
+  .cp-grid{ display:grid; grid-template-columns:repeat(8, 1fr); gap:5px; margin-bottom:6px; }
+  .cp-grid .color-swatch{ width:16px; height:16px; }
+  .cp-section-label{ font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin:6px 0 4px; display:flex; align-items:center; justify-content:space-between; }
+  .cp-section-label button{ background:none; border:none; color:var(--muted); font-size:10px; cursor:pointer; padding:2px 4px; }
+  .cp-section-label button:hover{ color:var(--chalk); }
+  .cp-custom-row{ display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+  .cp-custom-row input[type="color"]{ width:26px; height:26px; padding:0; border:1px solid var(--line); border-radius:4px; background:none; cursor:pointer; }
+  .cp-empty-hint{ font-size:10px; color:var(--muted); font-style:italic; }
 
   .video-wrap{flex:1; position:relative; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; min-height:0;}
   .video-wrap .empty-state{color:var(--muted); text-align:center; padding:30px; max-width:340px;}
@@ -1864,7 +1879,12 @@
         <button class="tool-btn mobile-toolbar-primary" data-ttool="text" title="Texto">🔤</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (também podes selecionar e premir Delete, ou clicar com o botão direito → Apagar)">🧹</button>
         <div class="toolbar-sep"></div>
-        <div id="tacticColorSwatches" style="display:flex; gap:6px;"></div>
+        <!-- Fase 7 — mounted dynamically by mountColorPicker() (JS), one flyout per picker,
+             reusing the exact same .tool-flyout-wrap/.tool-flyout pattern already used elsewhere
+             in this toolbar (board mode, +Objeto, +Jogador) instead of a new interaction model. -->
+        <div id="tacticStrokeColorPicker" title="Cor do contorno"></div>
+        <div class="toolbar-sep"></div>
+        <div id="tacticFillColorPicker" title="Cor de preenchimento (zona/elipse/retângulo/triângulo)"></div>
         <div class="toolbar-sep"></div>
         <div id="tacticLineStyleGroup" class="tool-group" title="Estilo do contorno/linha/seta">
           <button class="tool-btn active" data-lstyle="solid" title="Contínua — convenção: passe">▬</button>
@@ -5789,6 +5809,129 @@ function buildColorSwatches(containerId, applyFn){
     el.appendChild(sw_);
   });
 }
+
+/* ===================================================================
+   Fase 7 (quadro tático) — richer color picker: bigger palette, a native
+   free-form picker (roda/hex), recent + favorite colors. Deliberately NOT
+   used by the video tab's #colorSwatches (still buildColorSwatches above,
+   untouched) — this fase is tactic-only, and this is a genuinely separate
+   UI, not a shared-function edit that could ripple into video's behavior.
+=================================================================== */
+// A real spread of hues plus neutrals — bigger than the original 5, but this is still just a
+// curated STARTING palette, not project data: nothing about it is persisted, so it can grow or
+// change freely later without any compatibility concern (a saved shape only ever stores the
+// resulting hex string, never which palette it came from).
+const TACTIC_COLOR_PALETTE = [
+  '#ECEFF2','#08110A','#8993A1',
+  '#D1495B','#C1533D','#E2793F','#E2A63B','#D9C24C',
+  '#3FAF9A','#3F9142','#4FA68F','#4F8FC9','#2C5F9E',
+  '#7F5FA6','#9B6FD1','#C98A3F'
+];
+const TACTIC_RECENT_COLORS_KEY = 'linha:recentColors';
+const TACTIC_FAVORITE_COLORS_KEY = 'linha:favoriteColors';
+const TACTIC_RECENT_COLORS_MAX = 8;
+// Global app preferences, not project data — deliberately their own localStorage keys instead of
+// living in state/saveState()'s payload (see the Fase 5 TAREFA 0 answer this follows): a color you
+// used recently is something you'd want available in every project, not scoped to just one.
+function loadColorList(key){
+  try{ return JSON.parse(localStorage.getItem(key) || '[]'); }catch(e){ return []; }
+}
+function saveColorList(key, list){
+  try{ localStorage.setItem(key, JSON.stringify(list)); }catch(e){ /* best-effort, same as saveState() */ }
+}
+function pushRecentColor(hex){
+  let list = loadColorList(TACTIC_RECENT_COLORS_KEY).filter(c=>c!==hex);
+  list.unshift(hex);
+  if(list.length > TACTIC_RECENT_COLORS_MAX) list = list.slice(0, TACTIC_RECENT_COLORS_MAX);
+  saveColorList(TACTIC_RECENT_COLORS_KEY, list);
+}
+// Mounts a trigger button + flyout (the same .tool-flyout-wrap/.tool-flyout pattern already used
+// for board mode/+Objeto/+Jogador elsewhere in this toolbar) into an existing empty container.
+// Returns nothing — onChange(hex) is the only way callers observe a pick, matching how
+// tColor/tLineStyle/etc. are already just plain "current tool setting" variables, not state
+// exposed through a return value.
+function mountColorPicker(containerId, initialColor, onChange){
+  const container = document.getElementById(containerId);
+  const wrapId = containerId+'Wrap', flyoutId = containerId+'Flyout';
+  container.innerHTML = `
+    <div class="tool-flyout-wrap" id="${wrapId}">
+      <button class="btn color-picker-trigger" id="${containerId}Trigger" type="button"><span class="cp-swatch" id="${containerId}Preview"></span></button>
+      <div class="tool-flyout color-picker-flyout" id="${flyoutId}">
+        <div class="cp-grid" id="${containerId}Palette"></div>
+        <div class="cp-custom-row">
+          <input type="color" id="${containerId}Custom" title="Cor livre (roda/hex)">
+          <span class="cp-empty-hint">cor livre</span>
+        </div>
+        <div class="cp-section-label">Recentes</div>
+        <div class="cp-grid" id="${containerId}Recent"></div>
+        <div class="cp-section-label">Favoritas <button type="button" id="${containerId}FavAdd" title="Guardar a cor atual como favorita">☆ guardar</button></div>
+        <div class="cp-grid" id="${containerId}FavGrid"></div>
+      </div>
+    </div>`;
+  let current = initialColor;
+  const preview = document.getElementById(containerId+'Preview');
+  const trigger = document.getElementById(containerId+'Trigger');
+  const flyout = document.getElementById(flyoutId);
+  const customInput = document.getElementById(containerId+'Custom');
+  function setCurrent(hex, opts){
+    current = hex;
+    preview.style.background = hex;
+    customInput.value = hex;
+    if(!(opts && opts.skipRecent)) pushRecentColor(hex);
+    renderSwatchRow(document.getElementById(containerId+'Recent'), loadColorList(TACTIC_RECENT_COLORS_KEY), 'Nenhuma ainda');
+    onChange(hex);
+  }
+  function renderSwatchRow(el, colors, emptyHint){
+    el.innerHTML='';
+    if(!colors.length){
+      const hint = document.createElement('span'); hint.className='cp-empty-hint'; hint.textContent = emptyHint;
+      el.appendChild(hint); return;
+    }
+    colors.forEach(hex=>{
+      const sw = document.createElement('div');
+      sw.className = 'color-swatch'+(hex===current?' active':'');
+      sw.style.background = hex;
+      sw.title = hex;
+      sw.addEventListener('click', ()=>{ setCurrent(hex); refreshActiveStates(); });
+      el.appendChild(sw);
+    });
+  }
+  function refreshActiveStates(){
+    document.querySelectorAll(`#${containerId}Palette .color-swatch, #${containerId}Recent .color-swatch, #${containerId}FavGrid .color-swatch`)
+      .forEach(sw=>sw.classList.toggle('active', sw.style.background && colorsEqual(sw.style.background, current)));
+  }
+  function colorsEqual(cssColor, hex){
+    // A quick, good-enough comparison — cssColor comes back from the browser normalized (rgb(...)),
+    // hex is whatever was stored; round-tripping hex through the SAME normalization sidesteps a
+    // brittle string-format comparison without needing a real color-parsing library for this.
+    const probe = document.createElement('div'); probe.style.background = hex;
+    return probe.style.background === cssColor;
+  }
+  const paletteEl = document.getElementById(containerId+'Palette');
+  TACTIC_COLOR_PALETTE.forEach(hex=>{
+    const sw = document.createElement('div');
+    sw.className = 'color-swatch';
+    sw.style.background = hex;
+    sw.title = hex;
+    sw.addEventListener('click', ()=>{ setCurrent(hex); refreshActiveStates(); });
+    paletteEl.appendChild(sw);
+  });
+  document.getElementById(containerId+'FavAdd').addEventListener('click', ()=>{
+    const favs = loadColorList(TACTIC_FAVORITE_COLORS_KEY);
+    if(!favs.includes(current)){ favs.unshift(current); saveColorList(TACTIC_FAVORITE_COLORS_KEY, favs); }
+    renderSwatchRow(document.getElementById(containerId+'FavGrid'), loadColorList(TACTIC_FAVORITE_COLORS_KEY), 'Nenhuma ainda');
+    refreshActiveStates();
+  });
+  customInput.addEventListener('input', ()=>{ setCurrent(customInput.value); refreshActiveStates(); });
+  trigger.addEventListener('click', e=>{ e.stopPropagation(); flyout.classList.toggle('pinned'); });
+  document.addEventListener('click', e=>{
+    if(!e.target.closest('#'+wrapId)) flyout.classList.remove('pinned');
+  });
+  renderSwatchRow(document.getElementById(containerId+'Recent'), loadColorList(TACTIC_RECENT_COLORS_KEY), 'Nenhuma ainda');
+  renderSwatchRow(document.getElementById(containerId+'FavGrid'), loadColorList(TACTIC_FAVORITE_COLORS_KEY), 'Nenhuma ainda');
+  setCurrent(initialColor, {skipRecent:true});
+  refreshActiveStates();
+}
 buildColorSwatches('colorSwatches', c=>currentColor=c);
 
 function wireLineStyleGroup(containerId, applyFn){
@@ -5907,7 +6050,10 @@ function fillAndStrokeShapePath(ctx, s, closePathFirst){
   if(pattern !== 'none'){
     ctx.save();
     ctx.globalAlpha = (s.fillOpacity!=null ? s.fillOpacity : 0.16);
-    ctx.fillStyle = getCachedFillStyle(ctx, s.color, pattern, s.hatchAngle);
+    // Fase 7 — fillColor optional: absent (every shape from before this fase, and any new one
+    // where the fill picker was never touched) falls back to the stroke color, reproducing the
+    // old "one color for everything" look exactly.
+    ctx.fillStyle = getCachedFillStyle(ctx, s.fillColor || s.color, pattern, s.hatchAngle);
     ctx.fill();
     ctx.restore();
   }
@@ -8455,6 +8601,11 @@ let tokens = {}; // id -> {x,y (0-100), teamId|'ball', num,label,color}
 let tacticShapes = [];
 let tTool = 'move';
 let tColor = state.drawColors[1];
+// Fase 7 — fill color, independent from the stroke color above. Starts equal to it (so a fresh
+// session's very first filled shape still looks like "one color", matching every shape drawn
+// before this fase existed) but is tracked separately from then on, the moment either picker
+// is touched.
+let tFillColor = state.drawColors[1];
 let tLineStyle = 'solid'; // 'solid' | 'dashed' | 'dotted' | 'dashdot' | 'zigzag' — applies to line/arrow
 // Fase 5 — which end(s) of a NEW arrow get an arrowhead, set by #tacticArrowheadGroup exactly like
 // tLineStyle above. Stored per-shape as arrowStart/arrowEnd booleans (see finishTacticDrawing) so
@@ -8983,7 +9134,7 @@ function updateTacticPointerMove(clientX, clientY){
     // (c1/c2 don't exist yet, see finishTacticDrawing), bending only ever happens afterward via
     // the dedicated control-point handles.
     const previewType = tTool==='curve' ? 'line' : tTool;
-    drawShapeOnCtx(tctx, tacticCanvas, {type:previewType, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle,
+    drawShapeOnCtx(tctx, tacticCanvas, {type:previewType, p1:tStart, p2:p, color:tColor, fillColor:tFillColor, lineStyle:tLineStyle,
       strokeWidth:tStrokeWidth, fillPattern:tFillPattern, fillOpacity:tFillOpacity, hatchAngle:tHatchAngle});
   } else if(tZonePts.length){
     redrawTactic();
@@ -9089,7 +9240,8 @@ document.querySelectorAll('[data-ttool]').forEach(b=>{
   b.addEventListener('click', ()=>setTacticTool(b.dataset.ttool));
 });
 document.querySelector('[data-ttool="move"]').classList.add('active');
-buildColorSwatches('tacticColorSwatches', c=>tColor=c);
+mountColorPicker('tacticStrokeColorPicker', tColor, c=>tColor=c);
+mountColorPicker('tacticFillColorPicker', tFillColor, c=>tFillColor=c);
 wireLineStyleGroup('tacticLineStyleGroup', v=>tLineStyle=v);
 // Fase 5 — same toggle-group pattern as wireLineStyleGroup, kept separate rather than
 // generalizing that helper for a `dataset.arrowheads` key used in exactly one place.
@@ -9312,7 +9464,7 @@ function findVisibleTacticShapeAt(e){
 tacticCanvas.addEventListener('dblclick', e=>{
   if(tTool==='zone' && tZonePts.length>=3){
     pushTacticHistory();
-    tacticShapes.push({id:uid(), type:'zone', points:tZonePts.slice(), color:tColor, lineStyle:tLineStyle,
+    tacticShapes.push({id:uid(), type:'zone', points:tZonePts.slice(), color:tColor, fillColor:tFillColor, lineStyle:tLineStyle,
       strokeWidth:tStrokeWidth, fillPattern:tFillPattern, fillOpacity:tFillOpacity, hatchAngle:tHatchAngle});
     tZonePts=[]; redrawTactic();
     return;
@@ -9408,7 +9560,7 @@ function finishTacticDrawing(e){
       tacticShapes.push({id:uid(), type:'arrow', p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle, strokeWidth:tStrokeWidth,
         arrowStart: tArrowHeads==='both', arrowEnd: tArrowHeads!=='none'});
     } else if(FILL_TYPES.has(tTool)){
-      tacticShapes.push({id:uid(), type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle, strokeWidth:tStrokeWidth,
+      tacticShapes.push({id:uid(), type:tTool, p1:tStart, p2:p, color:tColor, fillColor:tFillColor, lineStyle:tLineStyle, strokeWidth:tStrokeWidth,
         fillPattern:tFillPattern, fillOpacity:tFillOpacity, hatchAngle:tHatchAngle});
     } else {
       tacticShapes.push({id:uid(), type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle, strokeWidth:tStrokeWidth});
