@@ -23,6 +23,10 @@ const api = {
     ipcRenderer.invoke('dialog:saveTacticExport', format),
   exportTacticFrames: (args: ExportTacticFramesRequest): Promise<void> =>
     ipcRenderer.invoke('video:exportTacticFrames', args),
+  saveTacticImage: (orientation: 'landscape' | 'portrait'): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:saveTacticImage', orientation),
+  writeTacticImage: (args: { dataUrlBase64: string; outputPath: string }): Promise<void> =>
+    ipcRenderer.invoke('image:saveTacticImage', args),
   getCachedPlaybackPath: (sourcePath: string): Promise<string | null> =>
     ipcRenderer.invoke('video:getCachedPlaybackPath', sourcePath),
   transcodeForPlayback: (args: { sourcePath: string; durationSec: number }): Promise<string> =>

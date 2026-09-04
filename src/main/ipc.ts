@@ -91,6 +91,24 @@ export function registerIpcHandlers(
     return result.filePath
   })
 
+  // Fase 11 — static high-res image export of the tactic board (as opposed to the MP4/GIF scene
+  // playback above, which this is deliberately additive to, not a replacement for). One PNG, no
+  // ffmpeg involved — the renderer composites everything onto an offscreen canvas already (same
+  // renderBoardFrameToCanvas the MP4 export path uses) and hands this just the finished bytes.
+  ipcMain.handle('dialog:saveTacticImage', async (_e, orientation: 'landscape' | 'portrait') => {
+    const win = getWindow()
+    if (!win) return null
+    const result = await dialog.showSaveDialog(win, {
+      defaultPath: `quadro-tatico-${orientation === 'portrait' ? 'retrato' : 'paisagem'}.png`,
+      filters: [{ name: 'PNG', extensions: ['png'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    return result.filePath
+  })
+  ipcMain.handle('image:saveTacticImage', async (_e, args: { dataUrlBase64: string; outputPath: string }) => {
+    await writeFile(args.outputPath, Buffer.from(args.dataUrlBase64, 'base64'))
+  })
+
   // Export queue destination — clips are written directly into this folder as individual files
   // (Categoria_N.mp4), not bundled into a .zip, so the queue panel can offer a real "Abrir" action
   // per finished item without waiting for a whole batch to be archived first.

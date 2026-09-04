@@ -1994,6 +1994,19 @@
             <button class="btn" data-export-format="gif">GIF animado</button>
           </div>
         </div>
+        <!-- Fase 11 — imagem estática em alta resolução do que o quadro mostra agora (não uma
+             cena gravada da faixa em baixo) — acrescenta-se à exportação de vídeo acima, não a
+             substitui. -->
+        <div class="tool-flyout-wrap" id="exportImageFlyoutWrap">
+          <button class="btn">📷 Exportar imagem</button>
+          <div class="tool-flyout" id="exportImageFlyout" style="min-width:170px;">
+            <button class="btn" data-export-image="landscape">🖼 Paisagem</button>
+            <button class="btn" data-export-image="portrait">🖼 Retrato</button>
+            <label class="btn" style="justify-content:flex-start; gap:6px; cursor:pointer;" title="PNG sem o relvado — só as marcações do campo, jogadores e desenhos, para sobrepor a outro fundo">
+              <input type="checkbox" id="exportImageTransparent" style="margin:0;"> Fundo transparente
+            </label>
+          </div>
+        </div>
         <button class="btn primary" id="btnPlayScenes">▶ Reproduzir sequência de cenas</button>
       </div>
       <div class="tactic-pitch-wrap">
@@ -3290,9 +3303,13 @@ function allPlayersFlat(){
 /* ===================================================================
    PITCH SVG (reused across mini pitch / tactic board / heatmap)
 =================================================================== */
-function pitchSVGMarkup(variant){
-  if(variant==='box') return halfPitchSVGMarkup();
-  if(variant==='depth') return depthPitchSVGMarkup();
+// Fase 11 — transparent: for the static image export's "fundo transparente" option only (never
+// used by the live board or the MP4/GIF export, both keep the grass exactly as always). Skips just
+// the grass fill + alternating mow-stripe overlay in every variant below; the white pitch markings
+// stay, since a transparent PNG with no markings at all wouldn't read as a pitch.
+function pitchSVGMarkup(variant, transparent){
+  if(variant==='box') return halfPitchSVGMarkup(transparent);
+  if(variant==='depth') return depthPitchSVGMarkup(transparent);
   // 'zones': the same full pitch, with a 6×3 dashed positional grid (thirds of length × thirds of
   // width) automatically overlaid — a common coaching aid for zonal/positional analysis.
   const zoneGrid = variant==='zones' ? `
@@ -3312,8 +3329,8 @@ function pitchSVGMarkup(variant){
         <stop offset="1" stop-color="#245e28"/>
       </linearGradient>
     </defs>
-    <rect x="0" y="0" width="1050" height="680" fill="url(#grass)"/>
-    ${[0,1,2,3,4,5,6,7,8,9].map(i=>`<rect x="${i*105}" y="0" width="105" height="680" fill="${i%2===0?'rgba(255,255,255,0.035)':'rgba(0,0,0,0.02)'}"/>`).join('')}
+    ${transparent ? '' : `<rect x="0" y="0" width="1050" height="680" fill="url(#grass)"/>
+    ${[0,1,2,3,4,5,6,7,8,9].map(i=>`<rect x="${i*105}" y="0" width="105" height="680" fill="${i%2===0?'rgba(255,255,255,0.035)':'rgba(0,0,0,0.02)'}"/>`).join('')}`}
     ${zoneGrid}
     <g fill="none" stroke="rgba(236,239,242,0.85)" stroke-width="3">
       <rect x="18" y="18" width="1014" height="644"/>
@@ -3340,7 +3357,7 @@ function pitchSVGMarkup(variant){
 // Own coordinate space (not just a viewBox crop of the full-pitch markup above) since the full
 // markup is landscape (goal-to-goal along x) and this needs the halfway-to-goal-line axis running
 // top-to-bottom instead — same 1 unit ≈ 0.1m scale, reusing the same real-world measurements.
-function halfPitchSVGMarkup(){
+function halfPitchSVGMarkup(transparent){
   // Cropped tighter than a plain half-pitch — starts partway down (no halfway line/center circle
   // in view) so the box itself fills most of the frame, per reference.
   return `
@@ -3351,8 +3368,8 @@ function halfPitchSVGMarkup(){
         <stop offset="1" stop-color="#245e28"/>
       </linearGradient>
     </defs>
-    <rect x="0" y="0" width="680" height="580" fill="url(#grassHalf)"/>
-    ${[0,1,2,3,4,5,6].map(i=>`<rect x="0" y="${18+i*72.4}" width="680" height="72.4" fill="${i%2===0?'rgba(255,255,255,0.035)':'rgba(0,0,0,0.02)'}"/>`).join('')}
+    ${transparent ? '' : `<rect x="0" y="0" width="680" height="580" fill="url(#grassHalf)"/>
+    ${[0,1,2,3,4,5,6].map(i=>`<rect x="0" y="${18+i*72.4}" width="680" height="72.4" fill="${i%2===0?'rgba(255,255,255,0.035)':'rgba(0,0,0,0.02)'}"/>`).join('')}`}
     <g fill="none" stroke="rgba(236,239,242,0.85)" stroke-width="3">
       <rect x="18" y="18" width="644" height="507"/>
       <circle cx="340" cy="18" r="3" fill="rgba(236,239,242,0.85)"/>
@@ -3373,7 +3390,7 @@ function halfPitchSVGMarkup(){
 // the classic lineup-card angle. Not a true 3D projection, just a trapezoid (narrow far end, wide
 // near end) with every marking's width interpolated the same way, which reads as convincing
 // perspective at this scale without needing an actual projection matrix.
-function depthPitchSVGMarkup(){
+function depthPitchSVGMarkup(transparent){
   // Landscape, not portrait — a moderate elevated angle from just behind one goal, wide enough to
   // read the whole pitch at a glance (like a broadcast lineup-card graphic), not a steep funnel.
   const W=1050, H=640;
@@ -3450,8 +3467,8 @@ function depthPitchSVGMarkup(){
         <stop offset="1" stop-color="#3a9640"/>
       </linearGradient>
     </defs>
-    <rect x="0" y="0" width="${W}" height="${H}" fill="url(#grassDepth)"/>
-    <g>${stripes}</g>
+    ${transparent ? '' : `<rect x="0" y="0" width="${W}" height="${H}" fill="url(#grassDepth)"/>
+    <g>${stripes}</g>`}
     <g fill="none" stroke="rgba(236,239,242,0.85)" stroke-width="3" stroke-linejoin="round">
       <polygon points="${trapPts(topY,bottomY)}"/>
       <line x1="${leftX(halfY)}" y1="${halfY}" x2="${rightX(halfY)}" y2="${halfY}"/>
@@ -10590,10 +10607,14 @@ document.getElementById('btnPlayScenes').addEventListener('click', async ()=>{
 // composited on an offscreen canvas: rasterized pitch background + hand-drawn tokens (mirrors the
 // CSS .token look closely enough to read at a glance) + tacticShapes via the existing drawShapeOnCtx.
 const pitchBgCache = {};
-function getPitchBackgroundImage(mode){
-  const key = (mode==='box' || mode==='zones' || mode==='depth') ? mode : 'full';
+// Fase 11 — transparent is only ever true for the static image export's own optional variant (see
+// exportTacticImage); every existing caller (live board redraw, MP4/GIF export) keeps passing
+// nothing, which reproduces today's grass background exactly — a separate cache key so both
+// variants can coexist without one evicting the other.
+function getPitchBackgroundImage(mode, transparent){
+  const key = ((mode==='box' || mode==='zones' || mode==='depth') ? mode : 'full') + (transparent ? '|transparent' : '');
   if(!pitchBgCache[key]){
-    const svg = pitchSVGMarkup(key==='full' ? undefined : key);
+    const svg = pitchSVGMarkup(mode==='box'||mode==='zones'||mode==='depth' ? mode : undefined, transparent);
     const img = new Image();
     pitchBgCache[key] = new Promise(res=>{
       img.onload = ()=>res(img);
@@ -10773,12 +10794,76 @@ document.querySelectorAll('#exportFlyout [data-export-format]').forEach(b=>{
     exportTacticVideo(b.dataset.exportFormat);
   });
 });
+// Fase 11 — static high-res image export: ADDS to the MP4/GIF scene-playback export above, doesn't
+// touch it. Exports whatever the board currently shows (not a saved scene from the strip) — the
+// same "what you see is what you get" a screenshot would give, just at export resolution and with
+// an optional transparent background instead of whatever's behind the app window.
+async function exportTacticImage(orientation, transparent){
+  if(!isElectron()){ toast('A exportação de imagem do Quadro Tático requer a aplicação instalada (não funciona num browser comum).'); return; }
+  const savePath = await window.api.saveTacticImage(orientation);
+  if(!savePath) return;
+  toast('A preparar imagem…');
+  try{
+    const urls = new Set();
+    Object.values(tokens).forEach(tk=>{ if(tk.kind==='image' && tk.imageUrl) urls.add(tk.imageUrl); });
+    await Promise.all([...urls].map(u=>new Promise(res=>{
+      const img = getShapeImage(u);
+      if(img.complete) res(); else img.addEventListener('load', res, {once:true});
+    })));
+    const bgImg = await getPitchBackgroundImage(boardMode, transparent);
+    const pitchW = bgImg.naturalWidth, pitchH = bgImg.naturalHeight;
+    // "Alta resolução": 2400px no lado maior — nítido em qualquer ecrã/impressão sem ficheiros
+    // absurdamente grandes (isto é uma imagem plana com poucas cores sólidas, não uma fotografia).
+    const LONG = 2400, SHORT = 1350;
+    const canvasW = orientation==='portrait' ? SHORT : LONG;
+    const canvasH = orientation==='portrait' ? LONG : SHORT;
+    const off = document.createElement('canvas');
+    off.width = canvasW; off.height = canvasH;
+    const octx = off.getContext('2d');
+    if(!transparent){
+      // Mesmo fundo escuro do resto da aplicação à volta do campo — só relevante quando a
+      // orientação pedida (paisagem larga ou retrato) não bate certo com a proporção real do campo,
+      // deixando uma margem à volta em vez de esticar/distorcer o campo para preencher tudo.
+      octx.fillStyle = '#0B1410';
+      octx.fillRect(0,0,canvasW,canvasH);
+    }
+    const scale = Math.min(canvasW/pitchW, canvasH/pitchH);
+    const drawW = pitchW*scale, drawH = pitchH*scale;
+    octx.save();
+    octx.translate((canvasW-drawW)/2, (canvasH-drawH)/2);
+    octx.scale(scale, scale);
+    // A "canvas" de mentira só serve para o cálculo relativo (canvas.width/height) que
+    // renderBoardFrameToCanvas e tudo o que ela chama já fazem — o desenho real vai parar ao
+    // canvas verdadeiro (off) através do ctx já traduzido/escalado acima, sem duplicar nenhuma
+    // lógica de desenho só para este caminho.
+    renderBoardFrameToCanvas(octx, {width:pitchW, height:pitchH}, tokens, tacticShapes, bgImg);
+    octx.restore();
+    const base64 = off.toDataURL('image/png').split(',')[1];
+    await window.api.writeTacticImage({dataUrlBase64: base64, outputPath: savePath});
+    toast('Imagem exportada: '+savePath);
+  }catch(err){
+    console.error(err);
+    toast('Falha ao exportar imagem.');
+  }
+}
+document.querySelectorAll('#exportImageFlyout [data-export-image]').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.getElementById('exportImageFlyout').classList.remove('pinned');
+    const transparent = document.getElementById('exportImageTransparent').checked;
+    exportTacticImage(b.dataset.exportImage, transparent);
+  });
+});
+document.querySelector('#exportImageFlyoutWrap > .btn').addEventListener('click', e=>{
+  e.stopPropagation();
+  document.getElementById('exportImageFlyout').classList.toggle('pinned');
+});
 document.querySelector('#exportFlyoutWrap > .btn').addEventListener('click', e=>{
   e.stopPropagation();
   document.getElementById('exportFlyout').classList.toggle('pinned');
 });
 document.addEventListener('click', e=>{
   if(!e.target.closest('#exportFlyoutWrap')) document.getElementById('exportFlyout').classList.remove('pinned');
+  if(!e.target.closest('#exportImageFlyoutWrap')) document.getElementById('exportImageFlyout').classList.remove('pinned');
 });
 
 /* ===================================================================

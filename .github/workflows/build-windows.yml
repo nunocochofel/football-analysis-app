@@ -41,26 +41,22 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.68 specifically — update this block for whatever the next release's own
+          # v0.8.69 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: seta poligonal (multi-segmento)**
+            **Quadro tático: exportar como imagem em alta resolução**
 
-            - Nova ferramenta de seta com várias dobras — clica para cada ponto de dobra,
-            duplo-clique termina. Útil para desenhar um movimento que contorna um adversário ou
-            muda de direção mais do que uma vez, em vez de várias setas retas separadas.
-            - Depois de criada, cada ponto de dobra fica com a sua própria alça — arrasta um
-            ponto individual para ajustar só essa parte do movimento, sem mexer no resto.
-            - Suporta as mesmas opções que já existiam para as outras linhas/setas: estilo
-            (contínua/tracejada/pontilhada/zigzag), espessura, cor, e pontas de seta numa ou nas
-            duas extremidades.
-            - Funciona como qualquer outra forma do quadro: selecionar, duplicar (Ctrl+D), apagar,
-            copiar/colar, bloquear, gravar em cenas e exportar em vídeo.
+            - Novo botão "📷 Exportar imagem" — tira o que o quadro tático mostra agora e grava
+            como PNG em alta resolução (2400px no lado maior), em **paisagem** ou **retrato**.
+            - Opção de **fundo transparente**: PNG só com as marcações do campo, jogadores e
+            desenhos, sem o relvado — para sobrepor a outro fundo (uma apresentação, um vídeo,
+            etc.).
+            - Acrescenta-se à exportação de vídeo das cenas (MP4/GIF) que já existia — essa
+            continua exatamente igual, para a sequência de cenas animada; esta é para uma imagem
+            só, direta do que está no ecrã.
 
-            Testado (15 verificações reais, Playwright + Electron): criação por cliques sucessivos
-            e duplo-clique a terminar; seleção pelo rato; alças de ponto visíveis e funcionais
-            (arrastar uma move só esse ponto); desfazer (Ctrl+Z) confirmado; duplicar e apagar
-            confirmados; gravada corretamente numa cena e reaberta sem exceções depois de fechar e
-            reabrir a aplicação; a exportação de vídeo das cenas (MP4) confirmada ponta-a-ponta
-            com ffmpeg real, com uma seta poligonal numa das cenas.
+            Testado (12 verificações reais, Playwright + Electron): paisagem e retrato exportados
+            com a resolução e orientação corretas; fundo transparente confirmado píxel a píxel
+            (canto fora do campo com transparência total); exportação de vídeo das cenas (MP4)
+            confirmada a continuar a funcionar sem alterações.
