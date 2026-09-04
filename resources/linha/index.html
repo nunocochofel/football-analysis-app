@@ -857,6 +857,10 @@
      isn't clipped by any token's own overflow:hidden/clip-path (the ball's hexagon panels, the
      goal's net) since the outline box sits outside the element's own painting area. */
   .token.selected{ outline:2.5px solid #4F8FC9; outline-offset:2px; }
+  /* Fase 4 — locked. Dimmed + desaturated is enough of a "this is protected" cue on its own; a
+     locked token stays fully visible, just visually muted, and cursor:not-allowed on hover backs
+     up "clicking here does nothing" for anyone who tries anyway. */
+  .token.locked{ opacity:.55; filter:grayscale(.4); cursor:not-allowed; }
 
   /* Rotation: a small handle above each token; drag it around the token to
      set its facing direction. It rides along with the token's own rotation
@@ -1862,6 +1866,7 @@
         <div class="toolbar-sep"></div>
         <button class="btn icon mobile-toolbar-primary" id="btnTacticUndo" title="Desfazer (Ctrl+Z)" disabled>↶</button>
         <button class="btn icon" id="btnTacticRedo" title="Refazer (Ctrl+Shift+Z)" disabled>↷</button>
+        <button class="btn icon" id="btnTacticDuplicate" title="Duplicar seleção (Ctrl+D)" disabled>⧉</button>
         <button class="btn icon" id="btnTacticDelete" title="Apagar seleção (Delete)" disabled>🗑</button>
         <button class="btn icon" id="btnTacticClear" title="Limpar desenhos">✕</button>
         <!-- Mobile only: reveals color swatches/line-style/clear/+Objeto/+Jogador/+Imagem/export —
@@ -1925,10 +1930,14 @@
           </div>
         </div>
       </div>
-      <!-- Fase 2 — right-click context menu ("clique direito → apagar"), shared by shapes and
-           tokens. Positioned in JS (openTacticContextMenu); only ever shows "Apagar" for now —
-           more actions (duplicar, camadas) join it in a later fase. -->
+      <!-- Fase 2/4 — right-click context menu ("clique direito → apagar"), shared by shapes and
+           tokens. Positioned in JS (openTacticContextMenu). The lock/unlock label and front/back
+           buttons are relabelled/hidden per selection by updateTacticContextMenuContents(). -->
       <div class="tactic-context-menu" id="tacticContextMenu">
+        <button id="tacticContextMenuDuplicate">⧉ Duplicar</button>
+        <button id="tacticContextMenuFront">⬆ Trazer para a frente</button>
+        <button id="tacticContextMenuBack">⬇ Enviar para trás</button>
+        <button id="tacticContextMenuLock">🔒 Bloquear</button>
         <button id="tacticContextMenuDelete">🗑 Apagar</button>
       </div>
       <div class="scenes-strip" id="scenesStrip">
@@ -6501,11 +6510,14 @@ document.addEventListener('keydown', e=>{
   if(/^[a-z0-9]$/i.test(e.key)){ openQuickCreateCategory(e.key); }
 });
 
-// Copy/paste a drawing (Ctrl/Cmd+C, Ctrl/Cmd+V) — works on whichever canvas (video or tactic
-// board) the mouse was last hovering over, since neither has an explicit "selected shape"
-// concept, only hover-driven interaction (same as the wheel-resize shortcut). A pasted shape
-// lands slightly offset from the original so it doesn't sit invisibly on top of it.
-let shapeClipboard = null;
+// Copy/paste a drawing (Ctrl/Cmd+C, Ctrl/Cmd+V). Video (out of scope for the tactic-board fases):
+// unchanged, still hover-based — findVisibleShapeAt(lastVideoHoverEvent), no selection concept
+// exists there yet. Tactic board (Fase 4): now copies the actual SELECTION (any mix of shapes and
+// tokens, one or many) instead of whatever the mouse happened to be hovering — "evoluir o Ctrl+C/
+// Ctrl+V que já existe... para trabalhar sobre a seleção real", as asked. A pasted item lands
+// slightly offset from its original so it doesn't sit invisibly on top of it.
+let shapeClipboard = null; // video only, from here on
+let tacticClipboard = null; // {shapes:[...], tokens:[...]} — tactic only
 document.addEventListener('keydown', e=>{
   if(!(e.ctrlKey || e.metaKey)) return;
   const key = e.key.toLowerCase();
@@ -6517,40 +6529,70 @@ document.addEventListener('keydown', e=>{
   const onTacticTab = document.getElementById('tab-tactic').classList.contains('active');
   if(!onVideoTab && !onTacticTab) return;
 
-  if(key==='c'){
-    let hit = null;
-    if(onVideoTab && lastVideoHoverEvent) hit = findVisibleShapeAt(lastVideoHoverEvent);
-    else if(onTacticTab && lastTacticHoverEvent) hit = findVisibleTacticShapeAt(lastTacticHoverEvent);
-    if(hit){ shapeClipboard = JSON.parse(JSON.stringify(hit)); toast('Desenho copiado — Ctrl+V para colar.'); }
-  } else if(key==='v'){
-    if(!shapeClipboard) return;
-    e.preventDefault();
-    const clone = JSON.parse(JSON.stringify(shapeClipboard));
-    const orig = cloneShapeGeometry(clone);
-    applyShapeGeometry(clone, orig, 0.03, 0.03);
-    if(onVideoTab){
+  if(onVideoTab){
+    if(key==='c'){
+      const hit = lastVideoHoverEvent ? findVisibleShapeAt(lastVideoHoverEvent) : null;
+      if(hit){ shapeClipboard = JSON.parse(JSON.stringify(hit)); toast('Desenho copiado — Ctrl+V para colar.'); }
+    } else if(key==='v'){
+      if(!shapeClipboard) return;
+      e.preventDefault();
+      const clone = JSON.parse(JSON.stringify(shapeClipboard));
+      const orig = cloneShapeGeometry(clone);
+      applyShapeGeometry(clone, orig, 0.03, 0.03);
       pushShape(clone);
       saveState(); renderShapeTimeline(); redrawShapes();
-    } else {
-      // Fase 2 — clone is a deep copy of the ORIGINAL hovered shape, so it still carries that
-      // shape's id unless given a fresh one here: two shapes sharing an id would make selection
-      // (a Set of ids) and getShapeBounds/hit lookups by id ambiguous between them.
-      pushTacticHistory();
-      clone.id = uid();
-      tacticShapes.push(clone);
-      redrawTactic();
+      toast('Desenho colado.');
     }
-    toast('Desenho colado.');
+    return;
+  }
+  // onTacticTab
+  if(key==='c'){
+    if(tacticSelectionEmpty()) return;
+    tacticClipboard = {
+      shapes: tacticShapes.filter(s=>selectedShapeIds.has(s.id)).map(s=>JSON.parse(JSON.stringify(s))),
+      tokens: [...selectedTokenIds].map(id=>tokens[id]).filter(Boolean).map(tk=>JSON.parse(JSON.stringify(tk)))
+    };
+    const n = tacticClipboard.shapes.length + tacticClipboard.tokens.length;
+    toast(n===1 ? 'Copiado — Ctrl+V para colar.' : `${n} copiados — Ctrl+V para colar.`);
+  } else if(key==='v'){
+    if(!tacticClipboard || (!tacticClipboard.shapes.length && !tacticClipboard.tokens.length)) return;
+    e.preventDefault();
+    pushTacticHistory();
+    const newShapeIds = [];
+    tacticClipboard.shapes.forEach(s=>{
+      const clone = JSON.parse(JSON.stringify(s));
+      clone.id = uid(); // Fase 2 — never reuse the copied id, see the matching comment history here
+      delete clone.locked;
+      const orig = cloneShapeGeometry(clone);
+      applyShapeGeometry(clone, orig, TACTIC_DUPLICATE_OFFSET, TACTIC_DUPLICATE_OFFSET);
+      tacticShapes.push(clone);
+      newShapeIds.push(clone.id);
+    });
+    const newTokenIds = [];
+    tacticClipboard.tokens.forEach(tk=>{
+      const clone = JSON.parse(JSON.stringify(tk));
+      const newId = (clone.kind || clone.teamId || 'tok') + '_' + uid();
+      clone.locked = false;
+      clone.x = clamp(clone.x + TACTIC_DUPLICATE_OFFSET*100, 0, 100);
+      clone.y = clamp(clone.y + TACTIC_DUPLICATE_OFFSET*100, 0, 100);
+      tokens[newId] = clone;
+      newTokenIds.push(newId);
+    });
+    selectedShapeIds = new Set(newShapeIds);
+    selectedTokenIds = new Set(newTokenIds);
+    redrawTactic(); renderTokens(); updateTacticDeleteButton();
+    toast('Colado.');
   }
 });
 
-// Fase 2 (quadro tático) — Delete/Backspace apaga a seleção, Ctrl+Z/Ctrl+Shift+Z desfaz/refaz.
-// Gated exactly like the tag-quickcreate handler above and the Ctrl+C/V one: bails out whenever
-// focus is on an input/textarea/select/contenteditable, so backspacing a player's name or a text
-// shape's own content never also deletes/undoes something on the board behind it — the app-wide
-// rule from this fase's own brief ("atalhos desativados enquanto escrevo texto"), applied to the
-// two literal keys this fase introduces, not just the future per-tool letter shortcuts. Scoped to
-// the tactic tab being active — the video tab has no selection/undo model yet (out of scope here).
+// Fase 2/4 (quadro tático) — Delete/Backspace apaga, Ctrl+Z/Ctrl+Shift+Z desfaz/refaz, Ctrl+D
+// duplica, [ / ] envia para trás / traz para a frente. Gated exactly like the tag-quickcreate
+// handler above and the Ctrl+C/V one: bails out whenever focus is on an input/textarea/select/
+// contenteditable, so backspacing a player's name or a text shape's own content never also
+// deletes/undoes something on the board behind it — the app-wide rule from Fase 2's own brief
+// ("atalhos desativados enquanto escrevo texto"), applied to every literal key these two fases
+// introduce, not just the future per-tool letter shortcuts. Scoped to the tactic tab being active
+// — the video tab has no selection/undo model yet (out of scope here).
 document.addEventListener('keydown', e=>{
   if(!document.getElementById('tab-tactic').classList.contains('active')) return;
   const activeEl = document.activeElement;
@@ -6565,6 +6607,18 @@ document.addEventListener('keydown', e=>{
   if((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase()==='z'){
     e.preventDefault();
     if(e.shiftKey) tacticRedo(); else tacticUndo();
+    return;
+  }
+  if((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase()==='d'){
+    if(tacticSelectionEmpty()) return;
+    e.preventDefault();
+    duplicateTacticSelection();
+    return;
+  }
+  if(!e.ctrlKey && !e.metaKey && !e.altKey && (e.key===']' || e.key==='[')){
+    if(tacticSelectionEmpty()) return;
+    e.preventDefault();
+    reorderTacticSelectionLayer(e.key===']');
   }
 });
 
@@ -8401,7 +8455,7 @@ function renderTokens(){
     const angle = tk.angle || 0;
     const scale = tk.scale || 1;
     const el = document.createElement('div');
-    el.className='token'+(kind!=='player' ? ' '+kind : '')+(selectedTokenIds.has(id) ? ' selected' : '');
+    el.className='token'+(kind!=='player' ? ' '+kind : '')+(selectedTokenIds.has(id) ? ' selected' : '')+(tk.locked ? ' locked' : '');
     el.style.left=tk.x+'%'; el.style.top=tk.y+'%';
     el.style.transform = `translate(-50%,-50%) rotate(${angle}deg) scale(${scale})`;
     if(kind==='ball') el.style.background = tk.color;
@@ -8440,7 +8494,7 @@ function renderTokens(){
       renderTokens(); updateTacticDeleteButton();
     }
     function startRotate(e){
-      if(tTool!=='move') return;
+      if(tTool!=='move' || tk.locked) return;
       e.stopPropagation(); e.preventDefault();
       updateSelectionOnTokenPointerDown(e);
       tRotateId = id;
@@ -8459,7 +8513,7 @@ function renderTokens(){
     hitArea.className = 'token-hit-area';
     el.appendChild(hitArea);
     function startDrag(e){
-      if(tTool!=='move') return;
+      if(tTool!=='move' || tk.locked) return;
       updateSelectionOnTokenPointerDown(e);
       tDragId=id;
       tDragHistoryPushed = false;
@@ -8479,7 +8533,7 @@ function renderTokens(){
     el.addEventListener('touchstart', startDrag, {passive:false});
     hitArea.addEventListener('touchstart', startDrag, {passive:false});
     el.addEventListener('wheel', e=>{
-      if(tTool!=='move') return;
+      if(tTool!=='move' || tk.locked) return;
       e.preventDefault(); e.stopPropagation();
       pushTacticHistoryDebounced();
       tk.scale = clamp((tk.scale||1) + (e.deltaY<0 ? 0.12 : -0.12), 0.4, 3);
@@ -8487,14 +8541,17 @@ function renderTokens(){
     }, {passive:false});
     el.addEventListener('dblclick', e=>{
       e.stopPropagation();
+      if(tk.locked) return;
       pushTacticHistory();
       selectedTokenIds.delete(id);
       delete tokens[id];
       renderTokens();
     });
-    // Fase 2 — tokens are plain DOM elements (siblings of tacticCanvas, not children of it), so a
-    // right-click here never reaches tacticCanvas's own 'contextmenu' listener — needs its own,
-    // mirroring the same select-then-open-menu behavior shapes get.
+    // Fase 2/4 — tokens are plain DOM elements (siblings of tacticCanvas, not children of it), so
+    // a right-click here never reaches tacticCanvas's own 'contextmenu' listener — needs its own,
+    // mirroring the same select-then-open-menu behavior shapes get. Deliberately NOT gated on
+    // tk.locked — right-click is the one path that always works on a locked token too, since
+    // otherwise a locked token could never be unlocked again through the UI.
     el.addEventListener('contextmenu', e=>{
       e.preventDefault(); e.stopPropagation();
       if(tTool!=='move') return;
@@ -8502,6 +8559,7 @@ function renderTokens(){
         selectedShapeIds.clear(); selectedTokenIds.clear(); selectedTokenIds.add(id);
         renderTokens(); updateTacticDeleteButton();
       }
+      updateTacticContextMenuContents();
       openTacticContextMenu(e.clientX, e.clientY);
     });
     tacticPitch.appendChild(el);
@@ -8774,6 +8832,12 @@ function eraseTacticShapeAt(e){
   const p = tRelPt(e);
   const px = p.x*tacticCanvas.width, py = p.y*tacticCanvas.height;
   for(let i=tacticShapes.length-1;i>=0;i--){
+    // Fase 4 — locked shapes are invisible to the eraser (and to click-select/box-select/wheel-
+    // resize/dblclick-edit below) on purpose: "não mexer por acidente ao desenhar por cima" only
+    // means anything if the protected shape genuinely can't be touched by casual interaction.
+    // Right-click stays lock-blind everywhere (see findVisibleTacticShapeAt) — the one deliberate,
+    // explicit way to reach a locked shape at all, including to unlock it.
+    if(tacticShapes[i].locked) continue;
     if(shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){
       pushTacticHistory();
       selectedShapeIds.delete(tacticShapes[i].id);
@@ -8796,6 +8860,7 @@ tacticCanvas.addEventListener('contextmenu', e=>{
       selectedShapeIds.clear(); selectedTokenIds.clear(); selectedShapeIds.add(hitShape.id);
       renderTokens(); redrawTactic(); updateTacticDeleteButton();
     }
+    updateTacticContextMenuContents();
     openTacticContextMenu(e.clientX, e.clientY);
   }
 });
@@ -8830,6 +8895,7 @@ function startTacticCanvasInteraction(e){
     const clientPt = clientXY(e);
     let hit = null;
     for(let i=tacticShapes.length-1;i>=0;i--){
+      if(tacticShapes[i].locked) continue;
       if(shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){ hit = tacticShapes[i]; break; }
     }
     if(hit){
@@ -8904,6 +8970,7 @@ tacticCanvas.addEventListener('wheel', e=>{
   const px = p.x*tacticCanvas.width, py = p.y*tacticCanvas.height;
   let hit = null;
   for(let i=tacticShapes.length-1;i>=0;i--){
+    if(tacticShapes[i].locked) continue;
     if(tacticShapes[i].type==='text' && shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){ hit = tacticShapes[i]; break; }
   }
   if(!hit) return;
@@ -8941,6 +9008,7 @@ tacticCanvas.addEventListener('dblclick', e=>{
     const p = tRelPt(e);
     const px = p.x*tacticCanvas.width, py = p.y*tacticCanvas.height;
     for(let i=tacticShapes.length-1;i>=0;i--){
+      if(tacticShapes[i].locked) continue;
       if(tacticShapes[i].type==='text' && shapeHitTest(tacticShapes[i], px, py, tacticCanvas)){
         openTextEditPanelForTacticShape(tacticShapes[i], e);
         break;
@@ -8965,8 +9033,9 @@ function finishTacticBoxSelect(clientX, clientY){
   // don't let a near-zero-size box additionally "select" whatever tiny sliver it happened to cover.
   if(box.width < 3 && box.height < 3) return;
   if(!additive) clearTacticSelection();
-  tacticShapes.forEach(s=>{ if(rectsOverlap(getShapeBounds(s, tacticCanvas), box)) selectedShapeIds.add(s.id); });
+  tacticShapes.forEach(s=>{ if(!s.locked && rectsOverlap(getShapeBounds(s, tacticCanvas), box)) selectedShapeIds.add(s.id); });
   Object.entries(tokens).forEach(([id,tk])=>{
+    if(tk.locked) return;
     const px = tk.x/100*r.width, py = tk.y/100*r.height;
     if(px>=box.x && px<=box.x+box.width && py>=box.y && py<=box.y+box.height) selectedTokenIds.add(id);
   });
@@ -9069,6 +9138,28 @@ tacticPitch.addEventListener('touchend', e=>{
 function redrawTactic(){
   tctx.clearRect(0,0,tacticCanvas.width, tacticCanvas.height);
   tacticShapes.forEach(s=>drawShapeOnCtx(tctx, tacticCanvas, s));
+  // Fase 4 — a thin grey dashed box around every locked shape, always on (not just while
+  // selected) — the token equivalent of .token.locked's dimmed look, so a locked shape reads as
+  // "protected" at a glance instead of looking identical to any other shape until you try to
+  // click it and nothing happens.
+  const lockedShapes = tacticShapes.filter(s=>s.locked);
+  if(lockedShapes.length){
+    tctx.save();
+    tctx.strokeStyle = 'rgba(236,239,242,.5)'; tctx.lineWidth = 1; tctx.setLineDash([3,3]);
+    lockedShapes.forEach(s=>{
+      const b = getShapeBounds(s, tacticCanvas);
+      if(s.rotation){
+        const cx = b.x+b.width/2, cy = b.y+b.height/2;
+        tctx.save();
+        tctx.translate(cx,cy); tctx.rotate(s.rotation*Math.PI/180); tctx.translate(-cx,-cy);
+        tctx.strokeRect(b.x, b.y, b.width, b.height);
+        tctx.restore();
+      } else {
+        tctx.strokeRect(b.x, b.y, b.width, b.height);
+      }
+    });
+    tctx.restore();
+  }
   // Fase 2 — selection outline, drawn as a second pass over getShapeBounds so it never depends on
   // (or has to duplicate) each shape type's own drawing code.
   if(selectedShapeIds.size){
@@ -9124,11 +9215,95 @@ function deleteTacticSelection(){
   clearTacticSelection();
   redrawTactic(); renderTokens(); updateTacticDeleteButton();
 }
+// Fase 4 — also toggles #btnTacticDuplicate now (same enabled-iff-something-selected condition as
+// #btnTacticDelete) rather than a separate function, since every call site already needs both
+// updated together and there's no case where they'd ever disagree.
 function updateTacticDeleteButton(){
-  const btn = document.getElementById('btnTacticDelete');
-  if(btn) btn.disabled = tacticSelectionEmpty();
+  const empty = tacticSelectionEmpty();
+  const delBtn = document.getElementById('btnTacticDelete');
+  const dupBtn = document.getElementById('btnTacticDuplicate');
+  if(delBtn) delBtn.disabled = empty;
+  if(dupBtn) dupBtn.disabled = empty;
 }
 document.getElementById('btnTacticDelete').addEventListener('click', deleteTacticSelection);
+document.getElementById('btnTacticDuplicate').addEventListener('click', duplicateTacticSelection);
+
+// Fase 4 — Ctrl+D / duplicate: clones every selected shape and token with a fresh id (never the
+// original's — see the Ctrl+V id-collision comment elsewhere in this file for why that matters)
+// and a small offset so the copy doesn't sit invisibly on top of the original, then selects the
+// NEW copies — the usual convention, and immediately useful with the Fase 3 handles (duplicate,
+// then drag/resize the copy right away without an extra click to find it).
+const TACTIC_DUPLICATE_OFFSET = 0.03;
+function duplicateTacticSelection(){
+  if(tacticSelectionEmpty()) return;
+  pushTacticHistory();
+  const newShapeIds = [];
+  tacticShapes.slice().forEach(s=>{
+    if(!selectedShapeIds.has(s.id)) return;
+    const clone = JSON.parse(JSON.stringify(s));
+    clone.id = uid();
+    delete clone.locked; // a duplicate starts unlocked, even if the original was locked
+    const orig = cloneShapeGeometry(clone);
+    applyShapeGeometry(clone, orig, TACTIC_DUPLICATE_OFFSET, TACTIC_DUPLICATE_OFFSET);
+    tacticShapes.push(clone);
+    newShapeIds.push(clone.id);
+  });
+  const newTokenIds = [];
+  [...selectedTokenIds].forEach(id=>{
+    const tk = tokens[id]; if(!tk) return;
+    const newId = (tk.kind || tk.teamId || 'tok') + '_' + uid();
+    tokens[newId] = { ...JSON.parse(JSON.stringify(tk)), locked: false,
+      x: clamp(tk.x + TACTIC_DUPLICATE_OFFSET*100, 0, 100), y: clamp(tk.y + TACTIC_DUPLICATE_OFFSET*100, 0, 100) };
+    newTokenIds.push(newId);
+  });
+  selectedShapeIds = new Set(newShapeIds);
+  selectedTokenIds = new Set(newTokenIds);
+  redrawTactic(); renderTokens(); updateTacticDeleteButton();
+}
+
+// Fase 4 — bring to front / send to back. Rendering order IS z-order here: tacticShapes is drawn
+// front-to-back by array order (redrawTactic), and tokens (plain sibling DOM elements, no z-index
+// anywhere) stack by their insertion order in the `tokens` object — so "reorder" means a stable
+// partition into [untouched..., selected...] (front) or [selected..., untouched...] (back),
+// preserving each group's own relative order. Mixed shape+token selections reorder each
+// collection independently — there's no single shared stacking context between a <canvas> and
+// sibling <div>s to unify them into one order anyway.
+function reorderTacticSelectionLayer(toFront){
+  if(tacticSelectionEmpty()) return;
+  pushTacticHistory();
+  if(selectedShapeIds.size){
+    const selected = tacticShapes.filter(s=>selectedShapeIds.has(s.id));
+    const rest = tacticShapes.filter(s=>!selectedShapeIds.has(s.id));
+    tacticShapes = toFront ? rest.concat(selected) : selected.concat(rest);
+  }
+  if(selectedTokenIds.size){
+    const entries = Object.entries(tokens);
+    const selected = entries.filter(([id])=>selectedTokenIds.has(id));
+    const rest = entries.filter(([id])=>!selectedTokenIds.has(id));
+    tokens = Object.fromEntries(toFront ? rest.concat(selected) : selected.concat(rest));
+  }
+  redrawTactic(); renderTokens();
+}
+
+// Fase 4 — lock. A locked shape/token is invisible to click-select, box-select, the eraser tool,
+// wheel-resize and double-click-edit (see the .locked checks added at each of those call sites) —
+// "não mexer por acidente ao desenhar por cima" only holds if the protected object genuinely can't
+// be touched by any of the casual/incidental interactions. Right-click is the one deliberate
+// exception, everywhere: it's the only way back to a locked object, including to unlock it.
+function isTacticSelectionAllLocked(){
+  const shapesLocked = tacticShapes.filter(s=>selectedShapeIds.has(s.id));
+  const tokensLocked = [...selectedTokenIds].map(id=>tokens[id]).filter(Boolean);
+  if(!shapesLocked.length && !tokensLocked.length) return false;
+  return shapesLocked.every(s=>s.locked) && tokensLocked.every(t=>t.locked);
+}
+function toggleLockTacticSelection(){
+  if(tacticSelectionEmpty()) return;
+  pushTacticHistory();
+  const shouldLock = !isTacticSelectionAllLocked();
+  tacticShapes.forEach(s=>{ if(selectedShapeIds.has(s.id)) s.locked = shouldLock; });
+  selectedTokenIds.forEach(id=>{ if(tokens[id]) tokens[id].locked = shouldLock; });
+  redrawTactic(); renderTokens();
+}
 
 // Fase 2 — the right-click context menu. Callers (tacticCanvas's contextmenu handler, each
 // token's own) already select the right-clicked item before calling this — it only positions and
@@ -9141,6 +9316,28 @@ function openTacticContextMenu(clientX, clientY){
   tacticContextMenuEl.style.top = Math.min(clientY, window.innerHeight - h - 6) + 'px';
 }
 function closeTacticContextMenu(){ tacticContextMenuEl.style.display = 'none'; }
+// Fase 4 — relabels the lock button per the CURRENT selection's lock state each time the menu is
+// about to open (called from every contextmenu handler right before openTacticContextMenu).
+function updateTacticContextMenuContents(){
+  const lockBtn = document.getElementById('tacticContextMenuLock');
+  lockBtn.textContent = isTacticSelectionAllLocked() ? '🔓 Desbloquear' : '🔒 Bloquear';
+}
+document.getElementById('tacticContextMenuDuplicate').addEventListener('click', ()=>{
+  closeTacticContextMenu();
+  duplicateTacticSelection();
+});
+document.getElementById('tacticContextMenuFront').addEventListener('click', ()=>{
+  closeTacticContextMenu();
+  reorderTacticSelectionLayer(true);
+});
+document.getElementById('tacticContextMenuBack').addEventListener('click', ()=>{
+  closeTacticContextMenu();
+  reorderTacticSelectionLayer(false);
+});
+document.getElementById('tacticContextMenuLock').addEventListener('click', ()=>{
+  closeTacticContextMenu();
+  toggleLockTacticSelection();
+});
 document.getElementById('tacticContextMenuDelete').addEventListener('click', ()=>{
   closeTacticContextMenu();
   deleteTacticSelection();
@@ -9260,13 +9457,16 @@ function computeHandlePositions(bounds, rotationDeg){
 // The single selected shape/token these handles currently belong to — null whenever selection is
 // empty, mixed, or has more than one item (see updateTacticTransformHandles).
 function currentSingleTransformTarget(){
+  // Fase 4 — a locked item can still end up as the sole selected item via a deliberate right-click
+  // (the one path that's always lock-blind) — the handles must not show for it regardless, or
+  // locking would stop meaning anything the moment someone right-clicks the thing they locked.
   if(selectedShapeIds.size===1 && selectedTokenIds.size===0){
     const shape = tacticShapes.find(s=>selectedShapeIds.has(s.id));
-    return shape ? makeShapeTransformTarget(shape) : null;
+    return (shape && !shape.locked) ? makeShapeTransformTarget(shape) : null;
   }
   if(selectedTokenIds.size===1 && selectedShapeIds.size===0){
     const id = [...selectedTokenIds][0];
-    return tokens[id] ? makeTokenTransformTarget(id) : null;
+    return (tokens[id] && !tokens[id].locked) ? makeTokenTransformTarget(id) : null;
   }
   return null;
 }

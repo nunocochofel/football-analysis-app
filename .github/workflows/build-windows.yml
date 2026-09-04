@@ -41,32 +41,30 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.61 specifically — update this block for whatever the next release's own
+          # v0.8.62 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: redimensionar e rodar qualquer desenho ou boneco, com alças de
-            arrastar**
+            **Quadro tático: duplicar, copiar/colar a sério, camadas e bloquear**
 
-            Depois de selecionar e apagar (versão anterior), agora dá para pegar e transformar.
-            Selecionaste um desenho ou um boneco? Aparecem oito alças à volta — quatro nos cantos,
-            quatro no meio dos lados — mais uma alça de rodar. Funciona exactamente na mesma para
-            uma linha, uma zona, um texto, uma imagem ou um jogador — a mesma ferramenta para tudo:
+            - **Duplicar** — Ctrl+D ou o novo botão ⧉ clona a seleção inteira (desenhos e
+            bonecos juntos), com um pequeno desvio para nunca ficar escondido por baixo do
+            original, e já fica selecionado para continuares logo a trabalhar nele.
+            - **Copiar/colar evoluído** — Ctrl+C/Ctrl+V no quadro tático passam a copiar o que
+            está selecionado, não o que o rato calha estar a sobrevoar. Funciona com vários
+            objetos ao mesmo tempo.
+            - **Camadas** — `[` e `]`, ou o novo menu de contexto, enviam a seleção para trás ou
+            trazem-na para a frente de tudo o resto.
+            - **Bloquear** — protege um desenho ou boneco de ser mexido sem querer enquanto
+            desenhas por cima: um objeto bloqueado deixa de responder a clique, à caixa de
+            seleção e à borracha. O clique direito continua sempre a funcionar nele — é o único
+            caminho de volta, incluindo para o desbloquear.
 
-            - Os cantos redimensionam livremente (largura e altura independentes); os do meio dos
-            lados só mexem numa direção. Mantém Shift enquanto arrastas um canto para preservar a
-            proporção original.
-            - A alça de rodar roda à volta do centro, com o resto (alças incluídas) a acompanhar.
-            - Undo/redo cobre tudo isto também, e agora mantém o objeto selecionado depois de
-            desfazer — voltas a tentar sem teres de voltar a clicar nele.
-
-            As alças só aparecem quando tens exactamente um objeto selecionado — transformar vários
-            de uma vez fica para uma versão futura.
-
-            Testado (26 verificações reais, Playwright + Electron): redimensionar por cada um dos
-            oito tipos de alça, com e sem Shift, num desenho e num boneco; o canto oposto ao que
-            arrastas fica sempre fixo; rodar define o ângulo correctamente; desfazer reverte o
-            redimensionamento mantendo a seleção; mudar de ferramenta esconde as alças de imediato;
-            um desenho gravado antes desta versão (sem o novo campo de rotação) continua a abrir e
-            a funcionar sem alterações; a exportação de vídeo das cenas (MP4) confirmada
-            ponta-a-ponta com ffmpeg real.
+            Testado (28 verificações reais, Playwright + Electron): duplicar forma+boneco juntos
+            num só Ctrl+Z para desfazer tudo; copiar/colar comprovadamente pela seleção (testado
+            com o rato deliberadamente longe do objeto); reordenar camadas por teclado e por
+            menu; um objeto bloqueado confirmado imune a clique/caixa/borracha mas continua
+            acessível por clique direito, e as alças de transformar nunca aparecem nele mesmo
+            selecionado dessa forma; um projeto gravado antes desta versão (sem o novo campo de
+            bloqueio) continua a abrir e a funcionar sem alterações; a exportação de vídeo das
+            cenas (MP4) confirmada ponta-a-ponta com ffmpeg real.
