@@ -41,30 +41,28 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.66 specifically — update this block for whatever the next release's own
+          # v0.8.67 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: texto com sublinhado, alinhamento, tipo de letra e caixa de fundo**
+            **Quadro tático: rótulo dos jogadores (número/iniciais/nome) e destaque (halo)**
 
-            - **Sublinhado** e **alinhamento** (esquerda/centro/direita) para qualquer texto do
-            quadro tático.
-            - **Tipo de letra** — 5 opções (Inter, IBM Plex Mono, Georgia, Courier New, Trebuchet
-            MS), além do tamanho que já existia.
-            - **Caixa de fundo** — cor e transparência configuráveis, com contorno opcional, para
-            o texto continuar legível em cima de qualquer traço ou zona do quadro.
+            - **Rótulo dos jogadores** — escolhe mostrar o número (como sempre foi), as iniciais,
+            ou o nome completo (numa etiqueta por baixo de cada boneco). Aplica-se a todos os
+            jogadores do quadro de uma vez, e fica guardado no projeto.
+            - **Destacar (halo)** — um anel de brilho à volta de um boneco, para chamar a atenção
+            a um jogador ou objeto durante uma explicação. Liga/desliga pelo menu do botão
+            direito do rato, um ou vários de cada vez.
+            - Redimensionar bonecos e equipamento de treino (arrastando as alças ou com a roda do
+            rato) já funcionava — passa agora a estar mencionado na dica da barra de ferramentas,
+            para ser mais fácil de encontrar.
 
-            O vídeo mantém o editor de texto simples de sempre — esta mudança é só no quadro
-            tático. Os atalhos de teclado (Delete, Ctrl+D, etc.) ficam sempre suspensos enquanto
-            estás a escrever dentro da caixa de texto, para nunca apagar nem duplicar nada por
-            engano enquanto escreves.
-
-            Testado (35 verificações reais, Playwright + Electron): sublinhado, alinhamento, tipo
-            de letra e caixa de fundo aplicados e gravados corretamente; atalhos da app (Delete/
-            Ctrl+D) confirmados suspensos com o foco na caixa de texto; uma forma de texto gravada
-            antes desta versão (sem nenhum destes campos) abre com os valores por omissão
-            corretos — alinhamento à esquerda, sem sublinhado, sem caixa de fundo — a mesma
-            aparência que sempre teve; confirmado igual depois de fechar e reabrir a aplicação; o
-            editor de texto do vídeo confirmado a NÃO ganhar nenhum destes campos novos (exclusivos
-            do quadro tático); a exportação de vídeo das cenas (MP4) confirmada ponta-a-ponta com
-            ffmpeg real, incluindo uma forma de texto desta versão numa das cenas.
+            Testado (22 verificações reais, Playwright + Electron): os três modos de rótulo
+            aplicados e gravados corretamente, com a preferência a sobreviver a fechar e reabrir a
+            aplicação; um projeto gravado antes desta versão (sem esta preferência gravada) abre
+            sem exceções e assume "número", exatamente como sempre mostrou; destacar/remover
+            destaque testado num jogador via o menu de contexto, escondido corretamente quando só
+            uma forma desenhada (não um boneco) está selecionada; o destaque persiste dentro de
+            uma cena gravada e depois de fechar e reabrir a aplicação; a exportação de vídeo das
+            cenas (MP4) confirmada ponta-a-ponta com ffmpeg real, com um boneco destacado e em
+            modo "nome" numa das cenas.

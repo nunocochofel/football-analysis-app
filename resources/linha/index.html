@@ -884,6 +884,20 @@
      locked token stays fully visible, just visually muted, and cursor:not-allowed on hover backs
      up "clicking here does nothing" for anyone who tries anyway. */
   .token.locked{ opacity:.55; filter:grayscale(.4); cursor:not-allowed; }
+  /* Fase 9 — halo/destaque: a soft glow ring around the token, for calling attention to one player
+     during a walkthrough. A box-shadow (not outline) so it never collides visually or in the CSS
+     cascade with .selected's own outline — both can be visible on the same token at once. */
+  .token.halo{ box-shadow:0 0 0 5px rgba(242,194,48,.65), 0 0 14px 6px rgba(242,194,48,.45), 0 2px 6px rgba(0,0,0,.4); }
+  /* Fase 9 — the optional "nome" label (see renderTokens): a plain, unrotated/unscaled sibling
+     positioned at the same x/y as its token, offset down past the token's own footprint and any
+     scale it might have (a generous fixed offset rather than reading the token's live scale, since
+     the label is meant to stay a fixed, easily-readable size regardless of how big the token is). */
+  .token-name-label{
+    position:absolute; top:0; left:0; transform:translate(-50%, 16px); white-space:nowrap;
+    font-size:10px; font-weight:600; color:var(--chalk); background:rgba(8,17,10,.72);
+    padding:1px 5px; border-radius:4px; pointer-events:none; user-select:none;
+  }
+  .token-name-label.locked{ opacity:.55; }
 
   /* Rotation: a small handle above each token; drag it around the token to
      set its facing direction. It rides along with the token's own rotation
@@ -1962,7 +1976,15 @@
           🖼 + Imagem
           <input type="file" id="fileTacticImage" accept="image/*" style="display:none">
         </label>
-        <span class="mono" style="color:var(--muted); font-size:11px;">(arrasta a pega ⚪ acima do objeto para o rodar · duplo-clique remove)</span>
+        <!-- Fase 9 — o que aparece dentro/junto de cada boneco jogador: número (como sempre foi),
+             iniciais (cabe na mesma bolinha), ou nome completo (numa etiqueta por baixo, a bolinha
+             continua a mostrar o número). Preferência do projeto, não por jogador. -->
+        <div id="tacticLabelModeGroup" class="tool-group" title="O que mostrar em cada jogador">
+          <button class="tool-btn active" data-labelmode="number" title="Número">#</button>
+          <button class="tool-btn" data-labelmode="initials" title="Iniciais">AB</button>
+          <button class="tool-btn" data-labelmode="name" title="Nome completo">Nome</button>
+        </div>
+        <span class="mono" style="color:var(--muted); font-size:11px;">(arrasta a pega ⚪ acima do objeto para o rodar · duplo-clique remove · arrasta as alças ou roda o rato sobre um objeto para o redimensionar)</span>
         <div style="flex:1;"></div>
         <div class="tool-flyout-wrap" id="exportFlyoutWrap">
           <button class="btn">⬇ Descarregar vídeo</button>
@@ -2009,6 +2031,10 @@
         <button id="tacticContextMenuFront">⬆ Trazer para a frente</button>
         <button id="tacticContextMenuBack">⬇ Enviar para trás</button>
         <button id="tacticContextMenuLock">🔒 Bloquear</button>
+        <!-- Fase 9 — só faz sentido para bonecos/objetos (não para formas desenhadas), por isso
+             fica escondido sempre que a seleção não incluir nenhum token — ver
+             updateTacticContextMenuContents(). -->
+        <button id="tacticContextMenuHalo">✨ Destacar</button>
         <button id="tacticContextMenuDelete">🗑 Apagar</button>
       </div>
       <div class="scenes-strip" id="scenesStrip">
@@ -2565,6 +2591,9 @@ function defaultState(){
     report:{matchName:'', date:''},
     drawColors: ['#ECEFF2','#E2A63B','#C1533D','#3F9142','#4F8FC9'],
     videoPath: null, // absolute filesystem path, only ever set inside the Electron app
+    // Fase 9 — 'number' reproduces the tactic board's look from every version before this one
+    // exactly (el.textContent was always tk.num); 'initials'/'name' are opt-in.
+    tokenLabelMode: 'number',
   };
 }
 
@@ -3063,7 +3092,7 @@ async function saveState(){
     localStorage.setItem('linha:project:' + currentProjectId, JSON.stringify({
       roster:state.roster, categories:state.categories, tags:state.tags, possession:state.possession,
       scenes:state.scenes, boxScenes:state.boxScenes, zoneScenes:state.zoneScenes, depthScenes:state.depthScenes,
-      report:state.report, videoPath:state.videoPath,
+      report:state.report, videoPath:state.videoPath, tokenLabelMode:state.tokenLabelMode,
       // Fase 0b — previously freeform (non-clip) drawings, unlike everything else here, never
       // reached this payload at all: they'd silently vanish on reload with no warning. Persisted
       // now like any other field; an older project simply has none saved, so it opens with the
@@ -3116,6 +3145,9 @@ async function loadState(){
       // every project saved before this change; falling back to [] reproduces exactly what those
       // projects already showed (an empty freeform layer), not a migration.
       videoShapes = parsed.videoShapes || [];
+      // Fase 9 — a project saved before this fase has no tokenLabelMode at all; falling back to
+      // 'number' reproduces exactly what it already showed (only the number was ever rendered).
+      state.tokenLabelMode = parsed.tokenLabelMode || 'number';
     }
   }catch(e){ /* no saved data yet */ }
 }
@@ -3124,6 +3156,14 @@ async function loadState(){
    UTIL
 =================================================================== */
 function uid(){ return Math.random().toString(36).slice(2,10); }
+// Fase 9 — "AB" for a two-word name, first 2 letters of a one-word name; empty/whitespace-only
+// input falls back to '' so the caller can decide its own fallback (the token's number).
+function initialsFromName(name){
+  const parts = (name||'').trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return '';
+  if(parts.length===1) return parts[0].slice(0,2).toUpperCase();
+  return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
+}
 function fmtTime(sec){
   sec = Math.max(0, Math.floor(sec||0));
   const m = Math.floor(sec/60), s = sec%60;
@@ -9040,7 +9080,7 @@ function renderTokens(){
     const angle = tk.angle || 0;
     const scale = tk.scale || 1;
     const el = document.createElement('div');
-    el.className='token'+(kind!=='player' ? ' '+kind : '')+(selectedTokenIds.has(id) ? ' selected' : '')+(tk.locked ? ' locked' : '');
+    el.className='token'+(kind!=='player' ? ' '+kind : '')+(selectedTokenIds.has(id) ? ' selected' : '')+(tk.locked ? ' locked' : '')+(tk.halo ? ' halo' : '');
     el.style.left=tk.x+'%'; el.style.top=tk.y+'%';
     el.style.transform = `translate(-50%,-50%) rotate(${angle}deg) scale(${scale})`;
     if(kind==='ball') el.style.background = tk.color;
@@ -9050,7 +9090,25 @@ function renderTokens(){
       el.classList.toggle('token-striped', appearance.pattern==='vertical-stripes');
     }
     if(kind==='image') el.style.backgroundImage = `url(${tk.imageUrl})`;
-    el.textContent = kind==='player' ? tk.num : '';
+    // Fase 9 — 'number' (default, reproduces every version before this one exactly) always shows
+    // tk.num; 'initials' swaps it for the linked player's initials (falls back to the number when
+    // there's no linked player or no usable name); 'name' keeps the number inside the circle and
+    // adds a separate label below it (see the sibling .token-name-label appended further down —
+    // a name usually can't fit inside a 22px circle, but the number always already did).
+    const labelMode = state.tokenLabelMode || 'number';
+    let playerName = null;
+    if(kind==='player'){
+      const p = tk.pid ? playerById(tk.teamId, tk.pid) : null;
+      playerName = p ? p.name : null;
+      if(labelMode==='initials'){
+        const initials = playerName ? initialsFromName(playerName) : '';
+        el.textContent = initials || tk.num;
+      } else {
+        el.textContent = tk.num;
+      }
+    } else {
+      el.textContent = '';
+    }
     el.dataset.id=id;
     if(OBJECT_KINDS_WITH_FACING.has(kind)){
       const facing = document.createElement('div');
@@ -9148,6 +9206,18 @@ function renderTokens(){
       openTacticContextMenu(e.clientX, e.clientY);
     });
     tacticPitch.appendChild(el);
+    // Fase 9 — the "nome" label: a plain sibling, NOT a child of `el`, so it never inherits el's
+    // own rotate/scale transform (a name should stay upright and readable regardless of which way
+    // the token is facing) — positioned independently at the same x/y, offset down by CSS. Skipped
+    // entirely when there's no name to show, so a token with no linked player (or a blank name)
+    // just shows its circle exactly like 'number'/'initials' mode already does.
+    if(kind==='player' && labelMode==='name' && playerName){
+      const label = document.createElement('div');
+      label.className = 'token-name-label' + (tk.locked ? ' locked' : '');
+      label.style.left = tk.x+'%'; label.style.top = tk.y+'%';
+      label.textContent = playerName;
+      tacticPitch.appendChild(label);
+    }
   });
   // Fase 3 — a token click updates selection here without going through redrawTactic(), so the
   // transform handles need their own refresh call too, not just the one inside redrawTactic().
@@ -9453,6 +9523,25 @@ document.getElementById('tacticFillOpacity').addEventListener('input', e=>{
   tFillOpacity = Number(e.target.value)/100;
   document.getElementById('tacticFillOpacityVal').textContent = e.target.value+'%';
 });
+
+// Fase 9 — o que mostrar em cada boneco jogador. Ao contrário de tStrokeWidth/tFillPattern acima
+// (ajustes da PRÓXIMA forma a desenhar, nunca gravados), esta é uma preferência do PROJETO — vale
+// para todos os jogadores já colocados também, por isso muda logo tokens existentes e grava.
+document.querySelectorAll('#tacticLabelModeGroup .tool-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('#tacticLabelModeGroup .tool-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    state.tokenLabelMode = btn.dataset.labelmode;
+    renderTokens();
+    saveState();
+  });
+});
+function syncTacticLabelModeButtons(){
+  const mode = state.tokenLabelMode || 'number';
+  document.querySelectorAll('#tacticLabelModeGroup .tool-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.labelmode===mode);
+  });
+}
 
 let tDrawing=false, tStart=null, tZonePts=[];
 // Fase 5 — non-null only during a freehand drag: the accumulated point path (see the sampling in
@@ -9975,6 +10064,20 @@ function toggleLockTacticSelection(){
   selectedTokenIds.forEach(id=>{ if(tokens[id]) tokens[id].locked = shouldLock; });
   redrawTactic(); renderTokens();
 }
+// Fase 9 — halo/destaque, tokens only (a highlight ring makes sense on a player/object, not on a
+// drawn shape). Same all-or-none toggle convention as lock above: if every selected token already
+// has it, this turns it off for all of them; otherwise it turns it on for all of them.
+function isTacticSelectionAllHalo(){
+  const sel = [...selectedTokenIds].map(id=>tokens[id]).filter(Boolean);
+  return sel.length>0 && sel.every(t=>t.halo);
+}
+function toggleHaloTacticSelection(){
+  if(!selectedTokenIds.size) return;
+  pushTacticHistory();
+  const shouldHalo = !isTacticSelectionAllHalo();
+  selectedTokenIds.forEach(id=>{ if(tokens[id]) tokens[id].halo = shouldHalo; });
+  renderTokens();
+}
 
 // Fase 2 — the right-click context menu. Callers (tacticCanvas's contextmenu handler, each
 // token's own) already select the right-clicked item before calling this — it only positions and
@@ -9992,6 +10095,11 @@ function closeTacticContextMenu(){ tacticContextMenuEl.style.display = 'none'; }
 function updateTacticContextMenuContents(){
   const lockBtn = document.getElementById('tacticContextMenuLock');
   lockBtn.textContent = isTacticSelectionAllLocked() ? '🔓 Desbloquear' : '🔒 Bloquear';
+  // Fase 9 — halo only makes sense for tokens; hidden outright when the selection is shapes-only
+  // (a shape-only right-click still shows Duplicar/Trazer/Enviar/Bloquear/Apagar exactly as before).
+  const haloBtn = document.getElementById('tacticContextMenuHalo');
+  haloBtn.style.display = selectedTokenIds.size>0 ? '' : 'none';
+  haloBtn.textContent = isTacticSelectionAllHalo() ? '✨ Remover destaque' : '✨ Destacar';
 }
 document.getElementById('tacticContextMenuDuplicate').addEventListener('click', ()=>{
   closeTacticContextMenu();
@@ -10008,6 +10116,10 @@ document.getElementById('tacticContextMenuBack').addEventListener('click', ()=>{
 document.getElementById('tacticContextMenuLock').addEventListener('click', ()=>{
   closeTacticContextMenu();
   toggleLockTacticSelection();
+});
+document.getElementById('tacticContextMenuHalo').addEventListener('click', ()=>{
+  closeTacticContextMenu();
+  toggleHaloTacticSelection();
 });
 document.getElementById('tacticContextMenuDelete').addEventListener('click', ()=>{
   closeTacticContextMenu();
@@ -10436,6 +10548,15 @@ function drawTokenToCanvas(ctx, canvas, tk){
   } else {
     const r = kind==='ball' ? baseR*0.9 : baseR;
     const appearance = kind==='player' ? resolveTokenAppearance(tk) : null;
+    // Fase 9 — halo/destaque, matching the DOM view's glow ring (see .token.halo): drawn BEFORE
+    // the token itself so the token's own fill/stroke paints on top of it, same stacking as the
+    // CSS box-shadow does there. Absent for every token that existed before this fase (tk.halo
+    // undefined), so nothing changes for them.
+    if(tk.halo){
+      ctx.beginPath(); ctx.arc(0,0,r*1.35,0,Math.PI*2);
+      ctx.fillStyle = 'rgba(242,194,48,.35)'; ctx.fill();
+      ctx.lineWidth = Math.max(1, r*0.18); ctx.strokeStyle = 'rgba(242,194,48,.75)'; ctx.stroke();
+    }
     ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
     if(kind==='ball'){ ctx.fillStyle = '#fff'; ctx.fill(); }
     else { fillPlayerToken(ctx, r, appearance, tk.color); }
@@ -10444,7 +10565,13 @@ function drawTokenToCanvas(ctx, canvas, tk){
       const striped = appearance.pattern==='vertical-stripes';
       ctx.font = `700 ${Math.round(r*0.9)}px Inter, sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const label = String(tk.num||'');
+      // Fase 9 — same label-mode resolution as the DOM view's renderTokens(): 'number' (default)
+      // reproduces the label exactly as before this fase; 'initials' falls back to the number when
+      // there's no linked player or usable name.
+      const labelMode = state.tokenLabelMode || 'number';
+      const p = tk.pid ? playerById(tk.teamId, tk.pid) : null;
+      const playerName = p ? p.name : null;
+      const label = labelMode==='initials' ? ((playerName && initialsFromName(playerName)) || String(tk.num||'')) : String(tk.num||'');
       if(striped){
         // Matches the DOM view's white-text + dark-outline treatment (see .token-striped) — a
         // fixed text color can't stay legible against two different stripe colors at once.
@@ -10457,6 +10584,21 @@ function drawTokenToCanvas(ctx, canvas, tk){
       } else {
         ctx.fillStyle = '#08110A';
         ctx.fillText(label, 0, 0);
+      }
+      // Fase 9 — 'name' mode's separate label under the token, matching .token-name-label in the
+      // DOM view: drawn unrotated (restore the rotation first) so it stays upright and readable
+      // regardless of the token's own facing angle.
+      if(labelMode==='name' && playerName){
+        ctx.rotate(-angle);
+        ctx.font = `600 ${Math.round(canvas.width*0.011)}px Inter, sans-serif`;
+        const ty = r*1.35 + canvas.width*0.014;
+        const tw = ctx.measureText(playerName).width;
+        const padX = canvas.width*0.003, padY = canvas.width*0.0018;
+        ctx.fillStyle = 'rgba(8,17,10,.72)';
+        ctx.fillRect(-tw/2-padX, ty-padY-canvas.width*0.008, tw+padX*2, canvas.width*0.016+padY*2);
+        ctx.fillStyle = '#ECEFF2';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(playerName, 0, ty+canvas.width*0.008);
       }
     }
   }
@@ -10799,6 +10941,7 @@ function refreshAllUI(){
   safeRender(renderClipTable);
   safeRender(renderTouchlineFlags);
   safeRender(defaultTokens);
+  safeRender(syncTacticLabelModeButtons);
   safeRender(renderTokens);
   safeRender(redrawTactic);
   safeRender(renderScenesStrip);
