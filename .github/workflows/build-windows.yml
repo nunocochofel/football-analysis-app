@@ -41,30 +41,27 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.62 specifically — update this block for whatever the next release's own
+          # v0.8.63 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: duplicar, copiar/colar a sério, camadas e bloquear**
+            **Quadro tático: mão livre, curvas, e mais estilos de linha e seta**
 
-            - **Duplicar** — Ctrl+D ou o novo botão ⧉ clona a seleção inteira (desenhos e
-            bonecos juntos), com um pequeno desvio para nunca ficar escondido por baixo do
-            original, e já fica selecionado para continuares logo a trabalhar nele.
-            - **Copiar/colar evoluído** — Ctrl+C/Ctrl+V no quadro tático passam a copiar o que
-            está selecionado, não o que o rato calha estar a sobrevoar. Funciona com vários
-            objetos ao mesmo tempo.
-            - **Camadas** — `[` e `]`, ou o novo menu de contexto, enviam a seleção para trás ou
-            trazem-na para a frente de tudo o resto.
-            - **Bloquear** — protege um desenho ou boneco de ser mexido sem querer enquanto
-            desenhas por cima: um objeto bloqueado deixa de responder a clique, à caixa de
-            seleção e à borracha. O clique direito continua sempre a funcionar nele — é o único
-            caminho de volta, incluindo para o desbloquear.
+            - **Mão livre** — nova ferramenta ✎, desenha seguindo o rato em vez de só ligar dois
+            pontos.
+            - **Curva** 〜 — arrasta para criar (começa reta), depois dois pontos de controlo
+            amarelos ficam disponíveis para a moldares à mão. As alças de redimensionar/rodar
+            habituais continuam a funcionar nela também.
+            - **Traço-ponto** e **ondulada** juntam-se aos estilos de linha existentes — ondulada
+            é a convenção de futebol para "drible", disponível em linhas e setas.
+            - **Setas com ambas as pontas, ou sem ponta nenhuma** — novo grupo de botões ao lado
+            do estilo de linha, para além da seta simples de sempre.
 
-            Testado (28 verificações reais, Playwright + Electron): duplicar forma+boneco juntos
-            num só Ctrl+Z para desfazer tudo; copiar/colar comprovadamente pela seleção (testado
-            com o rato deliberadamente longe do objeto); reordenar camadas por teclado e por
-            menu; um objeto bloqueado confirmado imune a clique/caixa/borracha mas continua
-            acessível por clique direito, e as alças de transformar nunca aparecem nele mesmo
-            selecionado dessa forma; um projeto gravado antes desta versão (sem o novo campo de
-            bloqueio) continua a abrir e a funcionar sem alterações; a exportação de vídeo das
-            cenas (MP4) confirmada ponta-a-ponta com ffmpeg real.
+            Testado (22 verificações reais, Playwright + Electron): mão livre acumula um caminho
+            real, não só início/fim; curva confirmada reta ao nascer, dobra-se arrastando os
+            pontos de controlo sem mexer nos extremos, desfazer reverte só isso, e redimensionar
+            pela caixa genérica continua a funcionar nela; os novos estilos de linha e as novas
+            combinações de seta gravados corretamente; setas gravadas antes desta versão (sem os
+            novos campos) continuam a mostrar exatamente uma ponta, como sempre mostraram; a
+            exportação de vídeo das cenas (MP4) confirmada ponta-a-ponta com ffmpeg real, incluindo
+            uma curva na cena exportada.

@@ -780,6 +780,9 @@
   .tt-edge-ew{ width:7px; height:16px; border-radius:2px; cursor:ew-resize; }
   .tt-rotate{ width:11px; height:11px; border-radius:50%; cursor:grab; }
   .tt-rotate:active{ cursor:grabbing; }
+  /* Fase 5 — curve control points: amber + round, distinct from the blue resize/rotate handles
+     above, so it reads as "a different kind of control" at a glance. */
+  .tt-control{ width:9px; height:9px; border-radius:50%; cursor:move; background:var(--amber); border-color:var(--amber); }
   .token{
     position:absolute; width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center;
     font-size:10px; font-weight:700; color:#08110A; cursor:grab; border:2px solid rgba(0,0,0,.35);
@@ -1852,6 +1855,8 @@
         <button class="tool-btn mobile-toolbar-primary" data-ttool="move" title="Mover jogadores">✋</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="line" title="Linha">╱</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="arrow" title="Seta">➔</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="freehand" title="Mão livre">✎</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="curve" title="Curva (arrasta para desenhar; depois de criada, dois pontos de controlo ficam arrastáveis para a moldar)">〜</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="zone" title="Zona">▱</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="text" title="Texto">🔤</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (também podes selecionar e premir Delete, ou clicar com o botão direito → Apagar)">🧹</button>
@@ -1859,9 +1864,17 @@
         <div id="tacticColorSwatches" style="display:flex; gap:6px;"></div>
         <div class="toolbar-sep"></div>
         <div id="tacticLineStyleGroup" class="tool-group" title="Estilo da linha/seta">
-          <button class="tool-btn active" data-lstyle="solid" title="Linha contínua">▬</button>
-          <button class="tool-btn" data-lstyle="dashed" title="Linha tracejada">┅</button>
-          <button class="tool-btn" data-lstyle="dotted" title="Linha pontilhada">┈</button>
+          <button class="tool-btn active" data-lstyle="solid" title="Contínua — convenção: passe">▬</button>
+          <button class="tool-btn" data-lstyle="dashed" title="Tracejada — convenção: movimento sem bola">┅</button>
+          <button class="tool-btn" data-lstyle="dotted" title="Pontilhada">┈</button>
+          <button class="tool-btn" data-lstyle="dashdot" title="Traço-ponto">┉</button>
+          <button class="tool-btn" data-lstyle="zigzag" title="Ondulada — convenção: drible">〰</button>
+        </div>
+        <div class="toolbar-sep"></div>
+        <div id="tacticArrowheadGroup" class="tool-group" title="Pontas da seta (aplica-se à ferramenta Seta)">
+          <button class="tool-btn active" data-arrowheads="end" title="Seta só no fim">→</button>
+          <button class="tool-btn" data-arrowheads="both" title="Seta em ambos os extremos">↔</button>
+          <button class="tool-btn" data-arrowheads="none" title="Sem seta (linha simples)">—</button>
         </div>
         <div class="toolbar-sep"></div>
         <button class="btn icon mobile-toolbar-primary" id="btnTacticUndo" title="Desfazer (Ctrl+Z)" disabled>↶</button>
@@ -1927,6 +1940,11 @@
             <div class="tt-handle tt-corner" data-handle="sw" title="Arrasta para redimensionar (Shift mantém a proporção)"></div>
             <div class="tt-handle tt-edge-ew" data-handle="w" title="Arrasta para redimensionar (largura)"></div>
             <div class="tt-handle tt-rotate" data-handle="rotate" title="Arrasta para rodar"></div>
+            <!-- Fase 5 — curve control points. display:none by default; only ever revealed for a
+                 selected curve (updateTacticTransformHandles), styled distinctly from the resize/
+                 rotate handles above so it's clear these bend the curve, not resize a box. -->
+            <div class="tt-handle tt-control" data-handle="c1" title="Ponto de controlo 1 — arrasta para moldar a curva" style="display:none;"></div>
+            <div class="tt-handle tt-control" data-handle="c2" title="Ponto de controlo 2 — arrasta para moldar a curva" style="display:none;"></div>
           </div>
         </div>
       </div>
@@ -5796,6 +5814,25 @@ function distToSegment(p, a, b){
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(p.x-(a.x+t*(b.x-a.x)), p.y-(a.y+t*(b.y-a.y)));
 }
+// Fase 5 — builds a zigzag path from a to b (both canvas-pixel points) into the CURRENT path on
+// ctx (caller does beginPath/stroke) — the "drible" line-style convention. The final segment lands
+// exactly on b with no perpendicular offset, so an arrowhead drawn afterward at the overall a→b
+// angle still looks like it belongs to the line instead of pointing off at the last zag's angle.
+function pathZigzag(ctx, a, b){
+  const dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy);
+  if(len<1){ ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); return; }
+  const ux=dx/len, uy=dy/len, px=-uy, py=ux;
+  const period=14, amp=5;
+  const steps = Math.max(2, Math.round(len/period));
+  ctx.moveTo(a.x,a.y);
+  for(let i=1;i<=steps;i++){
+    const t = i/steps;
+    const cx = a.x+ux*len*t, cy = a.y+uy*len*t;
+    if(i===steps){ ctx.lineTo(cx,cy); break; }
+    const side = (i%2===0) ? 1 : -1;
+    ctx.lineTo(cx+px*amp*side, cy+py*amp*side);
+  }
+}
 // Fase 3 — rotation-transparent for anything WITHOUT a rotation (every video shape, every tactic
 // shape from before Fase 3): shape.rotation is only ever set by the new generic transform handles
 // on the tactic board, so this branch is dead code everywhere else. Rather than store rotated
@@ -5839,6 +5876,34 @@ function shapeHitTest(shape, px, py, canvas){
       if(((a.y>py)!==(b.y>py)) && (px < (b.x-a.x)*(py-a.y)/(b.y-a.y)+a.x)) inside = !inside;
     }
     return inside;
+  }
+  if(shape.type==='freehand'){
+    if(shape.points.length<2) return false;
+    const pts = shape.points.map(toP);
+    for(let i=0;i<pts.length-1;i++){
+      if(distToSegment({x:px,y:py}, pts[i], pts[i+1]) <= tol) return true;
+    }
+    return false;
+  }
+  if(shape.type==='curve'){
+    // No closed-form point-to-cubic-Bézier distance — sampled into short segments and tested the
+    // same way as any other polyline (freehand, zone). 24 samples is smooth enough at any on-screen
+    // curve length this board ever draws, and this only runs on a hit-test, not every frame.
+    const a=toP(shape.p1), b=toP(shape.p2), c1=toP(shape.c1), c2=toP(shape.c2);
+    const bez = (t) => {
+      const mt=1-t;
+      return {
+        x: mt*mt*mt*a.x + 3*mt*mt*t*c1.x + 3*mt*t*t*c2.x + t*t*t*b.x,
+        y: mt*mt*mt*a.y + 3*mt*mt*t*c1.y + 3*mt*t*t*c2.y + t*t*t*b.y
+      };
+    };
+    let prev = a;
+    for(let i=1;i<=24;i++){
+      const cur = bez(i/24);
+      if(distToSegment({x:px,y:py}, prev, cur) <= tol) return true;
+      prev = cur;
+    }
+    return false;
   }
   if(shape.type==='text'){
     const c = toP(shape.p);
@@ -5884,9 +5949,16 @@ function getShapeBounds(shape, canvas){
     const r = Math.max(18, (shape.radius||0.15)*canvas.width)+pad;
     return {x:c.x-r, y:c.y-r, width:r*2, height:r*2};
   }
-  if(shape.type==='zone'){
+  if(shape.type==='zone' || shape.type==='freehand'){
     if(!shape.points.length) return {x:0,y:0,width:0,height:0};
     const pts = shape.points.map(toP);
+    const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+    return {x:Math.min(...xs)-pad, y:Math.min(...ys)-pad, width:Math.max(...xs)-Math.min(...xs)+pad*2, height:Math.max(...ys)-Math.min(...ys)+pad*2};
+  }
+  if(shape.type==='curve'){
+    // A safe (slightly generous) box from the control polygon p1/c1/c2/p2 — a cubic Bézier curve
+    // never leaves its own control polygon's convex hull, so this always contains the actual curve.
+    const pts = [shape.p1, shape.c1, shape.c2, shape.p2].map(toP);
     const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
     return {x:Math.min(...xs)-pad, y:Math.min(...ys)-pad, width:Math.max(...xs)-Math.min(...xs)+pad*2, height:Math.max(...ys)-Math.min(...ys)+pad*2};
   }
@@ -5965,7 +6037,8 @@ function findVisibleShapeAt(e){
 function cloneShapeGeometry(shape){
   if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler') return {p1:{...shape.p1}, p2:{...shape.p2}};
   if(shape.type==='spot' || shape.type==='vignette') return {center:{...shape.center}};
-  if(shape.type==='zone') return {points: shape.points.map(p=>({...p}))};
+  if(shape.type==='zone' || shape.type==='freehand') return {points: shape.points.map(p=>({...p}))};
+  if(shape.type==='curve') return {p1:{...shape.p1}, p2:{...shape.p2}, c1:{...shape.c1}, c2:{...shape.c2}};
   if(shape.type==='text' || shape.type==='image') return {p:{...shape.p}};
   return {};
 }
@@ -5975,8 +6048,13 @@ function applyShapeGeometry(shape, orig, dx, dy){
     shape.p2 = {x:orig.p2.x+dx, y:orig.p2.y+dy};
   } else if(shape.type==='spot' || shape.type==='vignette'){
     shape.center = {x:orig.center.x+dx, y:orig.center.y+dy};
-  } else if(shape.type==='zone'){
+  } else if(shape.type==='zone' || shape.type==='freehand'){
     shape.points = orig.points.map(p=>({x:p.x+dx, y:p.y+dy}));
+  } else if(shape.type==='curve'){
+    shape.p1 = {x:orig.p1.x+dx, y:orig.p1.y+dy};
+    shape.p2 = {x:orig.p2.x+dx, y:orig.p2.y+dy};
+    shape.c1 = {x:orig.c1.x+dx, y:orig.c1.y+dy};
+    shape.c2 = {x:orig.c2.x+dx, y:orig.c2.y+dy};
   } else if(shape.type==='text' || shape.type==='image'){
     shape.p = {x:orig.p.x+dx, y:orig.p.y+dy};
   }
@@ -6308,12 +6386,21 @@ function renderShape(ctx, canvas, s, textFontBase){
   }
   ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth=2.5; ctx.lineCap='round';
   if(s.dashed) ctx.setLineDash([6,5]);
-  if((s.type==='line' || s.type==='arrow' || s.type==='ruler') && s.lineStyle && s.lineStyle!=='solid'){
-    ctx.setLineDash(s.lineStyle==='dotted' ? [2,6] : [10,7]);
+  // Fase 5 — dashdot/zigzag joined the existing solid/dashed/dotted set. zigzag isn't a dash
+  // pattern at all (setLineDash can't draw a wave) — it's handled as a different PATH below
+  // instead (pathZigzag), so it's deliberately excluded here to avoid ALSO dashing a path that's
+  // already visually broken up by its own shape.
+  if((s.type==='line' || s.type==='arrow' || s.type==='ruler') && s.lineStyle && s.lineStyle!=='solid' && s.lineStyle!=='zigzag'){
+    ctx.setLineDash(s.lineStyle==='dotted' ? [2,6] : s.lineStyle==='dashdot' ? [9,4,2,4] : [10,7]);
+  }
+  function strokeLineOrZigzag(a, b){
+    ctx.beginPath();
+    if(s.lineStyle==='zigzag') pathZigzag(ctx, a, b); else { ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); }
+    ctx.stroke();
   }
   if(s.type==='line' || s.type==='ruler'){
     const a=toP(s.p1), b=toP(s.p2);
-    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    strokeLineOrZigzag(a, b);
     if(s.type==='ruler'){
       const dist = Math.hypot(b.x-a.x, b.y-a.y);
       let label;
@@ -6326,14 +6413,41 @@ function renderShape(ctx, canvas, s, textFontBase){
     }
   } else if(s.type==='arrow'){
     const a=toP(s.p1), b=toP(s.p2);
-    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    strokeLineOrZigzag(a, b);
     const ang = Math.atan2(b.y-a.y, b.x-a.x);
     const size=10;
+    // Fase 5 — arrowStart/arrowEnd: absent on every arrow drawn before this fase, which always
+    // meant exactly "head at p2 only" — the two undefined-defaults below reproduce that exactly.
+    const drawHead = (tip, pointBackAngle) => {
+      ctx.beginPath();
+      ctx.moveTo(tip.x, tip.y);
+      ctx.lineTo(tip.x-size*Math.cos(pointBackAngle-0.4), tip.y-size*Math.sin(pointBackAngle-0.4));
+      ctx.lineTo(tip.x-size*Math.cos(pointBackAngle+0.4), tip.y-size*Math.sin(pointBackAngle+0.4));
+      ctx.closePath(); ctx.fill();
+    };
+    if(s.arrowEnd !== false) drawHead(b, ang);
+    if(s.arrowStart === true) drawHead(a, ang+Math.PI);
+  } else if(s.type==='curve'){
+    // Fase 5 — cubic Bézier, p1/p2 endpoints + c1/c2 control points (all relative 0-1 coords, same
+    // convention as every other point-based shape). A freshly-placed curve has c1/c2 sitting ON
+    // the p1-p2 line (see finishTacticDrawing) so it starts perfectly straight — bending it is
+    // purely a matter of dragging c1/c2 afterward (see the dedicated control-point handles).
+    const a=toP(s.p1), b=toP(s.p2), c1=toP(s.c1), c2=toP(s.c2);
     ctx.beginPath();
-    ctx.moveTo(b.x,b.y);
-    ctx.lineTo(b.x-size*Math.cos(ang-0.4), b.y-size*Math.sin(ang-0.4));
-    ctx.lineTo(b.x-size*Math.cos(ang+0.4), b.y-size*Math.sin(ang+0.4));
-    ctx.closePath(); ctx.fill();
+    ctx.moveTo(a.x,a.y);
+    ctx.bezierCurveTo(c1.x,c1.y, c2.x,c2.y, b.x,b.y);
+    ctx.stroke();
+  } else if(s.type==='freehand'){
+    // Fase 5 — an open polyline through every sampled point (see the mousemove sampling in
+    // startTacticCanvasInteraction/updateTacticPointerMove) — never closed/filled, unlike zone,
+    // which this otherwise closely resembles (both are just "points[]", see getShapeBounds/
+    // resizeShapeToBoundsPx treating them identically).
+    if(s.points.length>=2){
+      ctx.beginPath();
+      const p0=toP(s.points[0]); ctx.moveTo(p0.x,p0.y);
+      s.points.slice(1).forEach(p=>{ const px=toP(p); ctx.lineTo(px.x,px.y); });
+      ctx.stroke();
+    }
   } else if(s.type==='spot'){
     drawSpotlightToCanvas(ctx, canvas, s);
   } else if(s.type==='vignette'){
@@ -8207,7 +8321,12 @@ let tokens = {}; // id -> {x,y (0-100), teamId|'ball', num,label,color}
 let tacticShapes = [];
 let tTool = 'move';
 let tColor = state.drawColors[1];
-let tLineStyle = 'solid'; // 'solid' | 'dashed' | 'dotted' — applies to line/arrow
+let tLineStyle = 'solid'; // 'solid' | 'dashed' | 'dotted' | 'dashdot' | 'zigzag' — applies to line/arrow
+// Fase 5 — which end(s) of a NEW arrow get an arrowhead, set by #tacticArrowheadGroup exactly like
+// tLineStyle above. Stored per-shape as arrowStart/arrowEnd booleans (see finishTacticDrawing) so
+// existing arrows — which never had these fields, only ever drew a head at p2 — keep doing exactly
+// that: absence defaults to {arrowStart:false, arrowEnd:true} at render time, not here.
+let tArrowHeads = 'end'; // 'end' | 'both' | 'none'
 let tDragId = null;
 // Fase 2 — true only once pushTacticHistory() has already run for the CURRENT drag/rotate gesture
 // (set false at gesture start, true on its first actual mutation in updateTacticPointerMove) — a
@@ -8711,10 +8830,20 @@ function updateTacticPointerMove(clientX, clientY){
     if(el){ el.style.left=x+'%'; el.style.top=y+'%'; } else { renderTokens(); }
     return;
   }
-  if(tDrawing){
+  if(tDrawing && tFreehandPts){
+    const p = tRelPtXY(clientX, clientY);
+    const last = tFreehandPts[tFreehandPts.length-1];
+    if(Math.hypot(p.x-last.x, p.y-last.y) >= TACTIC_FREEHAND_MIN_STEP) tFreehandPts.push(p);
+    redrawTactic();
+    drawShapeOnCtx(tctx, tacticCanvas, {type:'freehand', points:tFreehandPts, color:tColor, lineStyle:tLineStyle});
+  } else if(tDrawing){
     const p = tRelPtXY(clientX, clientY);
     redrawTactic();
-    drawShapeOnCtx(tctx, tacticCanvas, {type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
+    // curve: previewed as a plain straight line while dragging — it genuinely IS one at this point
+    // (c1/c2 don't exist yet, see finishTacticDrawing), bending only ever happens afterward via
+    // the dedicated control-point handles.
+    const previewType = tTool==='curve' ? 'line' : tTool;
+    drawShapeOnCtx(tctx, tacticCanvas, {type:previewType, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
   } else if(tZonePts.length){
     redrawTactic();
     const pts = tZonePts.concat([tRelPtXY(clientX, clientY)]);
@@ -8821,8 +8950,23 @@ document.querySelectorAll('[data-ttool]').forEach(b=>{
 document.querySelector('[data-ttool="move"]').classList.add('active');
 buildColorSwatches('tacticColorSwatches', c=>tColor=c);
 wireLineStyleGroup('tacticLineStyleGroup', v=>tLineStyle=v);
+// Fase 5 — same toggle-group pattern as wireLineStyleGroup, kept separate rather than
+// generalizing that helper for a `dataset.arrowheads` key used in exactly one place.
+document.querySelectorAll('#tacticArrowheadGroup .tool-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('#tacticArrowheadGroup .tool-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    tArrowHeads = btn.dataset.arrowheads;
+  });
+});
 
 let tDrawing=false, tStart=null, tZonePts=[];
+// Fase 5 — non-null only during a freehand drag: the accumulated point path (see the sampling in
+// updateTacticPointerMove). tDrawing is still set true alongside it (reuses the exact same
+// mousedown/mouseup plumbing every other drag tool already has), this is just the extra state a
+// straight p1→p2 tool never needed.
+let tFreehandPts = null;
+const TACTIC_FREEHAND_MIN_STEP = 0.006; // relative units — skip near-duplicate points from a slow drag
 function tRelPtXY(clientX, clientY){ const r=tacticPitch.getBoundingClientRect(); return {x:(clientX-r.left)/r.width, y:(clientY-r.top)/r.height}; }
 // Delegates to clientXY(e) so every existing call site (mousedown handlers throughout the tactic
 // board) transparently gains touch support without having to touch each one individually.
@@ -8938,6 +9082,7 @@ function startTacticCanvasInteraction(e){
   }
   e.preventDefault();
   tDrawing=true; tStart=p; tActiveTouchId = touchId;
+  if(tTool==='freehand') tFreehandPts = [p];
 }
 tacticCanvas.addEventListener('mousedown', startTacticCanvasInteraction);
 tacticCanvas.addEventListener('touchstart', e=>{
@@ -9067,10 +9212,35 @@ function finishTacticDrawing(e){
     p = tRelPt(e);
   }
   tDrawing=false;
+  // Fase 5 — freehand accumulates its own point array during the drag (see tFreehandPts sampling
+  // in updateTacticPointerMove) instead of just a start/end pair, so it's finalized separately —
+  // 2 points minimum (a single click with no real drag produces 1 and is discarded, same spirit as
+  // the dx/dy-below-threshold discard every other drag tool already has).
+  if(tFreehandPts){
+    if(tFreehandPts.length>=2){
+      pushTacticHistory();
+      tacticShapes.push({id:uid(), type:'freehand', points:tFreehandPts, color:tColor, lineStyle:tLineStyle});
+    }
+    tFreehandPts = null;
+    redrawTactic();
+    return;
+  }
   const dx=p.x-tStart.x, dy=p.y-tStart.y;
   if(Math.hypot(dx,dy)>0.005){
     pushTacticHistory();
-    tacticShapes.push({id:uid(), type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
+    if(tTool==='curve'){
+      // Starts perfectly straight: c1/c2 sit exactly 1/3 and 2/3 of the way from p1 to p2, which a
+      // cubic Bézier renders as a dead-straight line — bending it is then purely a matter of
+      // dragging c1/c2 afterward (see the dedicated control-point handles), never something you
+      // have to get right in the initial drag.
+      const c1 = {x:tStart.x+dx/3, y:tStart.y+dy/3}, c2 = {x:tStart.x+dx*2/3, y:tStart.y+dy*2/3};
+      tacticShapes.push({id:uid(), type:'curve', p1:tStart, p2:p, c1, c2, color:tColor});
+    } else if(tTool==='arrow'){
+      tacticShapes.push({id:uid(), type:'arrow', p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle,
+        arrowStart: tArrowHeads==='both', arrowEnd: tArrowHeads!=='none'});
+    } else {
+      tacticShapes.push({id:uid(), type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
+    }
   }
   redrawTactic();
 }
@@ -9087,6 +9257,7 @@ window.addEventListener('touchcancel', e=>{
   if(t===null) return;
   tacticTouchGestureEnded(e);
   tDrawing=false;
+  tFreehandPts = null;
   redrawTactic(); // clears the in-progress preview line left by updateTacticPointerMove
 });
 
@@ -9375,7 +9546,19 @@ function makeShapeTransformTarget(shape){
     getBoundsPx(){ return getShapeBounds(shape, tacticCanvas); },
     getRotation(){ return shape.rotation||0; },
     setRotation(deg){ shape.rotation = deg; },
-    applyBounds(next, orig){ resizeShapeToBoundsPx(shape, orig, next, tacticCanvas); }
+    applyBounds(next, orig){ resizeShapeToBoundsPx(shape, orig, next, tacticCanvas); },
+    // Fase 5 — curve-only: its two Bézier control points, in canvas-pixel space, so a caller never
+    // needs to know curves store them as relative 0-1 coords like everything else. null for every
+    // other type — the generic handle code below treats that as "no control points to show".
+    getControlPointsPx(){
+      if(shape.type!=='curve') return null;
+      return { c1: {x:shape.c1.x*tacticCanvas.width, y:shape.c1.y*tacticCanvas.height},
+               c2: {x:shape.c2.x*tacticCanvas.width, y:shape.c2.y*tacticCanvas.height} };
+    },
+    setControlPointPx(which, xPx, yPx){
+      if(shape.type!=='curve') return;
+      shape[which] = {x:xPx/tacticCanvas.width, y:yPx/tacticCanvas.height};
+    }
   };
 }
 function makeTokenTransformTarget(id){
@@ -9403,7 +9586,9 @@ function makeTokenTransformTarget(id){
       const r = tacticPitch.getBoundingClientRect();
       tk.x = clamp((next.x+next.width/2)/r.width*100, 0, 100);
       tk.y = clamp((next.y+next.height/2)/r.height*100, 0, 100);
-    }
+    },
+    getControlPointsPx(){ return null; }, // tokens never have curve control points
+    setControlPointPx(){}
   };
 }
 // Generic resize: shapes with real point geometry (line/arrow/ruler/zone) get every point remapped
@@ -9421,8 +9606,11 @@ function resizeShapeToBoundsPx(shape, orig, next, canvas){
   };
   if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler'){
     shape.p1 = remapPt(shape.p1); shape.p2 = remapPt(shape.p2);
-  } else if(shape.type==='zone'){
+  } else if(shape.type==='zone' || shape.type==='freehand'){
     shape.points = shape.points.map(remapPt);
+  } else if(shape.type==='curve'){
+    shape.p1 = remapPt(shape.p1); shape.p2 = remapPt(shape.p2);
+    shape.c1 = remapPt(shape.c1); shape.c2 = remapPt(shape.c2);
   } else if(!orig.width || !orig.height){
     /* degenerate origin box (a fresh zero-size shape) — nothing sane to scale from, skip */
   } else if(shape.type==='vignette'){
@@ -9475,10 +9663,25 @@ function updateTacticTransformHandles(){
   if(!target || tTool!=='move'){ tacticTransformHandlesEl.style.display='none'; return; }
   const bounds = target.getBoundsPx();
   if(!bounds.width && !bounds.height){ tacticTransformHandlesEl.style.display='none'; return; }
-  const positions = computeHandlePositions(bounds, target.getRotation());
+  const rotation = target.getRotation();
+  const positions = computeHandlePositions(bounds, rotation);
   tacticTransformHandlesEl.style.display='block';
-  tacticTransformHandlesEl.querySelectorAll('[data-handle]').forEach(el=>{
-    const p = positions[el.dataset.handle];
+  HANDLE_NAMES.concat('rotate').forEach(name=>{
+    const el = tacticTransformHandlesEl.querySelector(`[data-handle="${name}"]`);
+    const p = positions[name];
+    el.style.left = p.x+'px'; el.style.top = p.y+'px';
+  });
+  // Fase 5 — curve control points: only shown for a selected curve (getControlPointsPx returns
+  // null for everything else), positioned by rotating their LOCAL (unrotated, as stored) position
+  // around the same bounds-center every other handle uses — same convention renderShape itself
+  // applies when actually drawing a rotated curve.
+  const cps = target.getControlPointsPx();
+  const cx = bounds.x+bounds.width/2, cy = bounds.y+bounds.height/2;
+  ['c1','c2'].forEach(which=>{
+    const el = tacticTransformHandlesEl.querySelector(`[data-handle="${which}"]`);
+    if(!cps){ el.style.display = 'none'; return; }
+    const p = rotatePt(cps[which].x, cps[which].y, cx, cy, rotation);
+    el.style.display = 'block';
     el.style.left = p.x+'px'; el.style.top = p.y+'px';
   });
 }
@@ -9501,6 +9704,16 @@ function updateTacticTransform(clientX, clientY, shiftHeld){
     return;
   }
   const local = rotatePt(mx, my, cx, cy, -origRotation);
+  if(handle==='c1' || handle==='c2'){
+    // Fase 5 — a curve's control points move independently, not through the bounding-box remap
+    // every other handle uses: dragging c1/c2 IS the whole point of a curve tool, not a side
+    // effect of resizing it. local is already de-rotated into the shape's own frame — exactly
+    // what setControlPointPx expects to store, mirroring how it's read back in
+    // updateTacticTransformHandles.
+    target.setControlPointPx(handle, local.x, local.y);
+    redrawTactic();
+    return;
+  }
   const isCorner = handle.length===2;
   let next;
   if(isCorner){
