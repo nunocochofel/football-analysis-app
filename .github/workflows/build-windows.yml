@@ -41,28 +41,26 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.67 specifically — update this block for whatever the next release's own
+          # v0.8.68 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: rótulo dos jogadores (número/iniciais/nome) e destaque (halo)**
+            **Quadro tático: seta poligonal (multi-segmento)**
 
-            - **Rótulo dos jogadores** — escolhe mostrar o número (como sempre foi), as iniciais,
-            ou o nome completo (numa etiqueta por baixo de cada boneco). Aplica-se a todos os
-            jogadores do quadro de uma vez, e fica guardado no projeto.
-            - **Destacar (halo)** — um anel de brilho à volta de um boneco, para chamar a atenção
-            a um jogador ou objeto durante uma explicação. Liga/desliga pelo menu do botão
-            direito do rato, um ou vários de cada vez.
-            - Redimensionar bonecos e equipamento de treino (arrastando as alças ou com a roda do
-            rato) já funcionava — passa agora a estar mencionado na dica da barra de ferramentas,
-            para ser mais fácil de encontrar.
+            - Nova ferramenta de seta com várias dobras — clica para cada ponto de dobra,
+            duplo-clique termina. Útil para desenhar um movimento que contorna um adversário ou
+            muda de direção mais do que uma vez, em vez de várias setas retas separadas.
+            - Depois de criada, cada ponto de dobra fica com a sua própria alça — arrasta um
+            ponto individual para ajustar só essa parte do movimento, sem mexer no resto.
+            - Suporta as mesmas opções que já existiam para as outras linhas/setas: estilo
+            (contínua/tracejada/pontilhada/zigzag), espessura, cor, e pontas de seta numa ou nas
+            duas extremidades.
+            - Funciona como qualquer outra forma do quadro: selecionar, duplicar (Ctrl+D), apagar,
+            copiar/colar, bloquear, gravar em cenas e exportar em vídeo.
 
-            Testado (22 verificações reais, Playwright + Electron): os três modos de rótulo
-            aplicados e gravados corretamente, com a preferência a sobreviver a fechar e reabrir a
-            aplicação; um projeto gravado antes desta versão (sem esta preferência gravada) abre
-            sem exceções e assume "número", exatamente como sempre mostrou; destacar/remover
-            destaque testado num jogador via o menu de contexto, escondido corretamente quando só
-            uma forma desenhada (não um boneco) está selecionada; o destaque persiste dentro de
-            uma cena gravada e depois de fechar e reabrir a aplicação; a exportação de vídeo das
-            cenas (MP4) confirmada ponta-a-ponta com ffmpeg real, com um boneco destacado e em
-            modo "nome" numa das cenas.
+            Testado (15 verificações reais, Playwright + Electron): criação por cliques sucessivos
+            e duplo-clique a terminar; seleção pelo rato; alças de ponto visíveis e funcionais
+            (arrastar uma move só esse ponto); desfazer (Ctrl+Z) confirmado; duplicar e apagar
+            confirmados; gravada corretamente numa cena e reaberta sem exceções depois de fechar e
+            reabrir a aplicação; a exportação de vídeo das cenas (MP4) confirmada ponta-a-ponta
+            com ffmpeg real, com uma seta poligonal numa das cenas.
