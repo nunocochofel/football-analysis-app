@@ -1857,13 +1857,16 @@
         <button class="tool-btn mobile-toolbar-primary" data-ttool="arrow" title="Seta">➔</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="freehand" title="Mão livre">✎</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="curve" title="Curva (arrasta para desenhar; depois de criada, dois pontos de controlo ficam arrastáveis para a moldar)">〜</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="zone" title="Zona">▱</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="zone" title="Zona (polígono livre)">▱</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="ellipse" title="Elipse/círculo — arrasta a partir do centro">◯</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="rect" title="Retângulo">▭</button>
+        <button class="tool-btn mobile-toolbar-primary" data-ttool="triangle" title="Triângulo">△</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="text" title="Texto">🔤</button>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (também podes selecionar e premir Delete, ou clicar com o botão direito → Apagar)">🧹</button>
         <div class="toolbar-sep"></div>
         <div id="tacticColorSwatches" style="display:flex; gap:6px;"></div>
         <div class="toolbar-sep"></div>
-        <div id="tacticLineStyleGroup" class="tool-group" title="Estilo da linha/seta">
+        <div id="tacticLineStyleGroup" class="tool-group" title="Estilo do contorno/linha/seta">
           <button class="tool-btn active" data-lstyle="solid" title="Contínua — convenção: passe">▬</button>
           <button class="tool-btn" data-lstyle="dashed" title="Tracejada — convenção: movimento sem bola">┅</button>
           <button class="tool-btn" data-lstyle="dotted" title="Pontilhada">┈</button>
@@ -1871,10 +1874,35 @@
           <button class="tool-btn" data-lstyle="zigzag" title="Ondulada — convenção: drible">〰</button>
         </div>
         <div class="toolbar-sep"></div>
+        <div id="tacticStrokeWidthGroup" class="tool-group" title="Espessura do contorno/linha/seta">
+          <button class="tool-btn" data-strokewidth="1.5" title="Fina">▬</button>
+          <button class="tool-btn active" data-strokewidth="2.5" title="Média">▬</button>
+          <button class="tool-btn" data-strokewidth="4.5" title="Grossa">▬</button>
+        </div>
+        <div class="toolbar-sep"></div>
         <div id="tacticArrowheadGroup" class="tool-group" title="Pontas da seta (aplica-se à ferramenta Seta)">
           <button class="tool-btn active" data-arrowheads="end" title="Seta só no fim">→</button>
           <button class="tool-btn" data-arrowheads="both" title="Seta em ambos os extremos">↔</button>
           <button class="tool-btn" data-arrowheads="none" title="Sem seta (linha simples)">—</button>
+        </div>
+        <div class="toolbar-sep"></div>
+        <!-- Fase 6 — preenchimento (zona/elipse/retângulo/triângulo). Sem preenchimento fica com
+             o slider desativado (title explica) em vez de escondido, para não saltar o layout. -->
+        <div id="tacticFillPatternGroup" class="tool-group" title="Padrão de preenchimento (zona/elipse/retângulo/triângulo)">
+          <button class="tool-btn active" data-fillpattern="solid" title="Sólido">■</button>
+          <button class="tool-btn" data-fillpattern="hatch" title="Riscas">▤</button>
+          <button class="tool-btn" data-fillpattern="dots" title="Pontinhos">▦</button>
+          <button class="tool-btn" data-fillpattern="grid" title="Quadrícula">▧</button>
+          <button class="tool-btn" data-fillpattern="none" title="Sem preenchimento (só contorno)">▢</button>
+        </div>
+        <div id="tacticHatchAngleGroup" class="tool-group" title="Ângulo das riscas">
+          <button class="tool-btn active" data-hatchangle="45" title="45°">╱</button>
+          <button class="tool-btn" data-hatchangle="0" title="0°">▬</button>
+          <button class="tool-btn" data-hatchangle="90" title="90°">┃</button>
+        </div>
+        <div class="tool-group" title="Transparência do preenchimento" style="display:flex; align-items:center; gap:6px;">
+          <input type="range" id="tacticFillOpacity" min="0" max="100" value="16" style="width:70px;">
+          <span id="tacticFillOpacityVal" class="mono" style="font-size:10px; color:var(--muted); min-width:2.5em;">16%</span>
         </div>
         <div class="toolbar-sep"></div>
         <button class="btn icon mobile-toolbar-primary" id="btnTacticUndo" title="Desfazer (Ctrl+Z)" disabled>↶</button>
@@ -5833,6 +5861,58 @@ function pathZigzag(ctx, a, b){
     ctx.lineTo(cx+px*amp*side, cy+py*amp*side);
   }
 }
+// Fase 6 — one small offscreen tile per (color, pattern, angle) combination, cached so a shape
+// filled with a pattern doesn't rebuild its tile canvas on every single redraw (every mutation on
+// the tactic board repaints everything, see redrawTactic). Keyed by a plain string rather than a
+// nested Map structure — three short-lived scalars, not worth the extra machinery.
+const fillPatternCache = new Map();
+function getCachedFillStyle(ctx, color, pattern, angleDeg){
+  if(pattern==='solid' || !pattern) return color;
+  const key = pattern+'|'+color+'|'+(angleDeg||0);
+  let cached = fillPatternCache.get(key);
+  if(!cached){
+    const size = 12;
+    const off = document.createElement('canvas');
+    off.width = size; off.height = size;
+    const octx = off.getContext('2d');
+    octx.strokeStyle = color; octx.fillStyle = color;
+    if(pattern==='hatch'){
+      octx.save();
+      octx.translate(size/2, size/2); octx.rotate((angleDeg||45)*Math.PI/180); octx.translate(-size/2,-size/2);
+      octx.lineWidth = 1.4;
+      octx.beginPath(); octx.moveTo(-size, size/2); octx.lineTo(size*2, size/2); octx.stroke();
+      octx.restore();
+    } else if(pattern==='dots'){
+      octx.beginPath(); octx.arc(size/2, size/2, 1.3, 0, Math.PI*2); octx.fill();
+    } else if(pattern==='grid'){
+      octx.lineWidth = 1;
+      octx.beginPath();
+      octx.moveTo(0,0.5); octx.lineTo(size,0.5);
+      octx.moveTo(0.5,0); octx.lineTo(0.5,size);
+      octx.stroke();
+    }
+    cached = off;
+    fillPatternCache.set(key, cached);
+  }
+  return ctx.createPattern(cached, 'repeat');
+}
+// Fase 6 — the shared fill+stroke tail for every closed, fillable shape (zone/ellipse/rect/
+// triangle): the CURRENT path must already be built (moveTo/lineTo/ellipse/rect/etc.) when this
+// runs. fillPattern 'none' skips the fill entirely (outline only); every other combination —
+// including absent fillPattern/fillOpacity, from every zone drawn before this fase — reproduces
+// the exact old zone look (solid fill, 16% alpha) via the same defaults used here.
+function fillAndStrokeShapePath(ctx, s, closePathFirst){
+  if(closePathFirst) ctx.closePath();
+  const pattern = s.fillPattern || 'solid';
+  if(pattern !== 'none'){
+    ctx.save();
+    ctx.globalAlpha = (s.fillOpacity!=null ? s.fillOpacity : 0.16);
+    ctx.fillStyle = getCachedFillStyle(ctx, s.color, pattern, s.hatchAngle);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.stroke();
+}
 // Fase 3 — rotation-transparent for anything WITHOUT a rotation (every video shape, every tactic
 // shape from before Fase 3): shape.rotation is only ever set by the new generic transform handles
 // on the tactic board, so this branch is dead code everywhere else. Rather than store rotated
@@ -5853,6 +5933,34 @@ function shapeHitTest(shape, px, py, canvas){
   const tol = 12;
   if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler'){
     return distToSegment({x:px,y:py}, toP(shape.p1), toP(shape.p2)) <= tol;
+  }
+  if(shape.type==='ellipse'){
+    const a=toP(shape.p1), b=toP(shape.p2);
+    const cx=(a.x+b.x)/2, cy=(a.y+b.y)/2, rx=Math.abs(b.x-a.x)/2, ry=Math.abs(b.y-a.y)/2;
+    if(rx<1 || ry<1) return Math.hypot(px-cx, py-cy) <= tol;
+    // Normalized distance from center: <1 well inside, ~1 right on the edge, >1 outside — tol
+    // converted into the same normalized units (using the smaller radius keeps the tolerance from
+    // being unfairly generous on a very elongated ellipse).
+    const nd = Math.hypot((px-cx)/rx, (py-cy)/ry);
+    return nd <= 1 + tol/Math.min(rx,ry);
+  }
+  if(shape.type==='rect' || shape.type==='triangle'){
+    // Same edge-OR-interior technique as zone below, just against a fixed 4- or 3-point polygon
+    // derived from the bounding box instead of a user-clicked points[] array.
+    const a=toP(shape.p1), b=toP(shape.p2);
+    const x=Math.min(a.x,b.x), y=Math.min(a.y,b.y), w=Math.abs(b.x-a.x), h=Math.abs(b.y-a.y);
+    const pts = shape.type==='rect'
+      ? [{x,y},{x:x+w,y},{x:x+w,y:y+h},{x,y:y+h}]
+      : [{x:x+w/2,y},{x:x+w,y:y+h},{x,y:y+h}];
+    for(let i=0;i<pts.length;i++){
+      if(distToSegment({x:px,y:py}, pts[i], pts[(i+1)%pts.length]) <= tol) return true;
+    }
+    let inside = false;
+    for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+      const pa=pts[i], pb=pts[j];
+      if(((pa.y>py)!==(pb.y>py)) && (px < (pb.x-pa.x)*(py-pa.y)/(pb.y-pa.y)+pa.x)) inside = !inside;
+    }
+    return inside;
   }
   if(shape.type==='spot'){
     const c = toP(shape.center);
@@ -5935,7 +6043,11 @@ function shapeHitTest(shape, px, py, canvas){
 function getShapeBounds(shape, canvas){
   const toP = p => ({x:p.x*canvas.width, y:p.y*canvas.height});
   const pad = 6;
-  if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler'){
+  // Fase 6 — ellipse/rect/triangle store p1/p2 as their bounding box's own opposite corners
+  // (unlike line/arrow, where p1/p2 are just two points needing padding to get a clickable target)
+  // — reusing this branch is intentional, not a shortcut: it's what lets them share getShapeBounds/
+  // resizeShapeToBoundsPx/cloneShapeGeometry with line/arrow/ruler without any new code there.
+  if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler' || shape.type==='ellipse' || shape.type==='rect' || shape.type==='triangle'){
     const a=toP(shape.p1), b=toP(shape.p2);
     return {x:Math.min(a.x,b.x)-pad, y:Math.min(a.y,b.y)-pad, width:Math.abs(b.x-a.x)+pad*2, height:Math.abs(b.y-a.y)+pad*2};
   }
@@ -6035,7 +6147,7 @@ function findVisibleShapeAt(e){
   return null;
 }
 function cloneShapeGeometry(shape){
-  if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler') return {p1:{...shape.p1}, p2:{...shape.p2}};
+  if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler' || shape.type==='ellipse' || shape.type==='rect' || shape.type==='triangle') return {p1:{...shape.p1}, p2:{...shape.p2}};
   if(shape.type==='spot' || shape.type==='vignette') return {center:{...shape.center}};
   if(shape.type==='zone' || shape.type==='freehand') return {points: shape.points.map(p=>({...p}))};
   if(shape.type==='curve') return {p1:{...shape.p1}, p2:{...shape.p2}, c1:{...shape.c1}, c2:{...shape.c2}};
@@ -6043,7 +6155,7 @@ function cloneShapeGeometry(shape){
   return {};
 }
 function applyShapeGeometry(shape, orig, dx, dy){
-  if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler'){
+  if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler' || shape.type==='ellipse' || shape.type==='rect' || shape.type==='triangle'){
     shape.p1 = {x:orig.p1.x+dx, y:orig.p1.y+dy};
     shape.p2 = {x:orig.p2.x+dx, y:orig.p2.y+dy};
   } else if(shape.type==='spot' || shape.type==='vignette'){
@@ -6384,13 +6496,16 @@ function renderShape(ctx, canvas, s, textFontBase){
     ctx.rotate(s.rotation*Math.PI/180);
     ctx.translate(-cx, -cy);
   }
-  ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth=2.5; ctx.lineCap='round';
+  // Fase 6 — strokeWidth is optional on every shape type, not just the new filled ones: absent
+  // (every shape from before this fase) keeps drawing at the same 2.5 it always hardcoded here.
+  ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth = s.strokeWidth||2.5; ctx.lineCap='round';
   if(s.dashed) ctx.setLineDash([6,5]);
-  // Fase 5 — dashdot/zigzag joined the existing solid/dashed/dotted set. zigzag isn't a dash
-  // pattern at all (setLineDash can't draw a wave) — it's handled as a different PATH below
-  // instead (pathZigzag), so it's deliberately excluded here to avoid ALSO dashing a path that's
-  // already visually broken up by its own shape.
-  if((s.type==='line' || s.type==='arrow' || s.type==='ruler') && s.lineStyle && s.lineStyle!=='solid' && s.lineStyle!=='zigzag'){
+  // Fase 5/6 — dashdot/zigzag joined the existing solid/dashed/dotted set, now usable on the
+  // filled area shapes too (zone/ellipse/rect/triangle), not just line/arrow/ruler. zigzag isn't a
+  // dash pattern at all (setLineDash can't draw a wave) — it's handled as a different PATH below
+  // instead (pathZigzag) and only ever applies to line/arrow anyway (an outline can't zigzag).
+  const DASHABLE_TYPES = new Set(['line','arrow','ruler','zone','ellipse','rect','triangle']);
+  if(DASHABLE_TYPES.has(s.type) && s.lineStyle && s.lineStyle!=='solid' && s.lineStyle!=='zigzag'){
     ctx.setLineDash(s.lineStyle==='dotted' ? [2,6] : s.lineStyle==='dashdot' ? [9,4,2,4] : [10,7]);
   }
   function strokeLineOrZigzag(a, b){
@@ -6457,10 +6572,29 @@ function renderShape(ctx, canvas, s, textFontBase){
       ctx.beginPath();
       const p0 = toP(s.points[0]); ctx.moveTo(p0.x,p0.y);
       s.points.slice(1).forEach(p=>{ const px=toP(p); ctx.lineTo(px.x,px.y); });
-      if(!s.dashed) ctx.closePath();
-      ctx.globalAlpha=0.16; ctx.fill();
-      ctx.globalAlpha=1; ctx.stroke();
+      // Fase 6 — fillPattern/fillOpacity absent (every zone from before this fase) reproduces the
+      // exact old behavior: solid fill at a hardcoded 16% (0.16) alpha. !s.dashed keeping the path
+      // open for a dashed zone is untouched, pre-dates this fase.
+      fillAndStrokeShapePath(ctx, s, !s.dashed);
     }
+  } else if(s.type==='ellipse' || s.type==='rect' || s.type==='triangle'){
+    // Fase 6 — p1/p2 are the bounding box's opposite corners (same convention line/arrow already
+    // use, deliberately: it's what lets these three reuse getShapeBounds/resizeShapeToBoundsPx/
+    // cloneShapeGeometry's existing p1/p2 branch untouched, with zero new code there).
+    const a=toP(s.p1), b=toP(s.p2);
+    const x=Math.min(a.x,b.x), y=Math.min(a.y,b.y), w=Math.abs(b.x-a.x), h=Math.abs(b.y-a.y);
+    ctx.beginPath();
+    if(s.type==='ellipse'){
+      ctx.ellipse(x+w/2, y+h/2, w/2, h/2, 0, 0, Math.PI*2);
+    } else if(s.type==='rect'){
+      ctx.rect(x, y, w, h);
+    } else { // triangle — isoceles, apex at top-center, matching the toolbar glyph △
+      ctx.moveTo(x+w/2, y);
+      ctx.lineTo(x+w, y+h);
+      ctx.lineTo(x, y+h);
+      ctx.closePath();
+    }
+    fillAndStrokeShapePath(ctx, s, false);
   } else if(s.type==='text'){
     const c = toP(s.p);
     const fontSize = Math.max(9, Math.round(canvas.width*textFontBase) * (s.fontScale||1));
@@ -8327,6 +8461,12 @@ let tLineStyle = 'solid'; // 'solid' | 'dashed' | 'dotted' | 'dashdot' | 'zigzag
 // existing arrows — which never had these fields, only ever drew a head at p2 — keep doing exactly
 // that: absence defaults to {arrowStart:false, arrowEnd:true} at render time, not here.
 let tArrowHeads = 'end'; // 'end' | 'both' | 'none'
+// Fase 6 — same "current tool setting, applied at creation time" convention as tColor/tLineStyle/
+// tArrowHeads above, not a per-shape edit panel (none of zone/ellipse/rect/triangle has one).
+let tStrokeWidth = 2.5;
+let tFillPattern = 'solid'; // 'solid' | 'hatch' | 'dots' | 'grid' | 'none'
+let tHatchAngle = 45;
+let tFillOpacity = 0.16; // matches the zone tool's old hardcoded alpha exactly
 let tDragId = null;
 // Fase 2 — true only once pushTacticHistory() has already run for the CURRENT drag/rotate gesture
 // (set false at gesture start, true on its first actual mutation in updateTacticPointerMove) — a
@@ -8843,7 +8983,8 @@ function updateTacticPointerMove(clientX, clientY){
     // (c1/c2 don't exist yet, see finishTacticDrawing), bending only ever happens afterward via
     // the dedicated control-point handles.
     const previewType = tTool==='curve' ? 'line' : tTool;
-    drawShapeOnCtx(tctx, tacticCanvas, {type:previewType, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
+    drawShapeOnCtx(tctx, tacticCanvas, {type:previewType, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle,
+      strokeWidth:tStrokeWidth, fillPattern:tFillPattern, fillOpacity:tFillOpacity, hatchAngle:tHatchAngle});
   } else if(tZonePts.length){
     redrawTactic();
     const pts = tZonePts.concat([tRelPtXY(clientX, clientY)]);
@@ -8958,6 +9099,32 @@ document.querySelectorAll('#tacticArrowheadGroup .tool-btn').forEach(btn=>{
     btn.classList.add('active');
     tArrowHeads = btn.dataset.arrowheads;
   });
+});
+// Fase 6 — same toggle-group pattern, three more "current tool setting" groups.
+document.querySelectorAll('#tacticStrokeWidthGroup .tool-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('#tacticStrokeWidthGroup .tool-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    tStrokeWidth = Number(btn.dataset.strokewidth);
+  });
+});
+document.querySelectorAll('#tacticFillPatternGroup .tool-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('#tacticFillPatternGroup .tool-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    tFillPattern = btn.dataset.fillpattern;
+  });
+});
+document.querySelectorAll('#tacticHatchAngleGroup .tool-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('#tacticHatchAngleGroup .tool-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    tHatchAngle = Number(btn.dataset.hatchangle);
+  });
+});
+document.getElementById('tacticFillOpacity').addEventListener('input', e=>{
+  tFillOpacity = Number(e.target.value)/100;
+  document.getElementById('tacticFillOpacityVal').textContent = e.target.value+'%';
 });
 
 let tDrawing=false, tStart=null, tZonePts=[];
@@ -9145,7 +9312,8 @@ function findVisibleTacticShapeAt(e){
 tacticCanvas.addEventListener('dblclick', e=>{
   if(tTool==='zone' && tZonePts.length>=3){
     pushTacticHistory();
-    tacticShapes.push({id:uid(), type:'zone', points:tZonePts.slice(), color:tColor});
+    tacticShapes.push({id:uid(), type:'zone', points:tZonePts.slice(), color:tColor, lineStyle:tLineStyle,
+      strokeWidth:tStrokeWidth, fillPattern:tFillPattern, fillOpacity:tFillOpacity, hatchAngle:tHatchAngle});
     tZonePts=[]; redrawTactic();
     return;
   }
@@ -9219,7 +9387,7 @@ function finishTacticDrawing(e){
   if(tFreehandPts){
     if(tFreehandPts.length>=2){
       pushTacticHistory();
-      tacticShapes.push({id:uid(), type:'freehand', points:tFreehandPts, color:tColor, lineStyle:tLineStyle});
+      tacticShapes.push({id:uid(), type:'freehand', points:tFreehandPts, color:tColor, lineStyle:tLineStyle, strokeWidth:tStrokeWidth});
     }
     tFreehandPts = null;
     redrawTactic();
@@ -9228,18 +9396,22 @@ function finishTacticDrawing(e){
   const dx=p.x-tStart.x, dy=p.y-tStart.y;
   if(Math.hypot(dx,dy)>0.005){
     pushTacticHistory();
+    const FILL_TYPES = new Set(['ellipse','rect','triangle']);
     if(tTool==='curve'){
       // Starts perfectly straight: c1/c2 sit exactly 1/3 and 2/3 of the way from p1 to p2, which a
       // cubic Bézier renders as a dead-straight line — bending it is then purely a matter of
       // dragging c1/c2 afterward (see the dedicated control-point handles), never something you
       // have to get right in the initial drag.
       const c1 = {x:tStart.x+dx/3, y:tStart.y+dy/3}, c2 = {x:tStart.x+dx*2/3, y:tStart.y+dy*2/3};
-      tacticShapes.push({id:uid(), type:'curve', p1:tStart, p2:p, c1, c2, color:tColor});
+      tacticShapes.push({id:uid(), type:'curve', p1:tStart, p2:p, c1, c2, color:tColor, strokeWidth:tStrokeWidth});
     } else if(tTool==='arrow'){
-      tacticShapes.push({id:uid(), type:'arrow', p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle,
+      tacticShapes.push({id:uid(), type:'arrow', p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle, strokeWidth:tStrokeWidth,
         arrowStart: tArrowHeads==='both', arrowEnd: tArrowHeads!=='none'});
+    } else if(FILL_TYPES.has(tTool)){
+      tacticShapes.push({id:uid(), type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle, strokeWidth:tStrokeWidth,
+        fillPattern:tFillPattern, fillOpacity:tFillOpacity, hatchAngle:tHatchAngle});
     } else {
-      tacticShapes.push({id:uid(), type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle});
+      tacticShapes.push({id:uid(), type:tTool, p1:tStart, p2:p, color:tColor, lineStyle:tLineStyle, strokeWidth:tStrokeWidth});
     }
   }
   redrawTactic();
@@ -9604,7 +9776,7 @@ function resizeShapeToBoundsPx(shape, orig, next, canvas){
     const fy = orig.height ? (py-orig.y)/orig.height : 0.5;
     return { x: (next.x+fx*next.width)/canvas.width, y: (next.y+fy*next.height)/canvas.height };
   };
-  if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler'){
+  if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler' || shape.type==='ellipse' || shape.type==='rect' || shape.type==='triangle'){
     shape.p1 = remapPt(shape.p1); shape.p2 = remapPt(shape.p2);
   } else if(shape.type==='zone' || shape.type==='freehand'){
     shape.points = shape.points.map(remapPt);

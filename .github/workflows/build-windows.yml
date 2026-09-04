@@ -41,27 +41,29 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.63 specifically — update this block for whatever the next release's own
+          # v0.8.64 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: mão livre, curvas, e mais estilos de linha e seta**
+            **Quadro tático: elipse, retângulo, triângulo, padrões de preenchimento e
+            transparência**
 
-            - **Mão livre** — nova ferramenta ✎, desenha seguindo o rato em vez de só ligar dois
-            pontos.
-            - **Curva** 〜 — arrasta para criar (começa reta), depois dois pontos de controlo
-            amarelos ficam disponíveis para a moldares à mão. As alças de redimensionar/rodar
-            habituais continuam a funcionar nela também.
-            - **Traço-ponto** e **ondulada** juntam-se aos estilos de linha existentes — ondulada
-            é a convenção de futebol para "drible", disponível em linhas e setas.
-            - **Setas com ambas as pontas, ou sem ponta nenhuma** — novo grupo de botões ao lado
-            do estilo de linha, para além da seta simples de sempre.
+            - **Três formas novas** — elipse ◯, retângulo ▭ e triângulo △, ao lado da zona já
+            existente. Clicar em qualquer ponto DENTRO de uma forma preenchida seleciona-a, não
+            só o contorno.
+            - **Padrão de preenchimento** — sólido, riscas (com ângulo escolhível), pontinhos,
+            quadrícula, ou sem preenchimento nenhum (só o contorno). Aplica-se também à zona.
+            - **Transparência ajustável** — um slider (0–100%) controla o quão transparente fica
+            o preenchimento, em vez do valor fixo de sempre.
+            - **Espessura do contorno** — fina/média/grossa, e o contorno de qualquer forma
+            preenchida aceita agora os mesmos estilos de linha (tracejado, pontilhado, etc.) que
+            já existiam para linhas e setas.
 
-            Testado (22 verificações reais, Playwright + Electron): mão livre acumula um caminho
-            real, não só início/fim; curva confirmada reta ao nascer, dobra-se arrastando os
-            pontos de controlo sem mexer nos extremos, desfazer reverte só isso, e redimensionar
-            pela caixa genérica continua a funcionar nela; os novos estilos de linha e as novas
-            combinações de seta gravados corretamente; setas gravadas antes desta versão (sem os
-            novos campos) continuam a mostrar exatamente uma ponta, como sempre mostraram; a
-            exportação de vídeo das cenas (MP4) confirmada ponta-a-ponta com ffmpeg real, incluindo
-            uma curva na cena exportada.
+            Testado (23 verificações reais, Playwright + Electron): as três formas novas criadas
+            corretamente; clicar no interior de cada uma seleciona-a; opacidade/padrão/ângulo/
+            espessura escolhidos na barra gravados corretamente na forma criada a seguir; as
+            alças de redimensionar (Fase 3) e apagar (Fase 2) confirmadas a funcionar nas formas
+            novas; uma zona gravada antes desta versão (sem os campos novos) continua a abrir,
+            selecionável e clicável por dentro exatamente como antes; a exportação de vídeo das
+            cenas (MP4) confirmada ponta-a-ponta com ffmpeg real, incluindo as formas novas na
+            cena exportada.
