@@ -6136,9 +6136,22 @@ function drawTextPlaceholderBox(ctx, c, fontSize){
   ctx.restore();
 }
 
-// Generic version used both for the live preview canvas and for the offscreen
-// export canvas (so a clip's drawings render identically when recorded).
-function drawShapeToCanvas(ctx, canvas, s){
+// Fase 1 (quadro tático) — single parametrized renderer shared by both drawing surfaces. Before
+// this, the tactic board (drawShapeOnCtx) and the video canvas (this function) were two
+// hand-duplicated copies of the same per-type drawing logic that had already started to diverge
+// (the tactic board never got the 'ruler'/'spot'/'vignette'/'image' branches added here). Both
+// original names are kept below as thin wrappers so every existing call site keeps working
+// byte-for-byte unchanged — including the video clip export and the tactic scene export
+// (computeExportFrames), neither of which this task touches.
+// textFontBase is the one real behavioral difference the audit found between the two surfaces
+// (0.03 on the tactic board vs 0.022 on video, confirmed by reading both — not guessed) — kept as
+// an explicit parameter rather than picked to match one surface, so unifying the renderer doesn't
+// shrink or grow tactic-board text.
+// Note for future phases: the 'image' branch's redraw-on-decode callback calls redrawShapes()
+// (video-specific) — harmless today because the tactic board never creates type:'image' shapes
+// (only image TOKENS, a completely different DOM-based thing — see renderTokens), only relevant if
+// a later phase adds image shapes to the tactic board too.
+function renderShape(ctx, canvas, s, textFontBase){
   const toP = p => ({x:p.x*canvas.width, y:p.y*canvas.height});
   ctx.save();
   ctx.strokeStyle = s.color; ctx.fillStyle = s.color; ctx.lineWidth=2.5; ctx.lineCap='round';
@@ -6184,7 +6197,7 @@ function drawShapeToCanvas(ctx, canvas, s){
     }
   } else if(s.type==='text'){
     const c = toP(s.p);
-    const fontSize = Math.max(9, Math.round(canvas.width*0.022) * (s.fontScale||1));
+    const fontSize = Math.max(9, Math.round(canvas.width*textFontBase) * (s.fontScale||1));
     if(!s.text){
       drawTextPlaceholderBox(ctx, c, fontSize);
     } else {
@@ -6220,6 +6233,8 @@ function drawShapeToCanvas(ctx, canvas, s){
   }
   ctx.restore();
 }
+// video: 0.022, matches the pre-unification constant exactly (see the audit that found this).
+function drawShapeToCanvas(ctx, canvas, s){ renderShape(ctx, canvas, s, 0.022); }
 
 // Vignette: darkens the whole frame except a soft-edged circle, so attention
 // falls on whatever sits inside it (a player, the ball, a zone of the pitch).
@@ -8645,58 +8660,18 @@ function redrawTactic(){
   tctx.clearRect(0,0,tacticCanvas.width, tacticCanvas.height);
   tacticShapes.forEach(s=>drawShapeOnCtx(tctx, tacticCanvas, s));
 }
-function drawShapeOnCtx(ctx, canvas, s){
-  ctx.save();
-  ctx.strokeStyle=s.color; ctx.fillStyle=s.color; ctx.lineWidth=2.5; ctx.lineCap='round';
-  if(s.dashed) ctx.setLineDash([6,5]);
-  if((s.type==='line' || s.type==='arrow') && s.lineStyle && s.lineStyle!=='solid'){
-    ctx.setLineDash(s.lineStyle==='dotted' ? [2,6] : [10,7]);
-  }
-  const toP = p=>({x:p.x*canvas.width, y:p.y*canvas.height});
-  if(s.type==='line'){
-    const a=toP(s.p1), b=toP(s.p2);
-    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-  } else if(s.type==='arrow'){
-    const a=toP(s.p1), b=toP(s.p2);
-    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-    const ang=Math.atan2(b.y-a.y,b.x-a.x), size=10;
-    ctx.beginPath(); ctx.moveTo(b.x,b.y);
-    ctx.lineTo(b.x-size*Math.cos(ang-0.4), b.y-size*Math.sin(ang-0.4));
-    ctx.lineTo(b.x-size*Math.cos(ang+0.4), b.y-size*Math.sin(ang+0.4));
-    ctx.closePath(); ctx.fill();
-  } else if(s.type==='zone'){
-    if(s.points.length<2) return;
-    ctx.beginPath();
-    const p0=toP(s.points[0]); ctx.moveTo(p0.x,p0.y);
-    s.points.slice(1).forEach(p=>{ const px=toP(p); ctx.lineTo(px.x,px.y); });
-    if(!s.dashed) ctx.closePath();
-    ctx.globalAlpha=0.16; ctx.fill(); ctx.globalAlpha=1; ctx.stroke();
-  } else if(s.type==='text'){
-    const c = toP(s.p);
-    const fontSize = Math.max(9, Math.round(canvas.width*0.03) * (s.fontScale||1));
-    if(!s.text){
-      drawTextPlaceholderBox(ctx, c, fontSize);
-    } else {
-      const weight = s.bold===false ? '400' : '700';
-      const styleStr = s.italic ? 'italic ' : '';
-      ctx.font = `${styleStr}${weight} ${fontSize}px Inter, sans-serif`;
-      ctx.textBaseline = 'middle';
-      ctx.lineJoin = 'round';
-      ctx.strokeStyle = 'rgba(8,17,10,.85)';
-      ctx.lineWidth = fontSize/5;
-      ctx.fillStyle = s.color;
-      const lines = String(s.text).split('\n');
-      const lineHeight = fontSize*1.15;
-      const startY = c.y - (lines.length-1)*lineHeight/2;
-      lines.forEach((line, i)=>{
-        const y = startY + i*lineHeight;
-        ctx.strokeText(line, c.x, y);
-        ctx.fillText(line, c.x, y);
-      });
-    }
-  }
-  ctx.restore();
-}
+// Fase 1 — see the long comment above renderShape (video section) for why this is now a thin
+// wrapper instead of a hand-duplicated copy. tactic: 0.03, matches the pre-unification constant
+// exactly (see the audit that found this — tactic-board text used to render ~36% larger than
+// video text at the same canvas width, on purpose, kept identical here).
+// One real behavior difference on purpose, not an oversight: the old tactic-only zone branch did
+// `if(s.points.length<2) return;` INSIDE the ctx.save()/ctx.restore() pair — a zone shape with
+// fewer than 2 points (only possible transiently, before a zone-in-progress has its 2nd point)
+// returned without ever calling ctx.restore(), leaking one save onto the canvas context's state
+// stack. renderShape's video-derived version wraps the same check in an if(){} that still reaches
+// ctx.restore() either way — never visibly different (every shape sets its own strokeStyle/
+// fillStyle/lineWidth up front rather than relying on inherited state), just no longer leaks.
+function drawShapeOnCtx(ctx, canvas, s){ renderShape(ctx, canvas, s, 0.03); }
 document.getElementById('btnTacticUndo').addEventListener('click', ()=>{ tacticShapes.pop(); redrawTactic(); });
 document.getElementById('btnTacticClear').addEventListener('click', ()=>{ tacticShapes=[]; tZonePts=[]; redrawTactic(); });
 

@@ -41,27 +41,26 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.58 specifically — update this block for whatever the next release's own
+          # v0.8.59 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Dois desenhos que se perdiam sem aviso — corrigidos**
+            **Bastidores: o quadro tático e as anotações de vídeo passam a partilhar um único
+            desenhador**
 
-            Primeiro de vários lançamentos a refazer as ferramentas de desenho, começando pelas
-            duas falhas que já causavam perda de trabalho hoje, antes de mexer em mais nada:
+            Sem mudança visível nenhuma. Até agora, o quadro tático e as anotações sobre o vídeo
+            tinham cada um a sua própria cópia da lógica que desenha linhas, setas, zonas e
+            texto — duas versões que já tinham começado a divergir sem ninguém decidir isso (por
+            exemplo, arrastar uma forma já existente só funcionava no vídeo, não no quadro).
+            Unificadas num único desenhador partilhado pelos dois.
 
-            1. Anotações livres sobre o vídeo (as que não estão presas a nenhum clip) nunca
-            tinham sido gravadas no projeto — desenhavas, fechavas a app ou recarregavas, e
-            desapareciam sem nenhum aviso. Passam agora a gravar como tudo o resto.
+            É trabalho de preparação: a partir de agora, cada ferramenta nova construída para o
+            quadro tático (seleção, mover, redimensionar, undo/redo a sério, etc. — nas próximas
+            versões) fica automaticamente disponível para o vídeo também, sem ser preciso
+            reescrever nada quando chegar a vez.
 
-            2. Se o projeto ficasse grande demais para o espaço disponível (normalmente por
-            imagens embutidas), a gravação falhava em silêncio — sem qualquer sinal de que o
-            trabalho tinha deixado de estar seguro. Passa a mostrar um aviso claro quando isso
-            acontece.
-
-            Projetos existentes abrem exactamente iguais — testado explicitamente reabrindo um
-            projeto gravado no formato antigo (sem estas anotações livres) antes de publicar.
-
-            É a base para as fases seguintes, focadas no quadro tático: seleccionar, mover,
-            redimensionar e apagar qualquer desenho, undo/redo a sério, e o resto do que foi
-            pedido — cada fase publicada e testada separadamente.
+            Testado com formas de todos os tipos em ambas as superfícies, e a exportação de
+            vídeo das cenas do quadro tático (a que gera o MP4 da sequência) confirmada
+            ponta-a-ponta com ffmpeg real — inclui comparar o conteúdo real dos pixels exportados
+            com e sem desenhos, não só se o ficheiro foi criado. Projetos existentes abrem
+            exatamente iguais.
