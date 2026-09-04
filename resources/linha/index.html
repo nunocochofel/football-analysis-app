@@ -2863,20 +2863,44 @@ async function openProject(id){
 /* ===================================================================
    STORAGE (persistence, scoped to the active project)
 =================================================================== */
+// Fase 0a — QuotaExceededError used to be swallowed silently by the catch below: a project too
+// big for the browser's localStorage quota (heavy on embedded images) would just stop saving with
+// no sign anything was wrong. quotaWarningShown avoids re-toasting on every single mutation while
+// the project is still over quota (saveState runs very often) — it resets the moment a save
+// actually succeeds again, so a real recovery (e.g. user deletes an image) is reported too.
+let quotaWarningShown = false;
 async function saveState(){
   if(!currentProjectId) return;
   try{
     localStorage.setItem('linha:project:' + currentProjectId, JSON.stringify({
       roster:state.roster, categories:state.categories, tags:state.tags, possession:state.possession,
       scenes:state.scenes, boxScenes:state.boxScenes, zoneScenes:state.zoneScenes, depthScenes:state.depthScenes,
-      report:state.report, videoPath:state.videoPath
+      report:state.report, videoPath:state.videoPath,
+      // Fase 0b — previously freeform (non-clip) drawings, unlike everything else here, never
+      // reached this payload at all: they'd silently vanish on reload with no warning. Persisted
+      // now like any other field; an older project simply has none saved, so it opens with the
+      // same empty freeform layer it already showed before this change.
+      videoShapes
     }));
     touchProject(currentProjectId);
-  }catch(e){ /* best-effort */ }
+    quotaWarningShown = false;
+  }catch(e){
+    if(e && e.name === 'QuotaExceededError'){
+      if(!quotaWarningShown){
+        quotaWarningShown = true;
+        toast('⚠ Não foi possível gravar — o projeto ficou grande demais para o espaço disponível. Remove imagens ou desenhos para libertar espaço.', 6000);
+      }
+    }
+    /* any other error: best-effort, as before */
+  }
 }
 
 async function loadState(){
   if(!currentProjectId) return;
+  // Reset unconditionally, mirroring state = defaultState() in openProject() — otherwise a brand
+  // new project (raw below is null, nothing left to overwrite it) would keep whatever the
+  // PREVIOUSLY open project's freeform layer had, since videoShapes lives outside `state`.
+  videoShapes = [];
   try{
     const raw = localStorage.getItem('linha:project:' + currentProjectId);
     if(raw){
@@ -2900,6 +2924,10 @@ async function loadState(){
       state.depthScenes = parsed.depthScenes || [];
       state.report = parsed.report || state.report;
       state.videoPath = parsed.videoPath || null;
+      // Fase 0b — see the matching comment in saveState(). parsed.videoShapes is undefined for
+      // every project saved before this change; falling back to [] reproduces exactly what those
+      // projects already showed (an empty freeform layer), not a migration.
+      videoShapes = parsed.videoShapes || [];
     }
   }catch(e){ /* no saved data yet */ }
 }
@@ -2918,12 +2946,12 @@ function fmtStopwatch(ms){
   const h = Math.floor(total/3600), m = Math.floor((total%3600)/60), s = total%60;
   return [h,m,s].map(v=>String(v).padStart(2,'0')).join(':');
 }
-function toast(msg){
+function toast(msg, durationMs){
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(t._h);
-  t._h = setTimeout(()=>t.classList.remove('show'), 2200);
+  t._h = setTimeout(()=>t.classList.remove('show'), durationMs || 2200);
 }
 // Surfaces every auto-update step as a toast — previously a failed check only logged to a
 // DevTools console nobody had open, so a broken update looked identical to "already up to date".
