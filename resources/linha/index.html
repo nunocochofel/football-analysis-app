@@ -766,7 +766,22 @@
   /* Tactic tab */
   #tab-tactic{flex-direction:row;}
   .tactic-main{flex:1; display:flex; flex-direction:column; overflow:hidden;}
-  .tactic-pitch-wrap{flex:1; position:relative; padding:14px; display:flex; align-items:center; justify-content:center; overflow:hidden;}
+  /* Correção urgente pós-v0.8.69 — o campo tem de caber SEMPRE inteiro, nunca cortado. width:100%
+     + aspect-ratio por si só assume que a altura disponível chega para o que essa largura implica;
+     quando não chega (ver sizeTacticPitchBox mais abaixo, que agora define width/height reais em
+     JS), o excesso ficava cortado por este overflow:hidden em vez de o campo encolher — exatamente
+     o bug relatado depois de a barra de ferramentas ter crescido (mais botões nas Fases 9/10/11) e
+     passar a ocupar mais altura em janelas mais estreitas/baixas. min-height:0 garante que este
+     flex:1 aceita mesmo encolher tanto quanto for preciso. */
+  /* A própria barra de ferramentas do quadro tático (muitos botões, ver Fases 5-11) tem
+     flex-wrap:wrap mas nenhum limite de altura — numa janela suficientemente estreita/baixa, o
+     número de linhas que ela precisa por si só já excede o espaço todo, deixando ZERO para o
+     campo por baixo mesmo com os dois ajustes acima (min-height:0 não ajuda aqui: um item flex sem
+     min-height:0 próprio não consegue encolher abaixo do seu conteúdo). Um limite + scroll interno
+     garante que a barra nunca consome mais do que este orçamento, e o campo continua sempre com
+     espaço garantido a seguir — a barra de ferramentas é secundária ao campo, nunca o contrário. */
+  #tacticToolbar{max-height:38vh; overflow-y:auto; min-height:0;}
+  .tactic-pitch-wrap{flex:1; min-height:0; position:relative; padding:14px; display:flex; align-items:center; justify-content:center; overflow:hidden;}
   .tactic-pitch{position:relative; width:100%; max-width:900px; aspect-ratio:105/68; touch-action:none;}
   .tactic-pitch.box-mode{max-width:640px; aspect-ratio:680/375;}
   .tactic-pitch.depth-mode{max-width:900px; aspect-ratio:1050/640;}
@@ -945,22 +960,35 @@
     position:absolute; top:-3px; left:50%; width:0; height:0; transform:translateX(-50%);
     border-left:4px solid transparent; border-right:4px solid transparent; border-bottom:6px solid rgba(8,17,10,.6);
   }
-  .scenes-strip{display:flex; gap:8px; padding:10px 14px; border-top:1px solid var(--line); background:var(--panel); overflow-x:auto; flex-shrink:0;}
+  /* Correção urgente pós-v0.8.69 — miniaturas bem mais pequenas (era 112x76, passa a 74x50) e menos
+     padding, para sobrar mais altura ao campo (o elemento principal, ver o pedido explícito). O
+     botão de recolher (.scenes-strip-toggle) e a contagem (.scenes-strip-count) ficam sempre
+     visíveis; só as miniaturas e o "+" desaparecem quando .collapsed, reduzindo a faixa a uma tira
+     fina em vez de a esconder por completo (mais fácil de voltar a mostrar por engano). */
+  .scenes-strip{display:flex; align-items:center; gap:6px; padding:6px 14px; border-top:1px solid var(--line); background:var(--panel); overflow-x:auto; flex-shrink:0;}
+  .scenes-strip-toggle{
+    flex-shrink:0; width:22px; height:22px; border-radius:5px; border:1px solid var(--line); background:transparent;
+    color:var(--muted); font-size:11px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  }
+  .scenes-strip-toggle:hover{color:var(--chalk); background:var(--panel-alt);}
+  .scenes-strip-count{flex-shrink:0; font-size:11px; color:var(--muted); white-space:nowrap;}
+  .scenes-strip.collapsed{padding:4px 14px;}
+  .scenes-strip.collapsed .scene-thumb, .scenes-strip.collapsed .scene-add{display:none;}
   .scene-thumb{
-    flex-shrink:0; width:112px; height:76px; border-radius:6px; background:var(--pitch-dark); border:2px solid var(--line);
-    display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:11px; position:relative; cursor:pointer;
+    flex-shrink:0; width:74px; height:50px; border-radius:6px; background:var(--pitch-dark); border:2px solid var(--line);
+    display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:10px; position:relative; cursor:pointer;
   }
   .scene-thumb.active{border-color:var(--amber);}
-  .scene-thumb .scene-label{margin-bottom:14px;}
-  .scene-thumb .del{position:absolute; top:2px; right:2px; background:rgba(0,0,0,.5); color:#fff; border:none; width:16px; height:16px; border-radius:50%; font-size:10px; line-height:1;}
-  .scene-actions{position:absolute; bottom:3px; left:3px; right:3px; display:flex; gap:3px; justify-content:center;}
+  .scene-thumb .scene-label{margin-bottom:9px;}
+  .scene-thumb .del{position:absolute; top:2px; right:2px; background:rgba(0,0,0,.5); color:#fff; border:none; width:13px; height:13px; border-radius:50%; font-size:9px; line-height:1;}
+  .scene-actions{position:absolute; bottom:2px; left:2px; right:2px; display:flex; gap:2px; justify-content:center;}
   .scene-actions button{
-    background:rgba(0,0,0,.45); color:#fff; border:none; border-radius:3px; font-size:10px;
-    width:26px; height:18px; line-height:1; cursor:pointer;
+    background:rgba(0,0,0,.45); color:#fff; border:none; border-radius:3px; font-size:9px;
+    width:20px; height:15px; line-height:1; cursor:pointer;
   }
   .scene-actions button:hover{background:rgba(0,0,0,.75);}
   .scene-actions button:disabled{opacity:.3; cursor:default;}
-  .scene-add{flex-shrink:0; width:112px; height:76px; border-radius:6px; border:2px dashed var(--line); background:transparent; color:var(--muted); display:flex; align-items:center; justify-content:center; font-size:22px;}
+  .scene-add{flex-shrink:0; width:74px; height:50px; border-radius:6px; border:2px dashed var(--line); background:transparent; color:var(--muted); display:flex; align-items:center; justify-content:center; font-size:18px;}
   .tactic-side{width:230px; background:var(--panel); border-left:1px solid var(--line); padding:14px; overflow-y:auto; flex-shrink:0;}
   .formation-btns{display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:14px;}
   .formation-btns button{width:100%; text-align:center; padding:6px 4px; font-size:12px;}
@@ -1136,7 +1164,15 @@
     .stats-grid{grid-template-columns:repeat(2,1fr);}
     .stats-cols{grid-template-columns:1fr;}
     #tab-tactic{flex-direction:column;}
-    .tactic-side{width:100%; border-left:none; border-top:1px solid var(--line);}
+    /* Correção urgente pós-v0.8.69 — achado durante a investigação do campo cortado, não causado
+       pelas Fases 9-11 (existe desde a primeira versão): em coluna (janela com menos de 1100px de
+       largura), flex-direction:column faz .tactic-side (a lateral de formações/config) medir a
+       sua ALTURA de conteúdo (flex-shrink:0 no eixo principal, que aqui passou a ser vertical) —
+       se esse conteúdo for mais alto do que a janela, sobra ZERO para .tactic-main (e portanto
+       para o campo), tal como reproduzido no teste. Mesma técnica já usada acima para
+       .clip-sidebar: um limite de altura + o overflow-y:auto que .tactic-side já tinha, para
+       nunca engolir todo o espaço vertical, deixando SEMPRE o essencial (o campo) com prioridade. */
+    .tactic-side{width:100%; max-height:min(260px, 32vh); flex-shrink:1; border-left:none; border-top:1px solid var(--line);}
   }
 
   /* ===================================================================
@@ -2051,7 +2087,11 @@
         <button id="tacticContextMenuHalo">✨ Destacar</button>
         <button id="tacticContextMenuDelete">🗑 Apagar</button>
       </div>
+      <!-- Correção urgente pós-v0.8.69 — o campo é o elemento principal; esta faixa fica pequena
+           por omissão e pode ser recolhida por completo (mais espaço vertical para o campo). -->
       <div class="scenes-strip" id="scenesStrip">
+        <button class="scenes-strip-toggle" id="btnToggleScenesStrip" title="Esconder a faixa de cenas">▾</button>
+        <span class="scenes-strip-count" id="scenesStripCount"></span>
         <button class="scene-add" id="btnAddScene" title="Salvar cena atual">+</button>
       </div>
     </div>
@@ -9042,7 +9082,37 @@ function initPitchSVG(){
 }
 initPitchSVG();
 
+// Correção urgente pós-v0.8.69 — CSS puro (width:100% + aspect-ratio, ver o comentário em
+// .tactic-pitch-wrap) não sabe recuar quando a altura disponível não chega para essa largura; só
+// sabia crescer, nunca encolher no outro eixo, por isso o campo ficava cortado (as linhas laterais
+// saíam da área visível) em vez de simplesmente ficar mais pequeno. Esta função escolhe o maior
+// tamanho que CABE INTEIRO dentro do espaço disponível — testa a largura primeiro (como o CSS
+// fazia), mas se a altura resultante não couber, recalcula a partir da altura disponível em vez
+// disso. Mesma técnica que um "object-fit:contain" faria, aplicada ao elemento em vez de uma
+// imagem. Não mexe em nenhuma posição relativa dentro do campo — token/shape continuam guardados
+// como frações do próprio elemento, por isso uma cena antiga cai exatamente no mesmo sítio do
+// campo, só que agora dentro de um retângulo que nunca é cortado.
+function sizeTacticPitchBox(){
+  const wrap = tacticPitch.parentElement;
+  if(!wrap) return;
+  const cs = getComputedStyle(wrap);
+  // Math.max(0, ...) — not an early return — is deliberate: a window so small the wrap has no
+  // room left (padding alone exceeds it) must still leave the pitch at an explicit, correctly-
+  // proportioned tiny size, never at whatever stale inline size (or the plain-CSS width:100%
+  // fallback, which knows nothing about height) was there before. A tiny, correctly-shaped field
+  // beats a cropped/distorted one — "nunca corta" holds even in a window this extreme.
+  const availW = Math.max(0, wrap.clientWidth - parseFloat(cs.paddingLeft||0) - parseFloat(cs.paddingRight||0));
+  const availH = Math.max(0, wrap.clientHeight - parseFloat(cs.paddingTop||0) - parseFloat(cs.paddingBottom||0));
+  const RATIOS = { box:{ratio:680/375, cap:640}, depth:{ratio:1050/640, cap:900}, full:{ratio:105/68, cap:900}, zones:{ratio:105/68, cap:900} };
+  const { ratio, cap } = RATIOS[boardMode] || RATIOS.full;
+  let w = Math.min(availW, cap);
+  let h = w/ratio;
+  if(h > availH){ h = availH; w = h*ratio; }
+  tacticPitch.style.width = w+'px';
+  tacticPitch.style.height = h+'px';
+}
 function sizeTacticCanvas(){
+  sizeTacticPitchBox();
   const r = tacticPitch.getBoundingClientRect();
   tacticCanvas.width = r.width; tacticCanvas.height = r.height;
   redrawTactic();
@@ -10525,6 +10595,7 @@ let activeSceneIndex = null;
 function renderScenesStrip(){
   const strip = document.getElementById('scenesStrip');
   const scenes = activeScenesArray();
+  document.getElementById('scenesStripCount').textContent = scenes.length + (scenes.length===1 ? ' cena' : ' cenas');
   strip.querySelectorAll('.scene-thumb').forEach(s=>s.remove());
   scenes.forEach((sc,i)=>{
     const el = document.createElement('div');
@@ -10579,6 +10650,31 @@ document.getElementById('btnAddScene').addEventListener('click', ()=>{
   renderScenesStrip(); saveState();
   toast('Cena salva ('+scenes.length+').');
 });
+// Correção urgente pós-v0.8.69 — recolher a faixa de cenas por completo, para dar o máximo de
+// espaço ao campo enquanto se está a desenhar/montar uma jogada (não a rever a sequência de cenas).
+// Preferência da APP (como o modo de rótulo dos jogadores não é — é global, não por projeto),
+// já que é sobre como a pessoa gosta de trabalhar, não sobre um projeto específico. Por omissão
+// NÃO recolhida — quem já usa cenas não perde a faixa sem avisar; fica só mais pequena.
+const SCENES_STRIP_COLLAPSED_KEY = 'linha:scenesStripCollapsed';
+function updateScenesStripToggleUI(){
+  const collapsed = document.getElementById('scenesStrip').classList.contains('collapsed');
+  const btn = document.getElementById('btnToggleScenesStrip');
+  btn.textContent = collapsed ? '▸' : '▾';
+  btn.title = collapsed ? 'Mostrar a faixa de cenas' : 'Esconder a faixa de cenas';
+}
+document.getElementById('btnToggleScenesStrip').addEventListener('click', ()=>{
+  const strip = document.getElementById('scenesStrip');
+  strip.classList.toggle('collapsed');
+  try{ localStorage.setItem(SCENES_STRIP_COLLAPSED_KEY, strip.classList.contains('collapsed') ? '1' : '0'); }catch(e){}
+  updateScenesStripToggleUI();
+  // A faixa mudou de altura — o espaço disponível para o campo (flex:1 por cima dela) também
+  // mudou, por isso recalcula o tamanho do campo tal como um resize da janela já faz.
+  requestAnimationFrame(sizeTacticCanvas);
+});
+try{
+  if(localStorage.getItem(SCENES_STRIP_COLLAPSED_KEY)==='1') document.getElementById('scenesStrip').classList.add('collapsed');
+}catch(e){}
+updateScenesStripToggleUI();
 function loadScene(sc){
   pushTacticHistory();
   clearTacticSelection();

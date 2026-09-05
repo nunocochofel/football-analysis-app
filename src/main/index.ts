@@ -62,6 +62,13 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
+    // Correção urgente pós-v0.8.69 — sem mínimo nenhum, a janela podia encolher a um tamanho onde
+    // a própria barra de ferramentas do quadro tático (dezenas de botões, ver Fases 5-11) já não
+    // cabia em cima do campo sem o espremer a quase nada, mesmo com o CSS/JS agora a garantir que
+    // o campo nunca fica cortado/distorcido (só pequeno). Este mínimo mantém a app usável desde o
+    // arranque, sem impedir quem quiser trabalhar numa janela mais pequena do que 1440x900.
+    minWidth: 1000,
+    minHeight: 650,
     show: false,
     autoHideMenuBar: true,
     webPreferences: {

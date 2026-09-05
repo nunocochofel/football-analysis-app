@@ -41,28 +41,35 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.70 specifically — update this block for whatever the next release's own
+          # v0.8.71 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático: atalhos de teclado, uma letra por ferramenta**
+            **Correção urgente: o campo do quadro tático voltava a ficar cortado numa janela mais
+            pequena**
 
-            - Cada ferramenta de desenho tem agora uma tecla própria: **R** Linha · **S** Seta ·
-            **V** Seta poligonal · **L** Mão livre · **C** Curva · **Z** Zona · **O** Oval/elipse
-            · **T** Texto. A letra aparece na dica (tooltip) do próprio botão.
-            - **?** abre o Tutorial, com a lista completa de atalhos.
-            - Os atalhos ficam sempre suspensos enquanto escreves em qualquer campo de texto
-            (nome de jogador, categoria, caixa de texto do quadro, etc.) — nenhuma tecla troca de
-            ferramenta ou apaga nada por engano a meio da escrita.
-            - Todas as ferramentas continuam com botão visível na barra — os atalhos são um
-            atalho, nunca a única forma de usar uma ferramenta.
-            - A borracha (🧹) fica sem tecla própria de propósito: com seleção pelo rato + Delete
-            já a funcionar desde há várias versões, deixou de ser a única forma de apagar.
+            Depois da v0.8.68/v0.8.69 (mais botões na barra de ferramentas: seta poligonal, rótulo
+            dos jogadores, exportar imagem), uma janela mais estreita ou mais baixa podia deixar a
+            barra de ferramentas maior do que o espaço disponível — cortando as linhas laterais do
+            campo em vez de o campo encolher. Investigado antes de mexer em nada: a proporção do
+            campo nunca mudou (não é distorção), e as posições gravadas em cenas antigas nunca se
+            deslocaram (não é perda de trabalho) — era mesmo só um problema de espaço.
 
-            Testado (29 verificações reais, Playwright + Electron): as 8 teclas confirmadas a
-            ativar a ferramenta certa; tooltips com a letra confirmadas; a frase "TEXTO ZONA
-            CURVA RETA SETA OVAL" escrita dentro de uma caixa de texto e também no nome de um
-            jogador, confirmando que nenhuma ferramenta mudou nem nada foi apagado em nenhum dos
-            dois campos; "?" a abrir o Tutorial confirmado; as 12 ferramentas confirmadas com
-            botão visível; sem qualquer interferência com os atalhos de categoria do vídeo (letras
-            só reagem com a aba do quadro tático ativa).
+            - O campo agora **nunca corta** — encolhe sempre mantendo a proporção correta, em
+            qualquer tamanho de janela.
+            - A **faixa de cenas** fica bastante mais pequena (miniaturas menores) e pode ser
+            **recolhida por completo** com um botão — fica expandida por omissão, mas mais
+            compacta, para dar prioridade ao campo.
+            - Janela da aplicação com um tamanho mínimo (1000x650), para nunca ficar tão pequena
+            que a própria barra de ferramentas deixe de caber.
+            - Corrigido também um problema mais antigo (não introduzido por nenhuma versão
+            recente): numa janela estreita, o painel lateral de formações podia ocupar toda a
+            altura disponível, sem sobrar nada para o campo.
+
+            Testado (29 verificações reais, Playwright + Electron): campo confirmado a caber
+            inteiro e com a proporção correta em janela pequena, janela grande, dimensões de
+            tablet em retrato/paisagem, e no layout móvel/tablet real (iPad/PWA); posição de um
+            token gravado antes destas alterações confirmada inalterada depois de vários
+            redimensionamentos; faixa de cenas confirmada a recolher/expandir e a libertar espaço
+            para o campo; os 4 modos do quadro tático (Campo Inteiro, Zonas, Área, Na
+            Profundidade) confirmados cada um com a sua proporção correta.
