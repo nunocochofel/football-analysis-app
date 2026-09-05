@@ -41,35 +41,33 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.71 specifically — update this block for whatever the next release's own
+          # v0.8.72 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Correção urgente: o campo do quadro tático voltava a ficar cortado numa janela mais
-            pequena**
+            **Correção urgente: etiquetas de nome dos jogadores a acumular no quadro tático**
 
-            Depois da v0.8.68/v0.8.69 (mais botões na barra de ferramentas: seta poligonal, rótulo
-            dos jogadores, exportar imagem), uma janela mais estreita ou mais baixa podia deixar a
-            barra de ferramentas maior do que o espaço disponível — cortando as linhas laterais do
-            campo em vez de o campo encolher. Investigado antes de mexer em nada: a proporção do
-            campo nunca mudou (não é distorção), e as posições gravadas em cenas antigas nunca se
-            deslocaram (não é perda de trabalho) — era mesmo só um problema de espaço.
+            No modo "nome" (Fase 9, v0.8.67), clicar num jogador, redimensioná-lo (alça ou roda do
+            rato) ou movê-lo deixava a etiqueta com o nome anterior no campo em vez de a substituir
+            — cada interação acrescentava mais uma, sem nunca remover as antigas. Com uso
+            repetido, o campo enchia-se de etiquetas fantasma sobrepostas, sem acompanhar os
+            bonecos.
 
-            - O campo agora **nunca corta** — encolhe sempre mantendo a proporção correta, em
-            qualquer tamanho de janela.
-            - A **faixa de cenas** fica bastante mais pequena (miniaturas menores) e pode ser
-            **recolhida por completo** com um botão — fica expandida por omissão, mas mais
-            compacta, para dar prioridade ao campo.
-            - Janela da aplicação com um tamanho mínimo (1000x650), para nunca ficar tão pequena
-            que a própria barra de ferramentas deixe de caber.
-            - Corrigido também um problema mais antigo (não introduzido por nenhuma versão
-            recente): numa janela estreita, o painel lateral de formações podia ocupar toda a
-            altura disponível, sem sobrar nada para o campo.
+            Causa: a etiqueta de nome é um elemento à parte (não faz parte do boneco em si), e a
+            função que redesenha os bonecos a cada interação limpava os bonecos antigos mas nunca
+            as etiquetas. Corrigido para limpar sempre as duas coisas.
 
-            Testado (29 verificações reais, Playwright + Electron): campo confirmado a caber
-            inteiro e com a proporção correta em janela pequena, janela grande, dimensões de
-            tablet em retrato/paisagem, e no layout móvel/tablet real (iPad/PWA); posição de um
-            token gravado antes destas alterações confirmada inalterada depois de vários
-            redimensionamentos; faixa de cenas confirmada a recolher/expandir e a libertar espaço
-            para o campo; os 4 modos do quadro tático (Campo Inteiro, Zonas, Área, Na
-            Profundidade) confirmados cada um com a sua proporção correta.
+            **As etiquetas fantasma nunca ficaram gravadas nos projetos nem nas cenas** — são
+            sempre recalculadas no ecrã a partir do nome atual do jogador, nunca guardadas como
+            dado próprio. Não há nada para limpar nem recuperar: fechar e reabrir a aplicação (ou
+            simplesmente mudar de separador e voltar) já fazia o campo mostrar-se corretamente,
+            mesmo antes desta correção. Cenas gravadas enquanto o bug estava presente abrem sem
+            qualquer contaminação.
+
+            Testado (17 verificações reais, Playwright + Electron): 30 cliques seguidos no mesmo
+            jogador, cliques em todos os jogadores de seguida, 15 ciclos de redimensionar com a
+            roda do rato, arrastar a alça de redimensionar, e mover o jogador 5 vezes — em nenhum
+            caso a contagem de etiquetas no ecrã ultrapassou o número real de jogadores; uma cena
+            gravada com o bug presente confirmada a abrir sem contaminação depois de fechar e
+            reabrir a aplicação; confirmado que o mesmo tipo de acumulação não existe nas alças de
+            ponto da seta poligonal nem nas miniaturas de cena.

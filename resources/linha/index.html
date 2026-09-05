@@ -9226,6 +9226,14 @@ function tokenFillBackground(appearance, fallbackColor){
 
 function renderTokens(){
   tacticPitch.querySelectorAll('.token').forEach(t=>t.remove());
+  // Bug real na v0.8.69 (Fase 9): a etiqueta de nome (.token-name-label) é um elemento PRÓPRIO,
+  // irmão de .token, não um filho dele — por isso a limpeza acima nunca a apanhava. Cada chamada a
+  // renderTokens() (clicar para selecionar, arrastar uma alça de redimensionar, a roda do rato a
+  // mudar o tamanho, etc. — todas já chamavam isto antes desta fase) acrescentava uma etiqueta
+  // NOVA sem nunca remover a anterior, acumulando uma por interação. Nunca ficou gravada em disco
+  // (tokens[id] nunca guardou isto — é sempre recalculada aqui a partir de state.tokenLabelMode e
+  // do nome do jogador), por isso não há dados a corrigir; só faltava limpar antes de redesenhar.
+  tacticPitch.querySelectorAll('.token-name-label').forEach(t=>t.remove());
   Object.entries(tokens).forEach(([id,tk])=>{
     const kind = tk.kind || (tk.teamId==='ball' ? 'ball' : 'player');
     const angle = tk.angle || 0;
