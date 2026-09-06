@@ -41,28 +41,33 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.82 specifically — update this block for whatever the next release's own
+          # v0.8.83 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Atalho de teclado para a posse de bola, e indicador bem mais visível**
+            **Tecla da posse de bola agora é configurável (a tecla fixa "\" não funcionava em todos os teclados)**
 
-            - Nova tecla **\ (barra invertida)** alterna Time A → Time B → parada → Time A, sem
-            tirar as mãos do rato/teclado numérico. Usa o código físico da tecla (não o caráter),
-            por isso funciona igual independentemente de estar ou não a usar AltGr. Funciona em
-            vídeo gravado e em live tagging; suspensa a escrever em qualquer campo, como todos os
-            outros atalhos desta app; os botões no ecrã continuam exatamente iguais.
-            - **Indicador corrigido** — antes, o botão da equipa ativa só ficava com texto a
-            negrito sobre o MESMO fundo do botão inativo, praticamente impercetível a olhar para o
-            vídeo em vez de para a barra. Agora fica preenchido com a cor real da equipa (a mesma
-            usada nas Estatísticas), o botão "parar" também se destaca quando é esse o estado
-            atual, e há um pisca-pisca breve (350ms) em qualquer mudança — tecla ou clique — a
-            confirmar que registou sem precisares de desviar o olhar.
-            - Tooltips atualizadas com a tecla, e o Tutorial já lista o atalho.
+            A v0.8.82 fixava a tecla `\`, mas o código físico que essa tecla envia varia por
+            teclado/driver do Windows — não havia como acertar uma tecla fixa que funcionasse para
+            todos. Em vez de tentar adivinhar outra, a tecla passa a ser escolhida por ti.
 
-            Verificado com testes automatizados reais (Electron + Playwright, 14 cenários): as
-            três voltas do ciclo funcionam pela tecla e pelo código físico alternativo
-            (IntlBackslash); o fundo do botão ativo é mesmo a cor da equipa, não uma cor genérica;
-            suspenso a escrever num campo de categoria; os botões no ecrã continuam a funcionar;
-            funciona em live tagging; não dispara no separador do quadro tático; e não cria
-            nenhuma marcação/categoria por engano.
+            - Em "Times & categorias" → "Editar categorias", novo botão **"🎹 Premir tecla…"**:
+            clicas, primes a tecla que queres, e a app regista exatamente o que o teu teclado
+            enviou — nome legível mostrado logo a seguir, para confirmares que é a certa.
+            - Em branco por omissão — nenhuma tecla atribuída até definires uma; nunca arrisca
+            colidir sozinha com uma categoria tua.
+            - Avisa na hora se a tecla já está a ser usada por Espaço, ←/→, Esc, ou por uma
+            categoria — não bloqueia (podes decidir na mesma), mas nunca fica em silêncio.
+            - Configurável por projeto, e também como predefinição para projetos novos (no ecrã
+            inicial, junto às categorias predefinidas) — igual ao que já existia para categorias.
+            - Indicador de posse continua preenchido com a cor real da equipa (herdado da versão
+            anterior) — tooltips e Tutorial atualizados para refletirem a tecla configurada em vez
+            de um atalho fixo.
+
+            Verificado com testes automatizados reais (Electron + Playwright, 25 cenários): captura
+            regista o código correto e mostra o nome legível; Esc cancela sem alterar o que já
+            estava definido; aviso aparece para Espaço e para uma categoria existente; a tecla
+            escolhida cicla mesmo os três estados; um projeto novo herda a predefinição, um projeto
+            já existente NUNCA é alterado por uma predefinição mudada depois; suspenso a escrever
+            num campo; funciona em live tagging; não dispara no quadro tático; botões no ecrã
+            continuam a funcionar.

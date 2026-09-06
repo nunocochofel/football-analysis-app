@@ -1625,6 +1625,11 @@
             <button class="btn" id="btnImportCatTemplates">⬆ Importar (.json)</button>
             <input type="file" id="fileImportCatTemplates" accept=".json,application/json" style="display:none;">
           </div>
+          <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--line);">
+            <h4 style="margin-bottom:6px;">Atalho de teclado para a posse de bola (predefinição)</h4>
+            <p style="color:var(--muted); font-size:12px; margin-bottom:8px;">Aplica-se só a projetos novos criados a partir daqui — em branco por omissão. Cada projeto pode depois mudar a sua própria tecla em "Times &amp; categorias", sem afetar esta predefinição.</p>
+            <div id="possessionKeyCaptureTemplate"></div>
+          </div>
         </div>
       </div>
       <button class="btn primary" id="btnCreateProject" style="width:100%; justify-content:center;">+ Criar projeto</button>
@@ -1821,11 +1826,11 @@
             <span class="mono" id="zoomReadout">1.0×</span>
           </label>
           <div class="toolbar-sep"></div>
-          <div class="possession-control" id="possessionControl" title="Regista quem tem a posse de bola, para calcular a percentagem de posse nas Estatísticas — atalho: \ (barra invertida) alterna Time A → Time B → parada">
+          <div class="possession-control" id="possessionControl" title="Regista quem tem a posse de bola, para calcular a percentagem de posse nas Estatísticas">
             <span class="mono" style="color:var(--muted); font-size:11px;">Posse:</span>
-            <button class="btn poss-btn" id="btnPossA" data-team="A" title="Dá a posse ao Time A (atalho: \)">Time A</button>
-            <button class="btn poss-btn" id="btnPossB" data-team="B" title="Dá a posse ao Time B (atalho: \)">Time B</button>
-            <button class="btn icon" id="btnPossStop" title="Parar contagem de posse — bola fora/parada (atalho: \)">⏹</button>
+            <button class="btn poss-btn" id="btnPossA" data-team="A">Time A</button>
+            <button class="btn poss-btn" id="btnPossB" data-team="B">Time B</button>
+            <button class="btn icon" id="btnPossStop" title="Parar contagem de posse — bola fora/parada">⏹</button>
             <span class="mono" id="possReadout" style="color:var(--muted); font-size:11px;"></span>
           </div>
           <div class="toolbar-sep"></div>
@@ -2453,7 +2458,7 @@
         <li><b>Marcação em dois toques</b> — prime a tecla de uma categoria (ou clica no botão dela no grelha) para <b>iniciar</b> o corte; o vídeo continua a correr; prime outra vez a mesma tecla/botão para <b>terminar</b> — o corte fica com o tempo real da jogada. O botão da categoria pisca a vermelho ("● a gravar…") enquanto está à espera do segundo toque; <b>Esc</b> cancela uma gravação em curso.</li>
         <li><b>Categorias novas</b> — qualquer tecla de letra/número ainda sem categoria abre um criador rápido para inventares um novo tipo de corte sem abrir as definições.</li>
         <li><b>Botões rápidos por equipa</b> — Passe certo/errado, Remate e Remate à baliza têm botões dedicados por equipa na barra do vídeo, para marcar sem tirar as mãos do rato. O Remate à baliza soma automaticamente ao total de Remates.</li>
-        <li><b>Posse de bola</b> — os botões "Posse" da equipa A/B começam/trocam o cronómetro de posse; a percentagem no relatório é o tempo de cada equipa a dividir pelo total acumulado das duas. Atalho <b>\</b> (barra invertida) alterna Time A → Time B → parada → Time A, sem tirar as mãos do rato; o botão ativo fica preenchido com a cor da equipa e pisca um instante a confirmar.</li>
+        <li><b>Posse de bola</b> — os botões "Posse" da equipa A/B começam/trocam o cronómetro de posse; a percentagem no relatório é o tempo de cada equipa a dividir pelo total acumulado das duas. O botão ativo fica preenchido com a cor da equipa e pisca um instante a confirmar. Podes definir um atalho de teclado próprio em "Times &amp; categorias" — em branco por omissão, escolhes tu qual tecla, com um botão "Premir tecla" que regista exatamente a que o teu teclado envia.</li>
         <li><b>Local do evento</b> — clica no mini-campo da barra lateral para marcar onde a jogada aconteceu (opcional, aparece depois no mapa de calor).</li>
       </ul>
 
@@ -2505,7 +2510,7 @@
         <li>Espaço — play/pause do vídeo.</li>
         <li>← / → — recua/avança 5s.</li>
         <li>Ctrl+C / Ctrl+V — copiar/colar o desenho por baixo do rato (vídeo) ou a seleção (quadro tático).</li>
-        <li><b>\</b> (barra invertida) — alterna a posse de bola: Time A → Time B → parada → Time A. Funciona em vídeo gravado e em live tagging.</li>
+        <li>Tecla configurável para a posse de bola (em branco por omissão, define-se em "Times &amp; categorias") — alterna Time A → Time B → parada → Time A. Funciona em vídeo gravado e em live tagging.</li>
         <li>Esc — cancela uma gravação de corte em curso, uma zona a meio de ser desenhada, ou fecha o menu de contexto de um corte.</li>
         <li><b>?</b> — abre este tutorial, em qualquer separador.</li>
       </ul>
@@ -2892,6 +2897,11 @@ function defaultState(){
     categories: JSON.parse(JSON.stringify(DEFAULT_CATS)),
     tags: [],
     possession: [], // [{team:'A'|'B', startSec, endSec|null}] — endSec null means still ongoing
+    // Atalho de teclado configurável para a posse (e.code capturado, ex. 'Backslash') — '' por
+    // omissão (desligado). createProject() sobrepõe isto com readPossessionKeyTemplate() só num
+    // projeto GENUINAMENTE NOVO; loadState() nunca lê a predefinição, só o que este projeto tem
+    // gravado (ver o comentário lá).
+    possessionKey: '',
     scenes: [],
     boxScenes: [], // same shape as `scenes`, but for the independent "Área" board
     zoneScenes: [], // same shape as `scenes`, but for the independent "Campo p/ Zonas" board
@@ -2971,6 +2981,122 @@ function listProjects(){
 function saveProjectsIndex(list){
   localStorage.setItem(PROJECTS_INDEX_KEY, JSON.stringify(list));
 }
+/* ---------- Captura de tecla configurável (posse de bola, por agora — genérico o suficiente para
+   qualquer atalho de tecla única que precise de ser definido pelo utilizador em vez de codificado
+   à mão) ---------- */
+// Declarado AQUI (não junto do resto do código de posse, mais abaixo) porque
+// mountKeyCapture('possessionKeyCaptureTemplate', ...) já corre uma vez no arranque da página, bem
+// mais cedo — e essa chamada já executa render() de imediato, que já lê KEY_CODE_LABELS. Com
+// `const` declarado só mais abaixo, essa leitura caía na "temporal dead zone" e rebentava o
+// arranque inteiro da página (confirmado com um erro real no arranque, mesma classe de bug já
+// vista antes nesta app com psTargetShapes/psTargetTokens — ver esse comentário).
+// Nomes legíveis para o e.code capturado — cobre o que é razoável aparecer aqui (símbolos, setas,
+// função, numérico); o que não estiver mapeado cai no próprio nome do código (ainda legível,
+// ex. "AudioVolumeUp"), nunca fica em branco.
+const KEY_CODE_LABELS = {
+  Backslash:'\\ (barra invertida)', IntlBackslash:'tecla ISO junto ao Z (\\ / |)',
+  Space:'Espaço', Enter:'Enter', Tab:'Tab', Escape:'Esc',
+  ArrowUp:'↑', ArrowDown:'↓', ArrowLeft:'←', ArrowRight:'→',
+  Semicolon:';', Quote:"'", Comma:',', Period:'.', Slash:'/',
+  BracketLeft:'[', BracketRight:']', Minus:'-', Equal:'=', Backquote:'`',
+  CapsLock:'Caps Lock', Delete:'Delete', Backspace:'Backspace', Home:'Home', End:'End',
+  PageUp:'Page Up', PageDown:'Page Down', Insert:'Insert', ContextMenu:'Menu',
+};
+function readableKeyName(code){
+  if(!code) return '(nenhuma)';
+  if(KEY_CODE_LABELS[code]) return KEY_CODE_LABELS[code];
+  let m = code.match(/^Key([A-Z])$/); if(m) return m[1];
+  m = code.match(/^Digit([0-9])$/); if(m) return m[1];
+  m = code.match(/^Numpad(\d)$/); if(m) return 'Numérico '+m[1];
+  if(/^F\d{1,2}$/.test(code)) return code;
+  return code; // fallback honesto — o próprio nome do código, nunca "undefined" nem em branco
+}
+// As 4 teclas do sistema com significado fixo nesta app, comparadas por CÓDIGO (por isso podem ser
+// verificadas outra vez a qualquer momento, ao contrário de uma categoria — ver o comentário junto
+// de checkPossessionKeyConflictAtCapture sobre porque essa verificação só é fiável no instante da
+// captura). Delete/Backspace ficam de fora de propósito: só têm efeito com uma seleção ativa no
+// quadro tático, não são um "atalho de sistema" incondicional como Espaço/setas/Esc.
+const POSSESSION_SYSTEM_KEY_CONFLICTS = {
+  Space:'Espaço (play/pause do vídeo)', ArrowLeft:'← (recuar 5s)', ArrowRight:'→ (avançar 5s)', Escape:'Esc (cancelar)',
+};
+// Verificação de conflito NO INSTANTE da captura: usa e.key (o carácter, dependente do layout) só
+// aqui, porque é a ÚNICA vez em que se sabe com certeza o que aquela tecla física produz — guardar
+// isso para verificar mais tarde não seria fiável (o mesmo código pode produzir carateres
+// diferentes consoante o layout do teclado nessa altura).
+function checkPossessionKeyConflictAtCapture(e, categoriesList){
+  if(POSSESSION_SYSTEM_KEY_CONFLICTS[e.code]) return POSSESSION_SYSTEM_KEY_CONFLICTS[e.code];
+  const cat = (categoriesList||[]).find(c=>c.key && c.key.toLowerCase()===e.key.toLowerCase());
+  if(cat) return `categoria "${cat.label}" (tecla "${cat.key}")`;
+  return null;
+}
+// Verificação PERSISTENTE (ao voltar a abrir as definições): só o que é sempre verificável por
+// código sozinho — os 4 fixos do sistema. Um conflito com uma categoria só é garantidamente exato
+// no instante da captura (ver comentário acima), por isso não se repete aqui.
+function checkPossessionKeySystemConflict(code){
+  return POSSESSION_SYSTEM_KEY_CONFLICTS[code] || null;
+}
+// Monta o botão "Premir tecla" + nome legível + aviso, reutilizável (usado tanto nas definições do
+// projeto como na predefinição global). getCode()/onChange() abstraem ONDE o código fica guardado
+// (state.possessionKey vs. a predefinição em localStorage) — o resto do comportamento é idêntico.
+function mountKeyCapture(containerId, getCode, categoriesGetter, onChange){
+  const container = document.getElementById(containerId);
+  container.innerHTML = `
+    <div class="side-row" style="align-items:center; gap:8px; flex-wrap:wrap;">
+      <button type="button" class="btn" id="${containerId}Btn">🎹 Premir tecla…</button>
+      <span class="mono" id="${containerId}Readout" style="font-size:12px; color:var(--chalk);"></span>
+      <button type="button" class="btn icon" id="${containerId}Clear" title="Remover atalho (fica sem tecla)">✕</button>
+    </div>
+    <p id="${containerId}Warn" style="display:none; color:var(--crimson); font-size:11px; margin:4px 0 0;"></p>
+  `;
+  const btn = document.getElementById(containerId+'Btn');
+  const readout = document.getElementById(containerId+'Readout');
+  const warn = document.getElementById(containerId+'Warn');
+  function render(){
+    const code = getCode();
+    readout.textContent = code ? readableKeyName(code) : '(nenhuma tecla atribuída)';
+    const conflict = code ? checkPossessionKeySystemConflict(code) : null;
+    if(conflict){ warn.style.display=''; warn.textContent = '⚠ Esta tecla também é usada para: '+conflict+'. As duas vão disparar ao mesmo tempo.'; }
+    else warn.style.display = 'none';
+  }
+  btn.addEventListener('click', ()=>{
+    btn.textContent = 'Prime uma tecla… (Esc cancela)';
+    btn.disabled = true;
+    const handler = e=>{
+      e.preventDefault(); e.stopPropagation();
+      document.removeEventListener('keydown', handler, true);
+      btn.disabled = false;
+      btn.textContent = '🎹 Premir tecla…';
+      if(e.code==='Escape'){ toast('Captura cancelada.'); return; }
+      onChange(e.code);
+      render();
+      const conflict = checkPossessionKeyConflictAtCapture(e, categoriesGetter());
+      if(conflict) toast('⚠ "'+readableKeyName(e.code)+'" já está atribuída a '+conflict+' — os dois vão disparar juntos.', 6000);
+      else toast('Tecla definida: '+readableKeyName(e.code));
+    };
+    // capture:true — chega ANTES de qualquer atalho existente (categorias, ferramentas, etc.), para
+    // a tecla premida durante a captura nunca acionar também outra coisa (ex. abrir o criador
+    // rápido de categoria, ou mudar de ferramenta no quadro tático).
+    document.addEventListener('keydown', handler, true);
+  });
+  document.getElementById(containerId+'Clear').addEventListener('click', ()=>{
+    onChange('');
+    render();
+    toast('Atalho removido — a posse volta a só ter os botões no ecrã.');
+  });
+  render();
+}
+
+// Predefinição global da tecla de posse (localStorage, TAL COMO CATEGORY_TEMPLATES_KEY acima —
+// mesmo padrão: só atua no momento de criar um projeto novo, nunca resincroniza projetos já
+// existentes). '' por omissão de propósito — pedido explícito do utilizador para não arriscar
+// atribuir uma tecla que já esteja a usar nalguma categoria.
+const POSSESSION_KEY_TEMPLATE_KEY = 'linha:possessionKeyTemplate';
+function readPossessionKeyTemplate(){
+  try{ return localStorage.getItem(POSSESSION_KEY_TEMPLATE_KEY) || ''; }catch(e){ return ''; }
+}
+function savePossessionKeyTemplate(code){
+  try{ localStorage.setItem(POSSESSION_KEY_TEMPLATE_KEY, code || ''); }catch(e){ /* best-effort */ }
+}
 function createProject(name, categories){
   const id = 'proj_' + Date.now().toString(36) + uid();
   const list = listProjects();
@@ -2980,9 +3106,10 @@ function createProject(name, categories){
   // categories instead of the hardcoded defaults.
   const initial = defaultState();
   if(categories && categories.length) initial.categories = JSON.parse(JSON.stringify(categories));
+  initial.possessionKey = readPossessionKeyTemplate();
   localStorage.setItem('linha:project:' + id, JSON.stringify({
     roster: initial.roster, categories: initial.categories, tags: initial.tags,
-    scenes: initial.scenes, report: initial.report
+    scenes: initial.scenes, report: initial.report, possessionKey: initial.possessionKey
   }));
   return id;
 }
@@ -3083,6 +3210,7 @@ document.getElementById('btnToggleTemplateCat').addEventListener('click', () => 
   body.style.display = open ? 'none' : 'flex';
   document.getElementById('templateCatChevron').textContent = open ? '▾' : '▴';
 });
+mountKeyCapture('possessionKeyCaptureTemplate', readPossessionKeyTemplate, ()=>listCategoryTemplates(), code=>savePossessionKeyTemplate(code));
 document.getElementById('btnAddTemplateCat').addEventListener('click', () => {
   const labelInp = document.getElementById('newTemplateCatLabel');
   const label = labelInp.value.trim();
@@ -3399,6 +3527,7 @@ async function saveState(){
   try{
     localStorage.setItem('linha:project:' + currentProjectId, JSON.stringify({
       roster:state.roster, categories:state.categories, tags:state.tags, possession:state.possession,
+      possessionKey:state.possessionKey,
       scenes:state.scenes, boxScenes:state.boxScenes, zoneScenes:state.zoneScenes, depthScenes:state.depthScenes,
       report:state.report, videoPath:state.videoPath, tokenLabelMode:state.tokenLabelMode,
       // Fase 0b — previously freeform (non-clip) drawings, unlike everything else here, never
@@ -3443,6 +3572,10 @@ async function loadState(){
       state.tags = parsed.tags || [];
       state.tags.forEach(t=>{ if(!t.freezes) t.freezes = []; });
       state.possession = parsed.possession || [];
+      // Nunca cai para a predefinição global aqui — só '' (desligado), mesmo que exista uma
+      // predefinição configurada agora. Um projeto já existente que nunca teve tecla atribuída
+      // não pode ganhar um atalho novo silenciosamente só por a predefinição ter mudado depois.
+      state.possessionKey = parsed.possessionKey || '';
       state.scenes = parsed.scenes || [];
       state.boxScenes = parsed.boxScenes || [];
       state.zoneScenes = parsed.zoneScenes || [];
@@ -4046,10 +4179,16 @@ function renderCatsModal(){
     <p style="color:var(--muted); font-size:12px; margin-top:6px;">Marca "fase de equipa" para comportamentos coletivos (ex.: organização ofensiva/defensiva, transição ofensiva/defensiva) — o relatório calcula o tempo médio e total dessas categorias em vez de só contar ocorrências, como faz para remates, passes ou lances individuais.</p>
     <p style="color:var(--muted); font-size:12px; margin-top:6px;">Marca "golo" para que marcar essa categoria some automaticamente ao placar do time do lance.</p>
     <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
+      <h4 style="margin-bottom:8px;">Atalho de teclado para a posse de bola</h4>
+      <p style="color:var(--muted); font-size:12px; margin-bottom:8px;">Alterna Time A → Time B → parada → Time A. Em branco por omissão — só os botões "Posse" no ecrã, até definires uma tecla aqui.</p>
+      <div id="possessionKeyCaptureProject"></div>
+    </div>
+    <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
       <button class="btn" id="btnExportProjectCats">⬇ Exportar categorias deste projeto (.json)</button>
       <p style="color:var(--muted); font-size:11px; margin-top:8px;">Para as usar noutro projeto novo: exporta aqui e depois importa este ficheiro na página inicial, no botão "⬆ Importar" da lista de categorias predefinidas. Este projeto não é alterado por isto.</p>
     </div>
   `;
+  mountKeyCapture('possessionKeyCaptureProject', ()=>state.possessionKey, ()=>state.categories, code=>{ state.possessionKey = code; saveState(); });
   const list = el.querySelector('#catEditList');
   // Color leads each row (matches the same order used on the home screen's category list) so the
   // category/color/key association reads at a glance — no need to open anything to see a color.
@@ -5451,13 +5590,19 @@ function possessionTotals(){
 // preenchido quando é esse o estado atual, em vez de "nenhum dos dois" ser a única pista.
 function renderPossessionControl(){
   const open = currentPossessionEntry();
+  // Tooltip reflete a tecla REALMENTE configurada neste projeto (pode estar em branco) — nunca um
+  // atalho fixo hardcoded, agora que é configurável por projeto.
+  const keyHint = state.possessionKey ? ' (atalho: '+readableKeyName(state.possessionKey)+')' : '';
   document.querySelectorAll('.poss-btn').forEach(b=>{
     const isActive = !!(open && open.team===b.dataset.team);
     b.classList.toggle('active', isActive);
     b.style.background = isActive ? state.roster[b.dataset.team].color : '';
     b.textContent = state.roster[b.dataset.team].name;
+    b.title = 'Dá a posse ao '+state.roster[b.dataset.team].name + keyHint;
   });
-  document.getElementById('btnPossStop').classList.toggle('active', !open);
+  const stopBtn = document.getElementById('btnPossStop');
+  stopBtn.classList.toggle('active', !open);
+  stopBtn.title = 'Parar contagem de posse — bola fora/parada' + keyHint;
   const totals = possessionTotals();
   const sum = totals.A + totals.B;
   const readout = document.getElementById('possReadout');
@@ -5476,24 +5621,20 @@ document.getElementById('btnPossB').addEventListener('click', ()=>{ setPossessio
 document.getElementById('btnPossStop').addEventListener('click', ()=>{ stopPossession(); flashPossessionIndicator(document.getElementById('btnPossStop')); });
 videoEl.addEventListener('timeupdate', ()=>{ if(currentPossessionEntry()) renderPossessionControl(); });
 
-// Atalho de teclado — pedido explícito: tecla \\ (barra invertida) alterna Time A → Time B →
-// parada → Time A. Escolhida pelo utilizador pela posição física no teclado português (canto
-// inferior esquerdo, à esquerda do Z), por isso usa-se e.code (a tecla FÍSICA), nunca e.key (o
-// caráter produzido, que em PT dá "\" sem modificador e "|" com AltGr — mudaria consoante o
-// AltGr estivesse ou não premido, o oposto do que se quer de um atalho "de cor").
-// Ouvem-se DOIS códigos porque há uma inconsistência conhecida do Chromium/Windows sobre qual dos
-// dois nomes é reportado para esta tecla extra ISO consoante o teclado/driver exato — ouvir ambos
-// evita ter de adivinhar qual o deste utilizador reporta.
-// Sem verificação de modificadores (Ctrl/Alt/Shift) de propósito — é uma tecla única dedicada, tal
-// como Espaço/setas/Delete já são nesta app; só a guarda de "não escrever num campo" se aplica.
 function cyclePossession(){
   const open = currentPossessionEntry();
   if(!open){ setPossession('A'); flashPossessionIndicator(document.getElementById('btnPossA')); }
   else if(open.team==='A'){ setPossession('B'); flashPossessionIndicator(document.getElementById('btnPossB')); }
   else { stopPossession(); flashPossessionIndicator(document.getElementById('btnPossStop')); }
 }
+// Atalho CONFIGURÁVEL (era fixo em "\", que falhou num teclado real — ver diagnóstico: a causa
+// mais provável é o código físico reportado pelo Windows/Chromium para aquela tecla ISO variar por
+// teclado/driver, algo que só se resolve capturando o que o hardware REALMENTE envia, não
+// adivinhando um nome). state.possessionKey guarda o e.code capturado por mountKeyCapture() (ver
+// mais abaixo) — '' por omissão, atalho desligado. Sem verificação de modificadores (Ctrl/Alt/
+// Shift) de propósito, tal como antes: é uma tecla única dedicada.
 document.addEventListener('keydown', e=>{
-  if(e.code!=='Backslash' && e.code!=='IntlBackslash') return;
+  if(!state.possessionKey || e.code!==state.possessionKey) return;
   const activeEl = document.activeElement;
   const activeTag = activeEl ? activeEl.tagName : '';
   // Mesma regra de sempre nesta app: suspenso a escrever texto em qualquer campo/textarea/select/
