@@ -10636,6 +10636,20 @@ function updateTacticTransformHandles(){
   }
 }
 let tacticTransformSession = null; // {target, handle, origBoundsPx, origRotation}
+// Diagnóstico de redimensionar — pedido explicitamente para MEDIR o bug em vez de continuar a
+// teorizar sobre ele. Ctrl+Alt+R liga/desliga; com o modo ligado, cada mousemove de um arrasto de
+// alça regista o delta do rato em pixels de ecrã, o mesmo delta já convertido para o espaço do
+// canvas, as dimensões ORIGINAIS guardadas no snapshot do mousedown, as dimensões CALCULADAS nesse
+// frame (antes de escrever no objeto), e as dimensões REAIS lidas de volta do objeto depois de
+// escritas — tudo impresso na consola (F12) no fim do arrasto, para ver em que passo exato os
+// números divergem em vez de adivinhar.
+let tacticResizeDebug = false;
+document.addEventListener('keydown', e=>{
+  if(e.ctrlKey && e.altKey && e.key.toLowerCase()==='r'){
+    tacticResizeDebug = !tacticResizeDebug;
+    toast('Diagnóstico de redimensionar: ' + (tacticResizeDebug ? 'LIGADO (Ctrl+Alt+R desliga)' : 'desligado'));
+  }
+});
 function startTacticTransform(handle, clientX, clientY){
   const target = currentSingleTransformTarget();
   if(!target) return;
@@ -10643,11 +10657,14 @@ function startTacticTransform(handle, clientX, clientY){
   // Correção urgente — origState (a geometria/escala tal como estava no PRECISO instante do
   // mousedown) é capturado uma única vez aqui e nunca mais tocado durante o arrasto — ver os
   // comentários em resizeShapeToBoundsPx e em cada captureOrigState() para o porquê.
-  tacticTransformSession = { target, handle, origBoundsPx: target.getBoundsPx(), origRotation: target.getRotation(), origState: target.captureOrigState() };
+  tacticTransformSession = {
+    target, handle, origBoundsPx: target.getBoundsPx(), origRotation: target.getRotation(), origState: target.captureOrigState(),
+    debugStartClientX: clientX, debugStartClientY: clientY, debugLog: []
+  };
 }
 function updateTacticTransform(clientX, clientY, shiftHeld){
   if(!tacticTransformSession) return;
-  const { target, handle, origBoundsPx, origRotation, origState } = tacticTransformSession;
+  const { target, handle, origBoundsPx, origRotation, origState, debugStartClientX, debugStartClientY } = tacticTransformSession;
   const r = tacticPitch.getBoundingClientRect();
   const mx = clientX-r.left, my = clientY-r.top;
   const cx = origBoundsPx.x+origBoundsPx.width/2, cy = origBoundsPx.y+origBoundsPx.height/2;
@@ -10689,8 +10706,30 @@ function updateTacticTransform(clientX, clientY, shiftHeld){
   }
   target.applyBounds(next, origBoundsPx, origState);
   redrawTactic(); renderTokens();
+  if(tacticResizeDebug){
+    const actual = target.getBoundsPx();
+    tacticTransformSession.debugLog.push({
+      screenDx: Math.round(clientX-debugStartClientX), screenDy: Math.round(clientY-debugStartClientY),
+      canvasMx: Math.round(mx), canvasMy: Math.round(my),
+      origW: Math.round(origBoundsPx.width), origH: Math.round(origBoundsPx.height),
+      calcNextW: Math.round(next.width), calcNextH: Math.round(next.height),
+      actualW: Math.round(actual.width), actualH: Math.round(actual.height)
+    });
+  }
 }
-function endTacticTransform(){ tacticTransformSession = null; }
+function endTacticTransform(){
+  if(tacticResizeDebug && tacticTransformSession && tacticTransformSession.debugLog.length){
+    const log = tacticTransformSession.debugLog;
+    console.log('[resizeDebug] alça="'+tacticTransformSession.handle+'" — '+log.length+' frames:');
+    console.table(log);
+    console.log('[resizeDebug:json] '+JSON.stringify(log)); // console.table não é capturável fora do DevTools — esta linha é para automação/testes
+    const first = log[0], last = log[log.length-1];
+    console.log('[resizeDebug] RESUMO — screenDx final:', last.screenDx, 'screenDy final:', last.screenDy,
+      '| largura: orig='+last.origW, '→ actual='+last.actualW, '(mudança real='+(last.actualW-last.origW)+'px)',
+      '| altura: orig='+last.origH, '→ actual='+last.actualH, '(mudança real='+(last.actualH-last.origH)+'px)');
+  }
+  tacticTransformSession = null;
+}
 tacticTransformHandlesEl.querySelectorAll('[data-handle]').forEach(el=>{
   el.addEventListener('mousedown', e=>{
     e.preventDefault(); e.stopPropagation();

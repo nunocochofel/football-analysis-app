@@ -41,29 +41,33 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.75 specifically — update this block for whatever the next release's own
+          # v0.8.76 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Correção urgente: redimensionar pelas alças exagerava (crescia/encolhia muito mais
-            do que o gesto do rato)**
+            **Diagnóstico do redimensionar pelas alças — investigação continua**
 
-            Duas causas, ambas no mesmo mecanismo (as 8 alças de redimensionar, partilhadas por
-            formas, texto e bonecos):
-            - Formas liam a sua própria posição já alterada pelo movimento de rato ANTERIOR do
-            mesmo arrasto, em vez da posição com que o arrasto começou — cada novo movimento do
-            rato compunha o erro em cima do anterior.
-            - Bonecos multiplicavam o tamanho já atualizado pelo fator do momento atual, em vez do
-            tamanho original — o mesmo tipo de erro a compor-se a cada pixel de movimento.
+            A v0.8.75 corrigiu uma causa real e confirmada de amplificação ao redimensionar pelas
+            alças, mas o sintoma foi reportado como continuando presente. Em vez de continuar a
+            teorizar, esta versão acrescenta uma instrumentação real para medir exatamente o que
+            está a acontecer, e não uma nova tentativa de correção às cegas.
 
-            Corrigido para guardar a geometria/tamanho original UMA VEZ no início do arrasto e
-            calcular sempre a partir daí — nunca a partir do que já foi alterado durante o próprio
-            gesto. Confirmado também que a roda do rato sobre um boneco (não tinha este bug) e o
-            cálculo do ponto fixo oposto à alça arrastada (já estava correto) continuam bem.
+            - **Ctrl+Alt+R** liga/desliga um modo de diagnóstico. Com o modo ligado, cada arrasto
+            de uma alça regista, a cada movimento do rato: o delta do rato em pixels de ecrã, o
+            mesmo delta convertido para o espaço do canvas, a dimensão original guardada no início
+            do arrasto, a dimensão calculada nesse instante, e a dimensão realmente escrita no
+            objeto — tudo impresso na consola (F12) no fim do arrasto.
 
-            Testado (25 verificações reais, Playwright + Electron): as 8 alças, uma a uma, num
-            retângulo — cada uma confirmada a mover-se exatamente 1:1 com o rato (15px de arrasto =
-            15px de mudança); a mesma alça testada a crescer e a encolher; boneco confirmado a
-            crescer/encolher de forma proporcional ao gesto, não exponencial; roda do rato sobre um
-            boneco confirmada sem regressão; gravação de cena e exportação de vídeo (MP4)
-            confirmadas sem alterações.
+            Com esta instrumentação, medi (não estimei) o comportamento atual num retângulo fresco,
+            no mesmo retângulo depois de selecionar/desselecionar 10 objetos (a suspeita principal
+            levantada), e num boneco — em nenhum dos três casos a medição mostrou amplificação: um
+            arrasto de 15px produziu uma mudança de 12-14px em cada caso, consistentemente. Também
+            confirmado que o mousedown que guarda o estado inicial do arrasto está sempre a
+            disparar corretamente, que não há mais do que um handler de mousemove ativo, e que a
+            alça continua a ser o elemento mais à frente no seu próprio ponto (não fica tapada por
+            um boneco por baixo).
+
+            Sem conseguir reproduzir a amplificação com testes automatizados depois da v0.8.75,
+            preciso dos números reais do teu ambiente: liga o diagnóstico (Ctrl+Alt+R), reproduz o
+            problema, e envia-me o que aparecer na consola (as linhas que começam por
+            "[resizeDebug]").
