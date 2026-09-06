@@ -41,33 +41,33 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.76 specifically — update this block for whatever the next release's own
+          # v0.8.77 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Diagnóstico do redimensionar pelas alças — investigação continua**
+            **Reorganização da interface do quadro tático — lote 1/3: popups**
 
-            A v0.8.75 corrigiu uma causa real e confirmada de amplificação ao redimensionar pelas
-            alças, mas o sintoma foi reportado como continuando presente. Em vez de continuar a
-            teorizar, esta versão acrescenta uma instrumentação real para medir exatamente o que
-            está a acontecer, e não uma nova tentativa de correção às cegas.
+            Primeiro lote da reorganização pedida depois da ronda de estabilização, focado só em
+            dois pontos reportados como quebrados ou confusos — sem nenhuma funcionalidade nova.
 
-            - **Ctrl+Alt+R** liga/desliga um modo de diagnóstico. Com o modo ligado, cada arrasto
-            de uma alça regista, a cada movimento do rato: o delta do rato em pixels de ecrã, o
-            mesmo delta convertido para o espaço do canvas, a dimensão original guardada no início
-            do arrasto, a dimensão calculada nesse instante, e a dimensão realmente escrita no
-            objeto — tudo impresso na consola (F12) no fim do arrasto.
+            - **Popup "+ Objeto" cortado** — corrigido. O popup usava o mesmo mecanismo dos outros
+            menus do quadro tático (position:absolute), que ficava cortado pelo scroll vertical do
+            próprio painel de ferramentas (introduzido na correção urgente do campo cortado, ronda
+            anterior) — nenhum z-index escapa ao overflow de um elemento pai. Criado um mecanismo
+            novo (position:fixed, com a posição calculada para nunca sair da janela em nenhum
+            lado), usado já também no ponto seguinte. Fecha ao clicar fora ou com Esc.
 
-            Com esta instrumentação, medi (não estimei) o comportamento atual num retângulo fresco,
-            no mesmo retângulo depois de selecionar/desselecionar 10 objetos (a suspeita principal
-            levantada), e num boneco — em nenhum dos três casos a medição mostrou amplificação: um
-            arrasto de 15px produziu uma mudança de 12-14px em cada caso, consistentemente. Também
-            confirmado que o mousedown que guarda o estado inicial do arrasto está sempre a
-            disparar corretamente, que não há mais do que um handler de mousemove ativo, e que a
-            alça continua a ser o elemento mais à frente no seu próprio ponto (não fica tapada por
-            um boneco por baixo).
+            - **Ferramentas de desenho em popup** — as duas filas densas de ícones (linha, seta,
+            seta poligonal, mão livre, curva, zona, elipse, retângulo, triângulo, texto) passam
+            para um único botão "Desenhar" que abre um popup com ícone + nome por ferramenta, no
+            mesmo estilo visual do "+ Objeto". O botão mostra sempre a ferramenta atualmente ativa.
+            "Mover" e a borracha continuam como botões próprios na barra. Todos os atalhos de
+            teclado (R, S, V, L, C, Z, O, T, etc.) continuam a funcionar exatamente como antes, e
+            fixar uma ferramenta com duplo-clique (para desenhar várias formas seguidas sem reabrir
+            o popup) também continua a funcionar de dentro do popup.
 
-            Sem conseguir reproduzir a amplificação com testes automatizados depois da v0.8.75,
-            preciso dos números reais do teu ambiente: liga o diagnóstico (Ctrl+Alt+R), reproduz o
-            problema, e envia-me o que aparecer na consola (as linhas que começam por
-            "[resizeDebug]").
+            Verificado com testes automatizados reais (Electron + Playwright, cliques e arrastos
+            verdadeiros): os dois popups nunca saem da janela em ecrã pequeno, maximizado, e
+            simulação de iPad em retrato e paisagem; escolher uma ferramenta no popup desenha
+            mesmo uma forma no campo; os atalhos de teclado continuam suspensos a escrever texto;
+            a exportação de vídeo e de imagem continuam presentes e por tocar.

@@ -214,6 +214,49 @@
   }
   .tool-flyout-wrap:hover .tool-flyout, .tool-flyout.pinned{display:flex;}
 
+  /* Ronda de reorganização — mecanismo NOVO para os popups que precisam de escapar ao scroll do
+     próprio #tacticToolbar (overflow-y:auto, ver a correção urgente do campo cortado): o "+
+     Objeto" aparecia cortado/atrás do campo porque .tool-flyout usa position:absolute, que fica
+     sujeito ao overflow de QUALQUER antepassado — nenhum z-index escapa a isso. position:fixed +
+     posição calculada em JS (positionPopupMenu, ver script) não fica sujeito a overflow de
+     antepassado nenhum, e garante-se por cálculo que nunca sai da janela. Só para os popups
+     reorganizados nesta ronda ("+ Objeto", "Desenhar", e mais tarde "Formações") — os outros
+     flyouts mais pequenos (cor, estilo de linha, etc.) ficam com o mecanismo antigo por agora, até
+     serem substituídos pelo painel de propriedades num lote posterior. Abre só a clique (sem
+     :hover) — um popup fixed não pode reagir a um simples hover sem também correr JS para o
+     posicionar, por isso simplifica-se para um único mecanismo, mais previsível de qualquer forma. */
+  .popup-menu-wrap{position:relative;}
+  .popup-menu{
+    display:none; position:fixed; z-index:500;
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:6px;
+    box-shadow:var(--shadow); flex-direction:column; gap:2px; max-height:70vh; overflow-y:auto; min-width:215px;
+  }
+  .popup-menu.open{display:flex;}
+  .popup-menu-item{
+    display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:var(--radius-sm);
+    background:transparent; border:1px solid transparent; color:var(--chalk); text-align:left; width:100%;
+    font-size:13px; cursor:pointer; white-space:nowrap;
+  }
+  .popup-menu-item:hover{background:var(--panel-alt);}
+  .popup-menu-item.active{background:var(--pitch); border-color:var(--pitch); color:#08110A;}
+  /* Mesmo ponto de "fixado" que .tool-btn.pinned (ver esse comentário) — aplicado por classe, não
+     por seletor de tag, porque estes itens do popup "Desenhar" continuam a usar o atributo
+     data-ttool partilhado com o resto do código (setTacticTool/updateTacticToolPinnedUI), só sem a
+     classe .tool-btn (que fixa width/height:30px — incompatível com uma linha ícone+nome). */
+  .popup-menu-item.pinned::after{
+    content:''; position:absolute; bottom:3px; right:3px; width:5px; height:5px; border-radius:50%;
+    background:var(--amber); box-shadow:0 0 0 1px var(--pitch);
+  }
+  .popup-menu-item .pm-icon{font-size:18px; width:22px; text-align:center; flex-shrink:0;}
+  /* O mesmo pontinho de "ferramenta fixa" (Ctrl+duplo-clique) já usado nos botões da barra antiga
+     — aqui também serve para o botão "Desenhar" em si mostrar que está fixo, já que a ferramenta
+     escolhida deixa de estar visível assim que o popup fecha. */
+  .popup-menu-trigger-btn{position:relative;}
+  .popup-menu-trigger-btn.pinned::after{
+    content:''; position:absolute; bottom:3px; right:3px; width:5px; height:5px; border-radius:50%;
+    background:var(--amber); box-shadow:0 0 0 1px var(--pitch);
+  }
+
   /* LIVE (Fase 1, Desktop/Electron only). Base rule unconditionally display:none — same reasoning
      as .token-hit-area/.fs-exit-btn in earlier phases: this must be completely inert on Mobile/
      PWA/Touch even if some future edit forgot an explicit isElectron() guard somewhere, not merely
@@ -1931,16 +1974,35 @@
         </div>
         <div class="toolbar-sep"></div>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="move" title="Mover jogadores">✋</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="line" title="Linha (R)">╱</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="arrow" title="Seta (S)">➔</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="polyarrow" title="Seta poligonal (V) — clica para cada dobra, duplo-clique termina; os pontos ficam editáveis depois">⤳</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="freehand" title="Mão livre (L)">✎</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="curve" title="Curva (C) — arrasta para desenhar; depois de criada, dois pontos de controlo ficam arrastáveis para a moldar">〜</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="zone" title="Zona (Z) — polígono livre">▱</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="ellipse" title="Elipse/círculo (O) — arrasta a partir do centro">◯</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="rect" title="Retângulo">▭</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="triangle" title="Triângulo">△</button>
-        <button class="tool-btn mobile-toolbar-primary" data-ttool="text" title="Texto (T)">🔤</button>
+        <!-- Ronda de reorganização (lote 1) — as 10 ferramentas de desenho, antes duas filas densas
+             de ícones sem indicação do que cada uma fazia, passam para um único botão que abre um
+             popup ícone+nome, no mesmo padrão visual do "+ Objeto" (ver .popup-menu no CSS). Cada
+             item mantém data-ttool="..." — a wiring de atalhos de teclado, seleção da ferramenta e
+             "fixar com duplo-clique" (mais abaixo, perto de setTacticTool) continua a apanhar estes
+             botões automaticamente através do seletor genérico [data-ttool], sem alterações. -->
+        <!-- .mobile-toolbar-primary also on the WRAPPER, not just the trigger button: the mobile
+             compact-toolbar rule (body.mobile-touch-ui #tacticToolbar > *:not(.mobile-toolbar-primary))
+             hides DIRECT children of #tacticToolbar, and this wrap div — not the button inside it —
+             is the direct child. Before this reorg the 10 tool buttons carried the class themselves
+             and stayed on the always-visible primary row; without this the whole "Desenhar" trigger
+             would regress to hidden-until-"Mais ferramentas" on touch devices. -->
+        <div class="popup-menu-wrap mobile-toolbar-primary">
+          <button class="btn popup-menu-trigger-btn" id="drawToolsTrigger" title="Ferramentas de desenho">
+            <span id="drawToolsTriggerIcon">╱</span> <span id="drawToolsTriggerLabel">Desenhar</span> ▾
+          </button>
+          <div class="popup-menu" id="drawToolsPopup">
+            <button class="popup-menu-item" data-ttool="line" title="Linha (R)"><span class="pm-icon">╱</span> Linha</button>
+            <button class="popup-menu-item" data-ttool="arrow" title="Seta (S)"><span class="pm-icon">➔</span> Seta</button>
+            <button class="popup-menu-item" data-ttool="polyarrow" title="Seta poligonal (V) — clica para cada dobra, duplo-clique termina; os pontos ficam editáveis depois"><span class="pm-icon">⤳</span> Seta poligonal</button>
+            <button class="popup-menu-item" data-ttool="freehand" title="Mão livre (L)"><span class="pm-icon">✎</span> Mão livre</button>
+            <button class="popup-menu-item" data-ttool="curve" title="Curva (C) — arrasta para desenhar; depois de criada, dois pontos de controlo ficam arrastáveis para a moldar"><span class="pm-icon">〜</span> Curva</button>
+            <button class="popup-menu-item" data-ttool="zone" title="Zona (Z) — polígono livre"><span class="pm-icon">▱</span> Zona</button>
+            <button class="popup-menu-item" data-ttool="ellipse" title="Elipse/círculo (O) — arrasta a partir do centro"><span class="pm-icon">◯</span> Elipse/círculo</button>
+            <button class="popup-menu-item" data-ttool="rect" title="Retângulo"><span class="pm-icon">▭</span> Retângulo</button>
+            <button class="popup-menu-item" data-ttool="triangle" title="Triângulo"><span class="pm-icon">△</span> Triângulo</button>
+            <button class="popup-menu-item" data-ttool="text" title="Texto (T)"><span class="pm-icon">🔤</span> Texto</button>
+          </div>
+        </div>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (também podes selecionar e premir Delete, ou clicar com o botão direito → Apagar)">🧹</button>
         <div class="toolbar-sep"></div>
         <!-- Fase 7 — mounted dynamically by mountColorPicker() (JS), one flyout per picker,
@@ -1998,19 +2060,22 @@
              same mobile-toolbar-primary/mobile-tools-open pattern as #videoToolbar. -->
         <button class="btn icon mobile-toolbar-primary touch-only" id="btnTacticMoreTools" title="Mais ferramentas">⋯</button>
         <div class="toolbar-sep"></div>
-        <div class="tool-flyout-wrap" id="objectFlyoutWrap">
-          <button class="btn">+ Objeto</button>
-          <div class="tool-flyout" id="objectFlyout">
-            <div class="tool-group" style="flex-wrap:wrap; max-width:180px;">
-              <button class="btn" data-object="ball" title="Bola">⚽ Bola</button>
-              <button class="btn" data-object="cone" title="Cone">🔶 Cone</button>
-              <button class="btn" data-object="goal" title="Baliza">🥅 Baliza</button>
-              <button class="btn" data-object="minigoal" title="Mini-baliza">🥅 Mini</button>
-              <button class="btn" data-object="marker" title="Marcador/disco">🟡 Marcador</button>
-              <button class="btn" data-object="pole" title="Poste/vara de agilidade">📍 Poste</button>
-              <button class="btn" data-object="hurdle" title="Barreira">🚧 Barreira</button>
-              <button class="btn" data-object="ladder" title="Escada de agilidade">🪜 Escada</button>
-            </div>
+        <!-- Ronda de reorganização (lote 1) — antes usava .tool-flyout-wrap/.tool-flyout
+             (position:absolute), que ficava cortado pelo overflow-y:auto do próprio #tacticToolbar
+             (correção urgente do campo cortado, ronda anterior) — nenhum z-index escapa ao overflow
+             de um antepassado. .popup-menu-wrap/.popup-menu usa position:fixed com posição
+             calculada em JS (positionPopupMenu), por isso nunca mais fica sujeito a esse corte. -->
+        <div class="popup-menu-wrap" id="objectFlyoutWrap">
+          <button class="btn popup-menu-trigger-btn" id="objectPopupTrigger">+ Objeto ▾</button>
+          <div class="popup-menu" id="objectFlyout">
+            <button class="popup-menu-item" data-object="ball" title="Bola"><span class="pm-icon">⚽</span> Bola</button>
+            <button class="popup-menu-item" data-object="cone" title="Cone"><span class="pm-icon">🔶</span> Cone</button>
+            <button class="popup-menu-item" data-object="goal" title="Baliza"><span class="pm-icon">🥅</span> Baliza</button>
+            <button class="popup-menu-item" data-object="minigoal" title="Mini-baliza"><span class="pm-icon">🥅</span> Mini-baliza</button>
+            <button class="popup-menu-item" data-object="marker" title="Marcador/disco"><span class="pm-icon">🟡</span> Marcador</button>
+            <button class="popup-menu-item" data-object="pole" title="Poste/vara de agilidade"><span class="pm-icon">📍</span> Poste</button>
+            <button class="popup-menu-item" data-object="hurdle" title="Barreira"><span class="pm-icon">🚧</span> Barreira</button>
+            <button class="popup-menu-item" data-object="ladder" title="Escada de agilidade"><span class="pm-icon">🪜</span> Escada</button>
           </div>
         </div>
         <div class="tool-flyout-wrap" id="playerFlyoutWrap">
@@ -9438,6 +9503,44 @@ function renderTokens(){
 }
 renderTokens();
 
+// Ronda de reorganização (lote 1) — mecanismo genérico de popup para os popups substituídos nesta
+// ronda ("+ Objeto", "Desenhar"). position:fixed com posição calculada aqui (nunca sujeito ao
+// overflow de nenhum antepassado — ver o comentário do CSS .popup-menu). Abre só a clique (sem
+// :hover, ao contrário do .tool-flyout antigo — um popup fixed só sabe onde ficar depois de correr
+// este JS, por isso simplifica-se para um único mecanismo de abrir/fechar em vez de dois); fecha ao
+// clicar fora, ao premir Escape, ou ao escolher uma opção lá dentro.
+let openPopupMenuEl = null;
+function positionPopupMenu(popup, trigger){
+  const r = trigger.getBoundingClientRect();
+  const pw = popup.offsetWidth, ph = popup.offsetHeight;
+  let left = r.left, top = r.bottom + 6;
+  if(top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 6); // sem espaço por baixo — vira para cima
+  if(left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8; // não sai pela direita
+  left = Math.max(8, left); // nem pela esquerda
+  popup.style.left = left + 'px';
+  popup.style.top = top + 'px';
+}
+function openPopupMenu(popup, trigger){
+  if(openPopupMenuEl && openPopupMenuEl !== popup) closePopupMenu();
+  popup.classList.add('open');
+  positionPopupMenu(popup, trigger);
+  openPopupMenuEl = popup;
+}
+function closePopupMenu(){
+  if(openPopupMenuEl){ openPopupMenuEl.classList.remove('open'); openPopupMenuEl = null; }
+}
+function togglePopupMenu(popup, trigger){
+  if(popup.classList.contains('open')) closePopupMenu(); else openPopupMenu(popup, trigger);
+}
+document.addEventListener('click', e=>{
+  if(!openPopupMenuEl) return;
+  if(e.target.closest('.popup-menu') || e.target.closest('.popup-menu-trigger-btn')) return;
+  closePopupMenu();
+});
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && openPopupMenuEl) closePopupMenu();
+});
+
 function addObject(kind){
   pushTacticHistory();
   const id = kind+'_'+uid();
@@ -9448,15 +9551,14 @@ function addObject(kind){
 document.querySelectorAll('#objectFlyout [data-object]').forEach(b=>{
   b.addEventListener('click', ()=>{
     addObject(b.dataset.object);
-    document.getElementById('objectFlyout').classList.remove('pinned');
+    closePopupMenu();
   });
 });
-document.querySelector('#objectFlyoutWrap > .btn').addEventListener('click', e=>{
+document.getElementById('objectPopupTrigger').addEventListener('click', e=>{
   e.stopPropagation();
-  document.getElementById('objectFlyout').classList.toggle('pinned');
+  togglePopupMenu(document.getElementById('objectFlyout'), e.currentTarget);
 });
 document.addEventListener('click', e=>{
-  if(!e.target.closest('#objectFlyoutWrap')) document.getElementById('objectFlyout').classList.remove('pinned');
   if(!e.target.closest('#playerFlyoutWrap')) document.getElementById('playerFlyout').classList.remove('pinned');
 });
 
@@ -9693,8 +9795,27 @@ window.addEventListener('touchcancel', e=>{ if(tacticTouchGestureEnded(e)) tacti
 // Um simples clique NUNCA fixa — qualquer escolha de ferramenta (mesmo repetir a mesma) desarma o
 // fixar anterior, só um novo duplo-clique volta a fixar.
 let tToolPinned = false;
+// Ronda de reorganização (lote 1) — as 10 ferramentas de desenho passaram para dentro do popup
+// "Desenhar" (ver #drawToolsPopup no HTML); como só o item ativo dentro do popup mostra qual é a
+// ferramenta (e o popup passa a maior parte do tempo fechado), o botão que o abre precisa do seu
+// próprio ícone+nome, atualizado sempre que a ferramenta muda — incluindo por atalho de teclado.
+const TACTIC_DRAW_TOOL_META = {
+  line:{icon:'╱', label:'Linha'}, arrow:{icon:'➔', label:'Seta'}, polyarrow:{icon:'⤳', label:'Seta poligonal'},
+  freehand:{icon:'✎', label:'Mão livre'}, curve:{icon:'〜', label:'Curva'}, zone:{icon:'▱', label:'Zona'},
+  ellipse:{icon:'◯', label:'Elipse/círculo'}, rect:{icon:'▭', label:'Retângulo'}, triangle:{icon:'△', label:'Triângulo'},
+  text:{icon:'🔤', label:'Texto'}
+};
+function updateDrawToolsTriggerUI(){
+  const trigger = document.getElementById('drawToolsTrigger');
+  if(!trigger) return;
+  const meta = TACTIC_DRAW_TOOL_META[tTool];
+  document.getElementById('drawToolsTriggerIcon').textContent = meta ? meta.icon : '╱';
+  document.getElementById('drawToolsTriggerLabel').textContent = meta ? meta.label : 'Desenhar';
+  trigger.classList.toggle('pinned', tToolPinned && !!meta);
+}
 function updateTacticToolPinnedUI(){
   document.querySelectorAll('[data-ttool]').forEach(b=>b.classList.toggle('pinned', tToolPinned && b.classList.contains('active')));
+  updateDrawToolsTriggerUI();
 }
 function setTacticTool(tool){
   const b = document.querySelector(`[data-ttool="${tool}"]`);
@@ -9718,6 +9839,30 @@ document.querySelectorAll('[data-ttool]').forEach(b=>{
   });
 });
 document.querySelector('[data-ttool="move"]').classList.add('active');
+// Ronda de reorganização (lote 1) — escolher uma ferramenta dentro do popup "Desenhar" fecha-o (o
+// listener de setTacticTool acima já corre para estes botões, por partilharem [data-ttool]; isto só
+// fecha o popup, não interfere com a escolha da ferramenta em si). O fecho no 'click' simples tem de
+// dar tempo a um possível segundo clique — fechar imediatamente esconderia o botão antes do segundo
+// clique do duplo-clique-para-fixar (ronda de estabilização anterior, já confirmada pelo
+// utilizador), e o segundo clique cairia no que estiver por baixo do popup em vez de disparar
+// 'dblclick' no mesmo botão. e.detail===2 identifica o clique que faz parte de um duplo-clique.
+document.querySelectorAll('#drawToolsPopup [data-ttool]').forEach(b=>{
+  let closeTimer = null;
+  b.addEventListener('click', e=>{
+    if(e.detail >= 2) return; // o handler de 'dblclick' abaixo trata do fecho
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(()=>closePopupMenu(), 450);
+  });
+  b.addEventListener('dblclick', ()=>{
+    clearTimeout(closeTimer);
+    closePopupMenu();
+  });
+});
+document.getElementById('drawToolsTrigger').addEventListener('click', e=>{
+  e.stopPropagation();
+  togglePopupMenu(document.getElementById('drawToolsPopup'), e.currentTarget);
+});
+updateDrawToolsTriggerUI();
 // Ronda de estabilização — ao terminar QUALQUER forma (arrastar-e-largar, ou fechar um polígono de
 // vários pontos), a forma fica selecionada com alças — pronta a mover/redimensionar/mudar de cor
 // sem trocar de ferramenta — e a ferramenta volta sozinha a "mover", A MENOS que esteja fixa (ver
