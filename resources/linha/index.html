@@ -2021,7 +2021,7 @@
           <button class="tool-btn" data-labelmode="initials" title="Iniciais">AB</button>
           <button class="tool-btn" data-labelmode="name" title="Nome completo">Nome</button>
         </div>
-        <span class="mono" style="color:var(--muted); font-size:11px;">(arrasta a pega ⚪ acima do objeto para o rodar · duplo-clique remove · arrasta as alças ou roda o rato sobre um objeto para o redimensionar)</span>
+        <span class="mono" style="color:var(--muted); font-size:11px;">(arrasta a pega ⚪ acima do objeto para o rodar · seleciona e Delete ou botão direito → Apagar remove · arrasta as alças ou roda o rato sobre um objeto para o redimensionar)</span>
         <div style="flex:1;"></div>
         <div class="tool-flyout-wrap" id="exportFlyoutWrap">
           <button class="btn">⬇ Descarregar vídeo</button>
@@ -8985,6 +8985,35 @@ let selectedShapeIds = new Set();
 let selectedTokenIds = new Set();
 function clearTacticSelection(){ selectedShapeIds.clear(); selectedTokenIds.clear(); }
 function tacticSelectionEmpty(){ return selectedShapeIds.size===0 && selectedTokenIds.size===0; }
+// Ronda de estabilização — regra ÚNICA de seleção por clique, partilhada por formas E bonecos (Fase
+// 2 já tinha isto duplicado em dois sítios, ligeiramente diferentes um do outro: essa divergência
+// era metade da razão da seleção parecer errática). Sem Shift: colapsa para só este objeto. Com
+// Shift: alterna só a pertença deste objeto, sem tocar no resto da seleção.
+function applyTacticSelectionClick(kind, id, shiftKey){
+  const mine = kind==='shape' ? selectedShapeIds : selectedTokenIds;
+  if(shiftKey){
+    if(mine.has(id)) mine.delete(id); else mine.add(id);
+  } else {
+    selectedShapeIds.clear(); selectedTokenIds.clear();
+    mine.add(id);
+  }
+  redrawTactic(); renderTokens(); updateTacticDeleteButton();
+}
+// Regra ÚNICA de botão direito, também partilhada por formas e bonecos: se já havia ALGUMA coisa
+// selecionada (um ou vários objetos, de qualquer tipo), o botão direito NUNCA lhe mexe — abre o
+// menu para essa seleção tal como estava. Só se a seleção estiver vazia é que o botão direito
+// escolhe o que está sob o cursor. Isto substitui a regra antiga (só preservava a seleção quando o
+// objeto clicado já era, ele próprio, parte dela — um multi-seleção qualquer era destruída ao
+// clicar com o botão direito num objeto não selecionado), que é exatamente o tipo de
+// imprevisibilidade reportada.
+function openTacticContextMenuFor(kind, id, clientX, clientY){
+  if(tacticSelectionEmpty()){
+    (kind==='shape' ? selectedShapeIds : selectedTokenIds).add(id);
+    redrawTactic(); renderTokens(); updateTacticDeleteButton();
+  }
+  updateTacticContextMenuContents();
+  openTacticContextMenu(clientX, clientY);
+}
 
 // Fase 2 — real undo/redo, one stack PER BOARD MODE (not a single global one) because
 // full/zones/box/depth already keep fully independent tokens/shapes via boardBuffers — a single
@@ -9287,16 +9316,21 @@ function renderTokens(){
     // no group-drag/group-transform feature to have kept the old behavior for.
     function updateSelectionOnTokenPointerDown(e){
       if(tTool!=='move') return;
-      const shift = !!(e.shiftKey);
-      if(shift){
-        if(selectedTokenIds.has(id)) selectedTokenIds.delete(id); else selectedTokenIds.add(id);
-      } else {
-        selectedShapeIds.clear(); selectedTokenIds.clear(); selectedTokenIds.add(id);
-      }
-      renderTokens(); updateTacticDeleteButton();
+      applyTacticSelectionClick('token', id, !!e.shiftKey);
     }
     function startRotate(e){
-      if(tTool!=='move' || tk.locked) return;
+      if(tTool!=='move'){
+        // Ronda de estabilização (bug 2) — um boneco é um elemento de DOM próprio, irmão do
+        // canvas, não um filho dele: com uma ferramenta de desenho ativa, um mousedown mesmo em
+        // cima de um boneco nunca chegava a startTacticCanvasInteraction (o listener do canvas),
+        // porque o evento nem passa por lá — o alvo real é este elemento. O resultado era um
+        // mousedown que não fazia NADA: nem selecionava (esta função já recusava por tTool!=='move'
+        // antes desta correção), nem começava a desenhar. Delegar aqui trata este ponto
+        // exatamente como se o clique tivesse caído no canvas vazio.
+        startTacticCanvasInteraction(e);
+        return;
+      }
+      if(tk.locked) return;
       e.stopPropagation(); e.preventDefault();
       updateSelectionOnTokenPointerDown(e);
       tRotateId = id;
@@ -9315,7 +9349,11 @@ function renderTokens(){
     hitArea.className = 'token-hit-area';
     el.appendChild(hitArea);
     function startDrag(e){
-      if(tTool!=='move' || tk.locked) return;
+      // Ronda de estabilização (bug 2) — mesma delegação de startRotate acima: sem isto, um
+      // mousedown/touchstart sobre o próprio corpo do boneco (não só a pega de rodar) com uma
+      // ferramenta de desenho ativa também não fazia nada.
+      if(tTool!=='move'){ startTacticCanvasInteraction(e); return; }
+      if(tk.locked) return;
       updateSelectionOnTokenPointerDown(e);
       tDragId=id;
       tDragHistoryPushed = false;
@@ -9341,28 +9379,24 @@ function renderTokens(){
       tk.scale = clamp((tk.scale||1) + (e.deltaY<0 ? 0.12 : -0.12), 0.4, 3);
       renderTokens();
     }, {passive:false});
-    el.addEventListener('dblclick', e=>{
-      e.stopPropagation();
-      if(tk.locked) return;
-      pushTacticHistory();
-      selectedTokenIds.delete(id);
-      delete tokens[id];
-      renderTokens();
-    });
-    // Fase 2/4 — tokens are plain DOM elements (siblings of tacticCanvas, not children of it), so
-    // a right-click here never reaches tacticCanvas's own 'contextmenu' listener — needs its own,
-    // mirroring the same select-then-open-menu behavior shapes get. Deliberately NOT gated on
-    // tk.locked — right-click is the one path that always works on a locked token too, since
-    // otherwise a locked token could never be unlocked again through the UI.
+    // Ronda de estabilização (bug 1) — duplo-clique costumava APAGAR o boneco sem confirmação, o
+    // único tipo de objeto do quadro com esse comportamento (texto abre o editor; qualquer outra
+    // forma não faz nada de especial, já fica selecionada pelos dois mousedown do próprio duplo-
+    // clique) — exatamente a inconsistência "tem de ser o mesmo em todos os tipos de objeto".
+    // Apagar continua disponível (seleção + Delete, ou botão direito → Apagar); duplo-clique deixa
+    // de ser um atalho paralelo e surpreendente para a mesma ação.
+    el.addEventListener('dblclick', e=>{ e.stopPropagation(); });
+    // Regra ÚNICA de botão direito (ver openTacticContextMenuFor) — tokens são elementos de DOM
+    // próprios (irmãos do canvas, não filhos dele), por isso o botão direito aqui nunca chega ao
+    // listener 'contextmenu' do próprio canvas e precisa do seu próprio, mas agora a MESMA regra:
+    // nunca mexe numa seleção já existente, só escolhe o que está sob o cursor se não houver nada
+    // selecionado. Já não depende de tTool==='move' — o botão direito é a via de escape que
+    // funciona sempre, com qualquer ferramenta ativa, tal como já valia para formas. Deliberadamente
+    // NÃO gated em tk.locked — o botão direito é o único caminho que sempre funciona num boneco
+    // bloqueado, senão nunca se conseguiria voltar a desbloquear.
     el.addEventListener('contextmenu', e=>{
       e.preventDefault(); e.stopPropagation();
-      if(tTool!=='move') return;
-      if(!selectedTokenIds.has(id)){
-        selectedShapeIds.clear(); selectedTokenIds.clear(); selectedTokenIds.add(id);
-        renderTokens(); updateTacticDeleteButton();
-      }
-      updateTacticContextMenuContents();
-      openTacticContextMenu(e.clientX, e.clientY);
+      openTacticContextMenuFor('token', id, e.clientX, e.clientY);
     });
     tacticPitch.appendChild(el);
     // Fase 9 — the "nome" label: a plain sibling, NOT a child of `el`, so it never inherits el's
@@ -9747,17 +9781,14 @@ function eraseTacticShapeAt(e){
 // to happen from a keyboard/gesture shortcut alone. Right-clicking a shape/token that ISN'T already
 // part of the selection selects just that one first — right-clicking one that already IS selected
 // keeps the whole current selection intact, so the menu's "Apagar" can act on a whole group.
+// Regra ÚNICA de botão direito (ver openTacticContextMenuFor) — nunca mexe numa seleção já
+// existente (mesmo que não inclua a forma sob o cursor); só escolhe a forma sob o cursor quando a
+// seleção está vazia. Antes disto, clicar com o botão direito numa forma NÃO selecionada destruía
+// sempre qualquer multi-seleção existente, mesmo que não fosse essa a intenção.
 tacticCanvas.addEventListener('contextmenu', e=>{
   e.preventDefault();
   const hitShape = findVisibleTacticShapeAt(e);
-  if(hitShape){
-    if(!selectedShapeIds.has(hitShape.id)){
-      selectedShapeIds.clear(); selectedTokenIds.clear(); selectedShapeIds.add(hitShape.id);
-      renderTokens(); redrawTactic(); updateTacticDeleteButton();
-    }
-    updateTacticContextMenuContents();
-    openTacticContextMenu(e.clientX, e.clientY);
-  }
+  if(hitShape) openTacticContextMenuFor('shape', hitShape.id, e.clientX, e.clientY);
 });
 let tErasing = false;
 // Fase 2 — rubber-band drag-select over empty canvas. {startClientX, startClientY, additive} while
@@ -9796,12 +9827,7 @@ function startTacticCanvasInteraction(e){
     if(hit){
       e.preventDefault();
       const shift = !!e.shiftKey;
-      if(shift){
-        if(selectedShapeIds.has(hit.id)) selectedShapeIds.delete(hit.id); else selectedShapeIds.add(hit.id);
-      } else {
-        selectedShapeIds.clear(); selectedTokenIds.clear(); selectedShapeIds.add(hit.id);
-      }
-      redrawTactic(); updateTacticDeleteButton();
+      applyTacticSelectionClick('shape', hit.id, shift);
       if(hit.type==='text' && (!shift || selectedShapeIds.has(hit.id))){
         tacticShapeDragSession = {shape:hit, startX:clientPt.x, startY:clientPt.y, orig:cloneShapeGeometry(hit)};
         tDragHistoryPushed = false;

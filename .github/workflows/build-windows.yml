@@ -41,33 +41,41 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.72 specifically — update this block for whatever the next release's own
+          # v0.8.73 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Correção urgente: etiquetas de nome dos jogadores a acumular no quadro tático**
+            **Ronda de estabilização (1/N): seleção previsível + começar a desenhar sobre um
+            boneco**
 
-            No modo "nome" (Fase 9, v0.8.67), clicar num jogador, redimensioná-lo (alça ou roda do
-            rato) ou movê-lo deixava a etiqueta com o nome anterior no campo em vez de a substituir
-            — cada interação acrescentava mais uma, sem nunca remover as antigas. Com uso
-            repetido, o campo enchia-se de etiquetas fantasma sobrepostas, sem acompanhar os
-            bonecos.
+            Sem funcionalidade nova — só correções, depois de várias fases seguidas terem deixado
+            a interação do quadro tático inconsistente entre tipos de objeto.
 
-            Causa: a etiqueta de nome é um elemento à parte (não faz parte do boneco em si), e a
-            função que redesenha os bonecos a cada interação limpava os bonecos antigos mas nunca
-            as etiquetas. Corrigido para limpar sempre as duas coisas.
+            **Seleção (clique, duplo-clique, botão direito)** — passa a ser exatamente a mesma
+            regra para qualquer tipo de objeto (forma, boneco, texto):
+            - Clique simples seleciona só o objeto sob o cursor; Shift+clique acrescenta/remove
+            só esse, sem tocar no resto — agora também a misturar tipos (ex.: um boneco + uma
+            forma ao mesmo tempo).
+            - **Duplo-clique num boneco deixava de o selecionar para o APAGAR imediatamente, sem
+            confirmação** — o único tipo de objeto do quadro com esse comportamento. Corrigido:
+            duplo-clique já não apaga nada; apagar continua disponível por seleção+Delete ou
+            botão direito → Apagar.
+            - **Botão direito** passa a ter uma regra única: se já havia alguma coisa selecionada,
+            nunca lhe mexe (abre o menu para essa seleção tal como estava, mesmo clicando fora
+            dela); só escolhe o que está sob o cursor quando a seleção estava vazia. Antes disto,
+            clicar com o botão direito num objeto não selecionado destruía sempre uma
+            multi-seleção existente — a origem mais provável de "não consigo prever o que fica
+            selecionado".
 
-            **As etiquetas fantasma nunca ficaram gravadas nos projetos nem nas cenas** — são
-            sempre recalculadas no ecrã a partir do nome atual do jogador, nunca guardadas como
-            dado próprio. Não há nada para limpar nem recuperar: fechar e reabrir a aplicação (ou
-            simplesmente mudar de separador e voltar) já fazia o campo mostrar-se corretamente,
-            mesmo antes desta correção. Cenas gravadas enquanto o bug estava presente abrem sem
-            qualquer contaminação.
+            **Começar a desenhar sobre um boneco** — um boneco é um elemento próprio por cima do
+            campo; com uma ferramenta de desenho ativa, um clique que calhasse em cima de um
+            boneco não fazia nada (nem selecionava, nem desenhava) em vez de começar a forma ali
+            mesmo. Corrigido.
 
-            Testado (17 verificações reais, Playwright + Electron): 30 cliques seguidos no mesmo
-            jogador, cliques em todos os jogadores de seguida, 15 ciclos de redimensionar com a
-            roda do rato, arrastar a alça de redimensionar, e mover o jogador 5 vezes — em nenhum
-            caso a contagem de etiquetas no ecrã ultrapassou o número real de jogadores; uma cena
-            gravada com o bug presente confirmada a abrir sem contaminação depois de fechar e
-            reabrir a aplicação; confirmado que o mesmo tipo de acumulação não existe nas alças de
-            ponto da seta poligonal nem nas miniaturas de cena.
+            Testado (19 verificações reais, Playwright + Electron): desenhar uma linha e uma seta
+            a começar em cima de um boneco e da sua pega de rodar; clique simples e clique em
+            vazio; Shift+clique a misturar um boneco e uma forma; duplo-clique num boneco
+            confirmado a NÃO apagar; duplo-clique num texto confirmado a continuar a abrir o
+            editor; botão direito com seleção vazia (seleciona) e com seleção prévia (nunca
+            muda, testado clicando em vazio e diretamente sobre outro objeto); gravação de cena e
+            exportação de vídeo (MP4) confirmadas a continuar a funcionar sem alterações.
