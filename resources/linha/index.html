@@ -252,6 +252,12 @@
      — aqui também serve para o botão "Desenhar" em si mostrar que está fixo, já que a ferramenta
      escolhida deixa de estar visível assim que o popup fecha. */
   .popup-menu-trigger-btn{position:relative;}
+  /* Ronda de reorganização (lote C) — quando um botão inteiro (com o seu próprio popup, ex.
+     "Formações") se muda para dentro do popup "⋯ Mais", fica com o mesmo aspeto de uma linha da
+     lista em vez de um botão "flutuante" — a etiqueta <label> "+ Imagem" (sem popup próprio, um
+     botão simples) recebe o mesmo tratamento. */
+  #tacticOverflowPopup > .popup-menu-wrap > .btn,
+  #tacticOverflowPopup > label.btn{ width:100%; justify-content:flex-start; }
   .popup-menu-trigger-btn.pinned::after{
     content:''; position:absolute; bottom:3px; right:3px; width:5px; height:5px; border-radius:50%;
     background:var(--amber); box-shadow:0 0 0 1px var(--pitch);
@@ -831,7 +837,10 @@
      min-height:0 próprio não consegue encolher abaixo do seu conteúdo). Um limite + scroll interno
      garante que a barra nunca consome mais do que este orçamento, e o campo continua sempre com
      espaço garantido a seguir — a barra de ferramentas é secundária ao campo, nunca o contrário. */
-  #tacticToolbar{max-height:38vh; overflow-y:auto; min-height:0;}
+  /* Ronda de reorganização (lote C) — nunca quebra para uma segunda fila (nowrap); o que não
+     couber é escondido por JS (layoutTacticToolbar) dentro do popup "⋯ Mais", nunca cortado a meio
+     de um botão — overflow-x:hidden é só a rede de segurança para o instante antes do JS correr. */
+  #tacticToolbar{max-height:38vh; overflow-y:auto; overflow-x:hidden; min-height:0; flex-wrap:nowrap;}
   .tactic-pitch-wrap{flex:1; min-height:0; position:relative; padding:14px; display:flex; align-items:center; justify-content:center; overflow:hidden;}
   .tactic-pitch{position:relative; width:100%; max-width:900px; aspect-ratio:105/68; touch-action:none;}
   .tactic-pitch.box-mode{max-width:640px; aspect-ratio:680/375;}
@@ -1978,13 +1987,16 @@
         <!-- Mobile only: opens .tactic-side (formations + config) as a drawer/collapsible column —
              same DRAWER_TARGETS.tactic mechanism as the clip/tag drawers, no new interaction model. -->
         <button class="btn icon mobile-toolbar-primary touch-only" id="btnOpenTacticDrawer" title="Configuração do desenho">🗂</button>
-        <div class="tool-flyout-wrap" id="boardModeFlyoutWrap">
-          <button class="btn" id="boardModeBtn">Campo ▾</button>
-          <div class="tool-flyout" id="boardModeFlyout">
-            <button class="btn" data-boardmode="full" title="Campo inteiro, com formações">Campo Inteiro</button>
-            <button class="btn" data-boardmode="zones" title="Campo inteiro com grelha de zonas tracejada, para análise posicional">Campo p/ Zonas</button>
-            <button class="btn" data-boardmode="box" title="Só a grande área, começa vazio — ideal para bolas paradas">Área</button>
-            <button class="btn" data-boardmode="depth" title="Campo visto de trás de uma baliza, em perspetiva — começa vazio, ideal para cartões de alinhamento (onze inicial)">Na Profundidade</button>
+        <!-- Ronda de reorganização (lote C) — último mecanismo antigo (.tool-flyout-wrap,
+             position:absolute, hover) ainda na barra de cima, convertido para o mesmo popup-menu
+             (position:fixed, só a clique) de todos os outros. -->
+        <div class="popup-menu-wrap" id="boardModeFlyoutWrap">
+          <button class="btn popup-menu-trigger-btn" id="boardModeBtn">Campo ▾</button>
+          <div class="popup-menu" id="boardModeFlyout" style="min-width:220px;">
+            <button class="popup-menu-item" data-boardmode="full" title="Campo inteiro, com formações"><span class="pm-icon">🏟</span> Campo Inteiro</button>
+            <button class="popup-menu-item" data-boardmode="zones" title="Campo inteiro com grelha de zonas tracejada, para análise posicional"><span class="pm-icon">▦</span> Campo p/ Zonas</button>
+            <button class="popup-menu-item" data-boardmode="box" title="Só a grande área, começa vazio — ideal para bolas paradas"><span class="pm-icon">⬜</span> Área</button>
+            <button class="popup-menu-item" data-boardmode="depth" title="Campo visto de trás de uma baliza, em perspetiva — começa vazio, ideal para cartões de alinhamento (onze inicial)"><span class="pm-icon">📐</span> Na Profundidade</button>
           </div>
         </div>
         <div class="toolbar-sep"></div>
@@ -2056,7 +2068,7 @@
           <button class="btn popup-menu-trigger-btn" id="playerPopupTrigger">+ Jogador ▾</button>
           <div class="popup-menu" id="playerFlyout" style="max-height:260px; overflow-y:auto; min-width:190px;"></div>
         </div>
-        <label class="btn" title="Adicionar imagem do computador (escudo, foto, etc.)">
+        <label class="btn" id="tacticImageLabelWrap" title="Adicionar imagem do computador (escudo, foto, etc.)">
           🖼 + Imagem
           <input type="file" id="fileTacticImage" accept="image/*" style="display:none">
         </label>
@@ -2097,11 +2109,27 @@
         </div>
         <!-- Fase 9 — o que aparece dentro/junto de cada boneco jogador: número (como sempre foi),
              iniciais (cabe na mesma bolinha), ou nome completo (numa etiqueta por baixo, a bolinha
-             continua a mostrar o número). Preferência do projeto, não por jogador. -->
-        <div id="tacticLabelModeGroup" class="tool-group" title="O que mostrar em cada jogador">
-          <button class="tool-btn active" data-labelmode="number" title="Número">#</button>
-          <button class="tool-btn" data-labelmode="initials" title="Iniciais">AB</button>
-          <button class="tool-btn" data-labelmode="name" title="Nome completo">Nome</button>
+             continua a mostrar o número). Preferência do projeto, não por jogador.
+             Ronda de reorganização (lote C) — 3 botões sempre visíveis passam a 1 popup, mesmo
+             padrão de todos os outros; o botão mostra sempre o modo atual. -->
+        <div class="popup-menu-wrap" id="labelModeFlyoutWrap">
+          <button class="btn popup-menu-trigger-btn" id="labelModePopupTrigger" title="O que mostrar em cada jogador">
+            <span id="labelModeTriggerIcon">#</span> <span id="labelModeTriggerLabel">Número</span> ▾
+          </button>
+          <div class="popup-menu" id="labelModePopup" style="min-width:170px;">
+            <button class="popup-menu-item" data-labelmode="number"><span class="pm-icon">#</span> Número</button>
+            <button class="popup-menu-item" data-labelmode="initials"><span class="pm-icon">AB</span> Iniciais</button>
+            <button class="popup-menu-item" data-labelmode="name"><span class="pm-icon">🏷</span> Nome completo</button>
+          </div>
+        </div>
+        <!-- Ronda de reorganização (lote C) — nunca quebrar para uma segunda fila: em vez disso, o
+             que não couber muda-se para aqui dentro (layoutTacticToolbar, ordem de prioridade em
+             TACTIC_TOOLBAR_COLLAPSE_ORDER — os botões usados só no início de uma sessão, tipo
+             Formações ou modo de rótulo, saem primeiro; Desenhar/+Objeto/+Jogador nunca saem).
+             Escondido por omissão (display:none) — só aparece quando algo lá está dentro. -->
+        <div class="popup-menu-wrap" id="tacticOverflowWrap" style="display:none;">
+          <button class="btn popup-menu-trigger-btn" id="tacticOverflowTrigger" title="Mais opções">⋯ Mais</button>
+          <div class="popup-menu" id="tacticOverflowPopup" style="min-width:190px; flex-direction:column;"></div>
         </div>
         <!-- Ronda de reorganização (lote A) — este texto de ajuda comprido saiu daqui para a secção
              "Quadro tático" do Tutorial (já existente), como pedido, para a barra ficar numa só
@@ -2110,26 +2138,21 @@
              o que cabe pela largura mínima de cada item, antes de distribuir o espaço sobrante) e
              só ocupa espaço que faz falta; margin-left:auto no botão de vídeo já obtém o mesmo
              alinhamento à direita sem gastar esse espaço. -->
-        <!-- Ronda de reorganização (lote A) — rótulo mais curto (era "Descarregar vídeo"), para a
-             barra caber numa só fila; o popup em si já deixa claro que exporta vídeo (MP4/GIF). -->
-        <div class="tool-flyout-wrap" id="exportFlyoutWrap" style="margin-left:auto;">
-          <button class="btn">⬇ Vídeo</button>
-          <div class="tool-flyout" id="exportFlyout">
-            <button class="btn" data-export-format="mp4">Vídeo (MP4)</button>
-            <button class="btn" data-export-format="gif">GIF animado</button>
-          </div>
-        </div>
-        <!-- Fase 11 — imagem estática em alta resolução do que o quadro mostra agora (não uma
-             cena gravada da faixa em baixo) — acrescenta-se à exportação de vídeo acima, não a
-             substitui. -->
-        <!-- Ronda de reorganização (lote A) — rótulo mais curto (era "Exportar imagem"), mesma
-             razão do botão de vídeo acima. -->
-        <div class="tool-flyout-wrap" id="exportImageFlyoutWrap">
-          <button class="btn">📷 Imagem</button>
-          <div class="tool-flyout" id="exportImageFlyout" style="min-width:170px;">
-            <button class="btn" data-export-image="landscape">🖼 Paisagem</button>
-            <button class="btn" data-export-image="portrait">🖼 Retrato</button>
-            <label class="btn" style="justify-content:flex-start; gap:6px; cursor:pointer;" title="PNG sem o relvado — só as marcações do campo, jogadores e desenhos, para sobrepor a outro fundo">
+        <!-- Ronda de reorganização (lote C) — "⬇ Vídeo" e "📷 Imagem" (dois popups separados)
+             juntam-se num único popup "Exportar", como pedido — não há hoje nenhuma opção de
+             qualidade/resolução para preservar (a exportação de vídeo não tem, a de imagem usa
+             sempre a mesma alta resolução fixa, 2400px no lado maior), por isso só se junta o que
+             já existia: formato de vídeo e as opções de imagem. -->
+        <div class="popup-menu-wrap" id="exportFlyoutWrap" style="margin-left:auto;">
+          <button class="btn popup-menu-trigger-btn" id="exportPopupTrigger">⬇ Exportar ▾</button>
+          <div class="popup-menu" id="exportPopup" style="min-width:230px;">
+            <h4 class="side-section-h" style="margin:2px 0 0;">Vídeo (sequência de cenas)</h4>
+            <button class="popup-menu-item" data-export-format="mp4"><span class="pm-icon">🎬</span> Vídeo (MP4)</button>
+            <button class="popup-menu-item" data-export-format="gif"><span class="pm-icon">🖼</span> GIF animado</button>
+            <h4 class="side-section-h" style="margin:8px 0 0;">Imagem (o que o campo mostra agora)</h4>
+            <button class="popup-menu-item" data-export-image="landscape"><span class="pm-icon">🖼</span> Paisagem</button>
+            <button class="popup-menu-item" data-export-image="portrait"><span class="pm-icon">🖼</span> Retrato</button>
+            <label class="popup-menu-item" style="cursor:pointer;" title="PNG sem o relvado — só as marcações do campo, jogadores e desenhos, para sobrepor a outro fundo">
               <input type="checkbox" id="exportImageTransparent" style="margin:0;"> Fundo transparente
             </label>
           </div>
@@ -3751,7 +3774,7 @@ document.querySelectorAll('nav.tabs button').forEach(btn=>{
     btn.classList.add('active');
     document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
     document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
-    if(btn.dataset.tab==='tactic') requestAnimationFrame(sizeTacticCanvas);
+    if(btn.dataset.tab==='tactic'){ requestAnimationFrame(sizeTacticCanvas); requestAnimationFrame(layoutTacticToolbar); }
     if(btn.dataset.tab==='stats') renderStats();
     if(btn.dataset.tab==='video') requestAnimationFrame(sizeDrawCanvas);
   });
@@ -9406,19 +9429,17 @@ function setBoardMode(mode){
   renderTokens();
   renderScenesStrip();
   updateTacticUndoRedoButtons();
+  layoutTacticToolbar(); // o rótulo do botão "Campo" muda de comprimento consoante o modo
 }
 document.querySelectorAll('#boardModeFlyout [data-boardmode]').forEach(b=>{
   b.addEventListener('click', ()=>{
-    document.getElementById('boardModeFlyout').classList.remove('pinned');
+    closePopupMenu();
     setBoardMode(b.dataset.boardmode);
   });
 });
-document.querySelector('#boardModeFlyoutWrap > .btn').addEventListener('click', e=>{
+document.getElementById('boardModeBtn').addEventListener('click', e=>{
   e.stopPropagation();
-  document.getElementById('boardModeFlyout').classList.toggle('pinned');
-});
-document.addEventListener('click', e=>{
-  if(!e.target.closest('#boardModeFlyoutWrap')) document.getElementById('boardModeFlyout').classList.remove('pinned');
+  togglePopupMenu(document.getElementById('boardModeFlyout'), e.currentTarget);
 });
 function formationCoords(formation, teamId){
   const isA = teamId==='A';
@@ -9688,6 +9709,63 @@ document.addEventListener('click', e=>{
 document.addEventListener('keydown', e=>{
   if(e.key==='Escape' && openPopupMenuEl) closePopupMenu();
 });
+
+// ===================================================================
+// Ronda de reorganização (lote C, ponto 5) — a barra de cima do quadro tático NUNCA quebra para uma
+// segunda fila (#tacticToolbar tem flex-wrap:nowrap agora). Em vez disso, quando o conteúdo não
+// cabe, os botões menos usados mudam-se literalmente de sítio (o mesmo nó DOM, com todos os
+// listeners intactos — não uma cópia) para dentro do popup "⋯ Mais", do menos para o mais
+// prioritário; quando volta a haver espaço, voltam ao lugar. Recalcula sempre do zero (devolve tudo
+// e só depois esconde o que ainda não couber) em vez de tentar devolver incrementalmente — mais
+// simples e sem casos especiais de ordem.
+// Desenhar/+Objeto/+Jogador/Exportar/Campo/Mover/Borracha/undo-redo-etc nunca colapsam — só o que
+// tipicamente se usa uma vez por sessão ou raramente.
+const TACTIC_TOOLBAR_COLLAPSE_ORDER = ['labelModeFlyoutWrap', 'formationsFlyoutWrap', 'tacticImageLabelWrap', 'playerFlyoutWrap', 'objectFlyoutWrap'];
+let tacticToolbarOverflowAnchors = {}; // id -> {parent, nextSibling}, para devolver ao sítio exato
+function layoutTacticToolbar(){
+  const toolbar = document.getElementById('tacticToolbar');
+  const overflowWrap = document.getElementById('tacticOverflowWrap');
+  const overflowPopup = document.getElementById('tacticOverflowPopup');
+  if(!toolbar || !overflowWrap) return;
+  // Nunca corre em mobile-touch-ui — esse tem o seu próprio mecanismo (Mais ferramentas, wrap +
+  // display:none), completamente à parte, com uma filosofia diferente (esconder tudo o que não é
+  // "primary" de uma vez, não colapsar item a item por falta de espaço).
+  if(document.body.classList.contains('mobile-touch-ui')) return;
+  // 1. Devolve tudo ao sítio de origem — em ordem INVERSA à de colapsar (ver comentário longo em
+  // TACTIC_TOOLBAR_COLLAPSE_ORDER): o nextSibling gravado de um item colapsado mais cedo pode ser
+  // um item colapsado mais tarde, que só volta a existir na barra depois de SER ele próprio devolvido.
+  for(let i=TACTIC_TOOLBAR_COLLAPSE_ORDER.length-1; i>=0; i--){
+    const id = TACTIC_TOOLBAR_COLLAPSE_ORDER[i];
+    const anchor = tacticToolbarOverflowAnchors[id];
+    if(!anchor) continue;
+    const el = document.getElementById(id);
+    if(el) anchor.parent.insertBefore(el, anchor.nextSibling);
+    delete tacticToolbarOverflowAnchors[id];
+  }
+  // 2. Esconde do MENOS para o MAIS prioritário até caber numa só fila.
+  for(const id of TACTIC_TOOLBAR_COLLAPSE_ORDER){
+    if(toolbar.scrollWidth <= toolbar.clientWidth + 1) break;
+    const el = document.getElementById(id);
+    if(!el) continue;
+    tacticToolbarOverflowAnchors[id] = {parent: el.parentNode, nextSibling: el.nextSibling};
+    overflowPopup.appendChild(el);
+  }
+  overflowWrap.style.display = Object.keys(tacticToolbarOverflowAnchors).length ? '' : 'none';
+}
+document.getElementById('tacticOverflowTrigger').addEventListener('click', e=>{
+  e.stopPropagation();
+  togglePopupMenu(document.getElementById('tacticOverflowPopup'), e.currentTarget);
+});
+// Fecha o popup "Mais" ao escolher lá dentro qualquer coisa que já feche popup sozinha (Formações,
+// +Objeto, +Jogador escolhidos de lá dentro já chamam closePopupMenu() nos seus próprios handlers —
+// isto só cobre o botão "+ Imagem", que não tinha nenhum antes por nunca ter precisado).
+document.getElementById('tacticImageLabelWrap').addEventListener('click', ()=>closePopupMenu());
+let tacticToolbarResizeTimer = null;
+window.addEventListener('resize', ()=>{
+  clearTimeout(tacticToolbarResizeTimer);
+  tacticToolbarResizeTimer = setTimeout(layoutTacticToolbar, 80);
+});
+layoutTacticToolbar(); // no-op inofensivo se a aba tática não for a ativa no arranque (mede 0x0)
 
 function addObject(kind){
   pushTacticHistory();
@@ -9959,6 +10037,7 @@ function updateDrawToolsTriggerUI(){
   document.getElementById('drawToolsTriggerIcon').textContent = meta ? meta.icon : '╱';
   document.getElementById('drawToolsTriggerLabel').textContent = meta ? meta.label : 'Desenhar';
   trigger.classList.toggle('pinned', tToolPinned && !!meta);
+  layoutTacticToolbar(); // "Seta poligonal" é bem mais comprido que "Desenhar"
 }
 function updateTacticToolPinnedUI(){
   document.querySelectorAll('[data-ttool]').forEach(b=>b.classList.toggle('pinned', tToolPinned && b.classList.contains('active')));
@@ -10349,20 +10428,29 @@ function refreshPropertiesPanel(){
 // Fase 9 — o que mostrar em cada boneco jogador. Ao contrário de tStrokeWidth/tFillPattern acima
 // (ajustes da PRÓXIMA forma a desenhar, nunca gravados), esta é uma preferência do PROJETO — vale
 // para todos os jogadores já colocados também, por isso muda logo tokens existentes e grava.
-document.querySelectorAll('#tacticLabelModeGroup .tool-btn').forEach(btn=>{
+const LABEL_MODE_META = { number:{icon:'#', label:'Número'}, initials:{icon:'AB', label:'Iniciais'}, name:{icon:'🏷', label:'Nome completo'} };
+document.querySelectorAll('#labelModePopup [data-labelmode]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
-    document.querySelectorAll('#tacticLabelModeGroup .tool-btn').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
+    closePopupMenu();
     state.tokenLabelMode = btn.dataset.labelmode;
+    syncTacticLabelModeButtons();
     renderTokens();
     saveState();
   });
 });
+document.getElementById('labelModePopupTrigger').addEventListener('click', e=>{
+  e.stopPropagation();
+  togglePopupMenu(document.getElementById('labelModePopup'), e.currentTarget);
+});
 function syncTacticLabelModeButtons(){
   const mode = state.tokenLabelMode || 'number';
-  document.querySelectorAll('#tacticLabelModeGroup .tool-btn').forEach(b=>{
+  document.querySelectorAll('#labelModePopup [data-labelmode]').forEach(b=>{
     b.classList.toggle('active', b.dataset.labelmode===mode);
   });
+  const meta = LABEL_MODE_META[mode] || LABEL_MODE_META.number;
+  document.getElementById('labelModeTriggerIcon').textContent = meta.icon;
+  document.getElementById('labelModeTriggerLabel').textContent = meta.label;
+  layoutTacticToolbar(); // "Nome completo" é bem mais comprido que "Número"
 }
 
 let tDrawing=false, tStart=null, tZonePts=[];
@@ -11670,9 +11758,9 @@ async function exportTacticVideo(format){
     toast('Falha ao exportar vídeo.');
   }
 }
-document.querySelectorAll('#exportFlyout [data-export-format]').forEach(b=>{
+document.querySelectorAll('#exportPopup [data-export-format]').forEach(b=>{
   b.addEventListener('click', ()=>{
-    document.getElementById('exportFlyout').classList.remove('pinned');
+    closePopupMenu();
     exportTacticVideo(b.dataset.exportFormat);
   });
 });
@@ -11728,24 +11816,16 @@ async function exportTacticImage(orientation, transparent){
     toast('Falha ao exportar imagem.');
   }
 }
-document.querySelectorAll('#exportImageFlyout [data-export-image]').forEach(b=>{
+document.querySelectorAll('#exportPopup [data-export-image]').forEach(b=>{
   b.addEventListener('click', ()=>{
-    document.getElementById('exportImageFlyout').classList.remove('pinned');
+    closePopupMenu();
     const transparent = document.getElementById('exportImageTransparent').checked;
     exportTacticImage(b.dataset.exportImage, transparent);
   });
 });
-document.querySelector('#exportImageFlyoutWrap > .btn').addEventListener('click', e=>{
+document.getElementById('exportPopupTrigger').addEventListener('click', e=>{
   e.stopPropagation();
-  document.getElementById('exportImageFlyout').classList.toggle('pinned');
-});
-document.querySelector('#exportFlyoutWrap > .btn').addEventListener('click', e=>{
-  e.stopPropagation();
-  document.getElementById('exportFlyout').classList.toggle('pinned');
-});
-document.addEventListener('click', e=>{
-  if(!e.target.closest('#exportFlyoutWrap')) document.getElementById('exportFlyout').classList.remove('pinned');
-  if(!e.target.closest('#exportImageFlyoutWrap')) document.getElementById('exportImageFlyout').classList.remove('pinned');
+  togglePopupMenu(document.getElementById('exportPopup'), e.currentTarget);
 });
 
 /* ===================================================================

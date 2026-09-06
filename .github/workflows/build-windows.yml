@@ -41,42 +41,40 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.79 specifically — update this block for whatever the next release's own
+          # v0.8.80 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Reorganização da interface do quadro tático — lote B/2: painel de edição ao vivo**
+            **Reorganização da interface do quadro tático — lote C: últimos botões uniformizados**
 
-            Último lote da reorganização (lote 1 = v0.8.77, lote A = v0.8.78, ambos sem
-            funcionalidade nova). Este lote acrescenta o painel de propriedades ao vivo, estilo
-            PowerPoint, mais um pedido explícito: o seletor de cor livre para o texto.
+            Afinação final depois dos três lotes anteriores (v0.8.77-79) — os últimos botões da
+            barra de cima que ainda abriam uma lista por baixo (não um popup) passam para o mesmo
+            padrão de todos os outros, e a barra deixa de poder voltar a quebrar para duas filas.
 
-            - **Sem nada selecionado**, o painel à direita continua a mostrar e a definir as
-            propriedades do PRÓXIMO desenho (exatamente como antes).
+            - **"Campo"** (modo do quadro) e **"Número/Iniciais/Nome"** (o que mostrar em cada
+            jogador — antes 3 botões sempre visíveis) passam a popup, no mesmo estilo do "+
+            Objeto".
+            - **"Vídeo" e "Imagem" juntam-se num único botão "Exportar"**, com as duas secções
+            dentro (não havia nenhuma opção de qualidade/resolução a preservar — a exportação de
+            vídeo nunca teve, a de imagem usa sempre a mesma alta resolução fixa).
+            - **"Reproduzir sequência de cenas"** já tinha ido para a faixa de cenas no lote
+            anterior — confirmado, não precisou de mudar outra vez.
+            - **A barra nunca mais quebra para uma segunda fila.** Se não couber (janela estreita,
+            iPad), os botões menos usados (modo de rótulo, Formações, + Imagem, + Jogador, +
+            Objeto, por esta ordem) mudam-se sozinhos para um popup "⋯ Mais", e voltam ao lugar
+            quando há espaço outra vez — nunca desenhar/mover/campo/exportar, esses ficam sempre à
+            vista.
 
-            - **Com uma forma selecionada**, os MESMOS controlos passam a ler e a escrever nessa
-            forma, aplicando de imediato, sem confirmação: cor de contorno, tipo/espessura de linha,
-            pontas de seta, cor/padrão/ângulo/transparência de preenchimento. Cada secção só aparece
-            quando faz sentido para o tipo selecionado — uma linha não mostra preenchimento, uma
-            curva não mostra tipo de linha (não se aplica), um retângulo não mostra pontas de seta.
+            Todos os popups da barra (eram 8, agora são todos) partilham o mesmo comportamento:
+            nunca cortados nem atrás do campo, nunca saem da janela, fecham ao clicar fora/escolher
+            uma opção/Esc, só um aberto de cada vez, ícone+nome em cada opção.
 
-            - **Texto** ganha uma secção própria: cor do texto com seletor livre (roda/hex, não só
-            a paleta fixa de sempre), tipo de letra, tamanho, negrito/itálico/sublinhado,
-            alinhamento, e cor/transparência da caixa de fundo — tudo aplicado de imediato. O
-            editor flutuante (duplo-clique) continua a existir para escrever o conteúdo do texto.
-
-            - **Bonecos** ganham tamanho, número, nome e cor editáveis no painel — número e nome só
-            aparecem para bonecos de jogador; a cor só aparece quando não vem da escalação (nesse
-            caso editá-la aqui não teria efeito, por isso fica oculta em vez de enganar).
-
-            - **Vários selecionados**: o painel mostra as propriedades comuns e aplica a mudança a
-            todos de uma vez (um só passo no undo). Seleção mista de formas e bonecos não mostra
-            nenhuma secção específica, para nunca aplicar uma propriedade ao tipo errado.
-
-            Verificado com testes automatizados reais (Electron + Playwright, 29 cenários): cada
-            tipo de forma mostra só as secções certas; editar ao vivo aplica-se de facto ao objeto
-            (com undo a reverter num só passo, mesmo com vários selecionados); número/nome/cor de
-            boneco aplicam-se de imediato no campo; o painel cabe e desloca-se corretamente em
-            ecrã pequeno e em iPad (gaveta em retrato, coluna fixa em paisagem); um projeto com
-            estes campos novos sobrevive a reiniciar a app; atalhos continuam suspensos a escrever
-            texto; exportação de vídeo e de imagem continuam presentes.
+            Verificado com testes automatizados reais (Electron + Playwright, 37 cenários): os três
+            botões convertidos abrem/fecham/aplicam corretamente; a barra mede-se e confirma-se
+            numa só fila a 1440px, 1200px, 1000px (nada precisa de colapsar até aqui) e continua
+            numa só fila a 900/800/700px (com itens a mudar-se para "⋯ Mais" e a voltar
+            corretamente ao alargar a janela outra vez); um popup já colapsado continua a abrir o
+            seu próprio popup aninhado sem problemas; o campo mede uma área bem maior do que antes
+            de toda a reorganização; painel de propriedades reconfirmado a aplicar-se de facto ao
+            objeto selecionado (com undo a provar que não é só visual); tudo testado também em
+            simulação de iPad em retrato.
