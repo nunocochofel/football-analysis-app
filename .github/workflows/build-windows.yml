@@ -41,41 +41,36 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.73 specifically — update this block for whatever the next release's own
+          # v0.8.74 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Ronda de estabilização (1/N): seleção previsível + começar a desenhar sobre um
-            boneco**
+            **Ronda de estabilização (2/N): a ferramenta volta sozinha à seleção depois de
+            desenhar**
 
-            Sem funcionalidade nova — só correções, depois de várias fases seguidas terem deixado
-            a interação do quadro tático inconsistente entre tipos de objeto.
+            Comportamento tipo PowerPoint/Google Slides: ao terminar qualquer forma, a ferramenta
+            volta automaticamente a "mover" e a forma que se acabou de desenhar fica logo
+            selecionada, com as alças visíveis — pronta a mover, redimensionar ou mudar de cor sem
+            ir à barra trocar de ferramenta. Antes disto, a ferramenta ficava armada e era fácil
+            continuar a desenhar sem querer.
 
-            **Seleção (clique, duplo-clique, botão direito)** — passa a ser exatamente a mesma
-            regra para qualquer tipo de objeto (forma, boneco, texto):
-            - Clique simples seleciona só o objeto sob o cursor; Shift+clique acrescenta/remove
-            só esse, sem tocar no resto — agora também a misturar tipos (ex.: um boneco + uma
-            forma ao mesmo tempo).
-            - **Duplo-clique num boneco deixava de o selecionar para o APAGAR imediatamente, sem
-            confirmação** — o único tipo de objeto do quadro com esse comportamento. Corrigido:
-            duplo-clique já não apaga nada; apagar continua disponível por seleção+Delete ou
-            botão direito → Apagar.
-            - **Botão direito** passa a ter uma regra única: se já havia alguma coisa selecionada,
-            nunca lhe mexe (abre o menu para essa seleção tal como estava, mesmo clicando fora
-            dela); só escolhe o que está sob o cursor quando a seleção estava vazia. Antes disto,
-            clicar com o botão direito num objeto não selecionado destruía sempre uma
-            multi-seleção existente — a origem mais provável de "não consigo prever o que fica
-            selecionado".
+            - Aplica-se a todas as ferramentas de desenho: linha, seta, seta poligonal, mão livre,
+            curva, zona, elipse, retângulo, triângulo e texto.
+            - Nas ferramentas de vários pontos (zona, seta poligonal), só volta à seleção quando a
+            forma está terminada (duplo-clique a fechar), não a cada ponto.
+            - Texto entra logo em modo de edição ao ser colocado, sem precisar de um duplo-clique
+            extra — e os atalhos de letra continuam suspensos enquanto se escreve, como já
+            acontecia.
+            - **Fixar uma ferramenta** — duplo-clique no botão de uma ferramenta de desenho
+            mantém-na ativa depois de cada forma (a mesma convenção do PowerPoint/Google Slides/
+            draw.io), para desenhar várias seguidas sem trocar de ferramenta a cada uma. Um ponto
+            no canto do botão mostra quando está fixa; um simples clique (mesmo na mesma
+            ferramenta) desarma-a sempre.
 
-            **Começar a desenhar sobre um boneco** — um boneco é um elemento próprio por cima do
-            campo; com uma ferramenta de desenho ativa, um clique que calhasse em cima de um
-            boneco não fazia nada (nem selecionava, nem desenhava) em vez de começar a forma ali
-            mesmo. Corrigido.
-
-            Testado (19 verificações reais, Playwright + Electron): desenhar uma linha e uma seta
-            a começar em cima de um boneco e da sua pega de rodar; clique simples e clique em
-            vazio; Shift+clique a misturar um boneco e uma forma; duplo-clique num boneco
-            confirmado a NÃO apagar; duplo-clique num texto confirmado a continuar a abrir o
-            editor; botão direito com seleção vazia (seleciona) e com seleção prévia (nunca
-            muda, testado clicando em vazio e diretamente sobre outro objeto); gravação de cena e
-            exportação de vídeo (MP4) confirmadas a continuar a funcionar sem alterações.
+            Testado (47 verificações reais, Playwright + Electron): as 7 ferramentas de
+            arrastar-e-largar mais zona e seta poligonal, cada uma confirmada a voltar a "mover"
+            com a forma selecionada e as alças visíveis; zona confirmada a NÃO voltar a cada um
+            dos 5 pontos, só ao fechar; texto confirmado a abrir o editor de imediato; fixar uma
+            ferramenta por duplo-clique confirmado a manter duas formas seguidas sem trocar, e um
+            clique simples confirmado a desarmar; gravação de cena e exportação de vídeo (MP4)
+            confirmadas sem alterações.
