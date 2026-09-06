@@ -41,38 +41,42 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.78 specifically — update this block for whatever the next release's own
+          # v0.8.79 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Reorganização da interface do quadro tático — lote A/2: barra numa fila, popups completos**
+            **Reorganização da interface do quadro tático — lote B/2: painel de edição ao vivo**
 
-            Segundo lote da reorganização (o primeiro foi a v0.8.77, popup "+ Objeto" + ferramentas
-            de desenho). Sem funcionalidade nova — só reorganizar o que já existia.
+            Último lote da reorganização (lote 1 = v0.8.77, lote A = v0.8.78, ambos sem
+            funcionalidade nova). Este lote acrescenta o painel de propriedades ao vivo, estilo
+            PowerPoint, mais um pedido explícito: o seletor de cor livre para o texto.
 
-            - **Barra de cima limpa** — cor, tipo/espessura de linha, pontas de seta, e
-            padrão/transparência de preenchimento saíram da barra para o painel à direita (mesmo
-            comportamento de sempre: definem o que se aplica ao próximo desenho). O texto de ajuda
-            comprido que estava por baixo da barra e no painel da direita passou para o Tutorial.
-            Com isto, e com rótulos mais curtos em alguns botões, a barra cabe numa só fila.
+            - **Sem nada selecionado**, o painel à direita continua a mostrar e a definir as
+            propriedades do PRÓXIMO desenho (exatamente como antes).
 
-            - **"+ Jogador" já não fica cortado** — mesma correção do "+ Objeto" no lote anterior.
+            - **Com uma forma selecionada**, os MESMOS controlos passam a ler e a escrever nessa
+            forma, aplicando de imediato, sem confirmação: cor de contorno, tipo/espessura de linha,
+            pontas de seta, cor/padrão/ângulo/transparência de preenchimento. Cada secção só aparece
+            quando faz sentido para o tipo selecionado — uma linha não mostra preenchimento, uma
+            curva não mostra tipo de linha (não se aplica), um retângulo não mostra pontas de seta.
 
-            - **Formações num popup próprio** — Time A e Time B, no mesmo popup, no mesmo estilo
-            visual dos outros. Deixam de estar sempre visíveis no painel da direita, que agora está
-            livre para os controlos de estilo.
+            - **Texto** ganha uma secção própria: cor do texto com seletor livre (roda/hex, não só
+            a paleta fixa de sempre), tipo de letra, tamanho, negrito/itálico/sublinhado,
+            alinhamento, e cor/transparência da caixa de fundo — tudo aplicado de imediato. O
+            editor flutuante (duplo-clique) continua a existir para escrever o conteúdo do texto.
 
-            - **O campo cresce** — com a barra numa só fila e o painel da direita mais compacto, o
-            campo ocupa bastante mais espaço. Continua a aparecer sempre inteiro, encolhendo com a
-            faixa toda visível em qualquer tamanho de janela.
+            - **Bonecos** ganham tamanho, número, nome e cor editáveis no painel — número e nome só
+            aparecem para bonecos de jogador; a cor só aparece quando não vem da escalação (nesse
+            caso editá-la aqui não teria efeito, por isso fica oculta em vez de enganar).
 
-            O botão "Reproduzir sequência de cenas" mudou-se para a faixa de cenas por baixo do
-            campo (onde já vivem o contador e o botão de gravar cena) — é onde faz mais sentido, e
-            ajudou a barra a caber numa fila.
+            - **Vários selecionados**: o painel mostra as propriedades comuns e aplica a mudança a
+            todos de uma vez (um só passo no undo). Seleção mista de formas e bonecos não mostra
+            nenhuma secção específica, para nunca aplicar uma propriedade ao tipo errado.
 
-            Verificado com testes automatizados reais (Electron + Playwright): painel de estilo
-            relocalizado continua a definir o que se desenha a seguir; os três popups (+Jogador,
-            Formações, seletor de cor) nunca saem da janela, em ecrã pequeno, iPad em retrato e
-            paisagem (incluindo a gaveta do painel em retrato e a coluna fixa em paisagem); projeto
-            e cena gravados nesta versão sobrevivem a reiniciar a app; atalhos continuam suspensos
-            a escrever texto; exportação de vídeo e de imagem continuam presentes.
+            Verificado com testes automatizados reais (Electron + Playwright, 29 cenários): cada
+            tipo de forma mostra só as secções certas; editar ao vivo aplica-se de facto ao objeto
+            (com undo a reverter num só passo, mesmo com vários selecionados); número/nome/cor de
+            boneco aplicam-se de imediato no campo; o painel cabe e desloca-se corretamente em
+            ecrã pequeno e em iPad (gaveta em retrato, coluna fixa em paisagem); um projeto com
+            estes campos novos sobrevive a reiniciar a app; atalhos continuam suspensos a escrever
+            texto; exportação de vídeo e de imagem continuam presentes.

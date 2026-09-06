@@ -1050,6 +1050,9 @@
   .side-section-h{font-size:11px; text-transform:uppercase; color:var(--muted); margin:0 0 2px; letter-spacing:.5px;}
   .side-row{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
   #tacticStylePanel .tool-group{flex-wrap:wrap;}
+  /* Ronda de reorganização (lote B) — diz sempre o que o painel está a editar agora: as
+     propriedades por omissão do próximo desenho, ou o objeto (tipo/contagem) selecionado. */
+  .side-context-label{font-size:11px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.4px; padding-bottom:4px; border-bottom:1px solid var(--line);}
   /* Ronda de reorganização (lote A) — só nesta barra: menos padding horizontal por botão de texto
      (era 12px, o padrão da app), para caber tudo numa só fila à largura por omissão da janela
      (1440px) sem abreviar mais nenhum rótulo. Não é uma mudança global de estilo. */
@@ -2202,16 +2205,25 @@
          aplica ao PRÓXIMO desenho. Isto é também a base sobre a qual o lote B constrói o painel de
          edição ao vivo do objeto selecionado (mesmos elementos, comportamento novo por cima). -->
     <aside class="tactic-side" id="tacticStylePanel">
-      <div class="side-section">
-        <h4 class="side-section-h">Contorno</h4>
+      <!-- Ronda de reorganização (lote B) — painel de edição ao vivo, estilo PowerPoint: sem nada
+           selecionado mostra e edita as propriedades por OMISSÃO do próximo desenho (era todo o
+           comportamento deste painel no lote A); com um ou mais objetos selecionados, os MESMOS
+           controlos passam a ler e a escrever diretamente nesse(s) objeto(s), aplicando de imediato
+           (ver refreshPropertiesPanel/psApplyToShapes/psApplyToTokens). As secções que não se
+           aplicam ao tipo selecionado ficam OCULTAS (display:none), nunca só desativadas. -->
+      <div id="psContextLabel" class="side-context-label">Propriedades do próximo desenho</div>
+      <div class="side-section" id="psSectionStroke">
+        <h4 class="side-section-h" id="psSectionStrokeTitle">Contorno</h4>
         <div class="side-row">
           <div id="tacticStrokeColorPicker" title="Cor do contorno"></div>
-          <div id="tacticLineStyleGroup" class="tool-group" title="Estilo do contorno/linha/seta">
-            <button class="tool-btn active" data-lstyle="solid" title="Contínua — convenção: passe">▬</button>
-            <button class="tool-btn" data-lstyle="dashed" title="Tracejada — convenção: movimento sem bola">┅</button>
-            <button class="tool-btn" data-lstyle="dotted" title="Pontilhada">┈</button>
-            <button class="tool-btn" data-lstyle="dashdot" title="Traço-ponto">┉</button>
-            <button class="tool-btn" data-lstyle="zigzag" title="Ondulada — convenção: drible">〰</button>
+          <div id="psLineStyleRow" class="side-row" style="gap:6px;">
+            <div id="tacticLineStyleGroup" class="tool-group" title="Estilo do contorno/linha/seta">
+              <button class="tool-btn active" data-lstyle="solid" title="Contínua — convenção: passe">▬</button>
+              <button class="tool-btn" data-lstyle="dashed" title="Tracejada — convenção: movimento sem bola">┅</button>
+              <button class="tool-btn" data-lstyle="dotted" title="Pontilhada">┈</button>
+              <button class="tool-btn" data-lstyle="dashdot" title="Traço-ponto">┉</button>
+              <button class="tool-btn" data-lstyle="zigzag" title="Ondulada — convenção: drible">〰</button>
+            </div>
           </div>
         </div>
         <div id="tacticStrokeWidthGroup" class="tool-group" title="Espessura do contorno/linha/seta">
@@ -2220,7 +2232,7 @@
           <button class="tool-btn" data-strokewidth="4.5" title="Grossa">▬</button>
         </div>
       </div>
-      <div class="side-section">
+      <div class="side-section" id="psSectionArrow">
         <h4 class="side-section-h">Seta</h4>
         <div id="tacticArrowheadGroup" class="tool-group" title="Pontas da seta (aplica-se à ferramenta Seta)">
           <button class="tool-btn active" data-arrowheads="end" title="Seta só no fim">→</button>
@@ -2230,7 +2242,7 @@
       </div>
       <!-- Fase 6 — preenchimento (zona/elipse/retângulo/triângulo). Sem preenchimento fica com o
            slider desativado (title explica) em vez de escondido, para não saltar o layout. -->
-      <div class="side-section">
+      <div class="side-section" id="psSectionFill">
         <h4 class="side-section-h">Preenchimento</h4>
         <div id="tacticFillColorPicker" title="Cor de preenchimento (zona/elipse/retângulo/triângulo)"></div>
         <div id="tacticFillPatternGroup" class="tool-group" title="Padrão de preenchimento (zona/elipse/retângulo/triângulo)">
@@ -2248,6 +2260,69 @@
         <div class="tool-group" title="Transparência do preenchimento" style="display:flex; align-items:center; gap:6px;">
           <input type="range" id="tacticFillOpacity" min="0" max="100" value="16" style="width:70px;">
           <span id="tacticFillOpacityVal" class="mono" style="font-size:10px; color:var(--muted); min-width:2.5em;">16%</span>
+        </div>
+      </div>
+      <!-- Ronda de reorganização (lote B) — só visível quando a seleção é toda de texto. A cor usa
+           mountColorPicker (seletor livre, roda/hex) em vez da paleta fixa de 5 cores do painel
+           flutuante de edição de texto (que continua a existir, para escrever o CONTEÚDO do texto —
+           duplo-clique — e mantém-se sincronizado, ver psSyncFloatingTextEditor). -->
+      <div class="side-section" id="psSectionText" style="display:none;">
+        <h4 class="side-section-h">Texto</h4>
+        <div id="tacticTextColorPicker" title="Cor do texto"></div>
+        <select id="psTextFontFamily" class="btn" style="width:100%;">
+          <option value="Inter, sans-serif">Inter (padrão)</option>
+          <option value="'Space Grotesk', sans-serif">Space Grotesk</option>
+          <option value="Georgia, 'Times New Roman', serif">Georgia</option>
+          <option value="'Courier New', monospace">Monospace</option>
+        </select>
+        <div class="side-row">
+          <button class="tool-btn" id="psTextBold" title="Negrito"><b>N</b></button>
+          <button class="tool-btn" id="psTextItalic" title="Itálico"><i>I</i></button>
+          <button class="tool-btn" id="psTextUnderline" title="Sublinhado"><u>S</u></button>
+          <button class="btn icon" id="psTextSizeDown" title="Diminuir">−</button>
+          <span class="mono" id="psTextSizeVal" style="min-width:38px; text-align:center; font-size:11px;">100%</span>
+          <button class="btn icon" id="psTextSizeUp" title="Aumentar">+</button>
+        </div>
+        <div id="psTextAlignGroup" class="tool-group" title="Alinhamento">
+          <button class="tool-btn" data-psalign="left" title="Esquerda">◀</button>
+          <button class="tool-btn" data-psalign="center" title="Centro">▬</button>
+          <button class="tool-btn" data-psalign="right" title="Direita">▶</button>
+        </div>
+        <label class="btn" style="justify-content:flex-start; gap:6px; width:100%;">
+          <input type="checkbox" id="psTextBgEnabled" style="margin:0;"> Caixa de fundo
+        </label>
+        <div id="psTextBgControls" style="display:none;">
+          <div id="tacticTextBgColorPicker" title="Cor de fundo"></div>
+          <div class="side-row" style="align-items:center; gap:6px; margin-top:6px;">
+            <input type="range" id="psTextBgOpacity" min="0" max="100" style="width:80px;">
+            <span id="psTextBgOpacityVal" class="mono" style="font-size:10px; color:var(--muted);">70%</span>
+          </div>
+        </div>
+      </div>
+      <!-- Ronda de reorganização (lote B) — bonecos: tamanho é só um mostrador do que já se edita
+           pelas alças/roda do rato; número/nome/cor por-boneco são capacidade nova (autorizada
+           explicitamente para este lote). Número/Nome só fazem sentido para bonecos de jogador
+           (escondidos para bola/objetos/imagem); Cor só se aplica a bonecos SEM jogador ligado da
+           escalação (pid) — nesse caso a cor vem sempre da escalação e editá-la aqui não teria
+           efeito nenhum, por isso fica oculta em vez de enganar. -->
+      <div class="side-section" id="psSectionToken" style="display:none;">
+        <h4 class="side-section-h">Boneco</h4>
+        <div class="side-row" style="align-items:center; gap:6px;">
+          <span class="mono" style="font-size:11px; color:var(--muted);">Tamanho</span>
+          <input type="range" id="psTokenScale" min="40" max="300" style="flex:1;">
+          <span class="mono" id="psTokenScaleVal" style="font-size:10px; color:var(--muted); min-width:2.5em;">100%</span>
+        </div>
+        <div class="side-row" id="psTokenNumRow" style="align-items:center; gap:6px;">
+          <span class="mono" style="font-size:11px; color:var(--muted); min-width:44px;">Número</span>
+          <input type="text" id="psTokenNum" maxlength="3" style="width:56px; padding:5px 6px; background:var(--panel-alt); border:1px solid var(--line); border-radius:var(--radius-sm); color:var(--chalk);">
+        </div>
+        <div class="side-row" id="psTokenNameRow" style="align-items:center; gap:6px;">
+          <span class="mono" style="font-size:11px; color:var(--muted); min-width:44px;">Nome</span>
+          <input type="text" id="psTokenName" placeholder="(da escalação)" style="flex:1; padding:5px 6px; background:var(--panel-alt); border:1px solid var(--line); border-radius:var(--radius-sm); color:var(--chalk);">
+        </div>
+        <div id="psTokenColorRow">
+          <span class="mono" style="font-size:11px; color:var(--muted);">Cor</span>
+          <div id="tacticTokenColorPicker" title="Cor do boneco/objeto"></div>
         </div>
       </div>
     </aside>
@@ -9119,6 +9194,15 @@ const TACTIC_TOUCH_DRAG_THRESHOLD = 6;
 // interaction state, reset on every scene load / board-mode switch (see loadScene/setBoardMode).
 let selectedShapeIds = new Set();
 let selectedTokenIds = new Set();
+// Ronda de reorganização (lote B) — declarados aqui (não junto do resto do código do painel de
+// propriedades, mais abaixo) porque renderTokens() já corre uma vez durante o arranque inicial da
+// página, MUITO antes desse código — e renderTokens() → updateTacticTransformHandles() →
+// refreshPropertiesPanel() lê/escreve estas variáveis logo nessa primeira chamada. Com `let`
+// declarado só mais abaixo, essa leitura caía na "temporal dead zone" e rebentava o arranque
+// inteiro da página (confirmado com um erro real no arranque, não hipotético).
+let psTargetShapes = [];
+let psTargetTokens = [];
+let psHistoryPushed = false;
 function clearTacticSelection(){ selectedShapeIds.clear(); selectedTokenIds.clear(); }
 function tacticSelectionEmpty(){ return selectedShapeIds.size===0 && selectedTokenIds.size===0; }
 // Ronda de estabilização — regra ÚNICA de seleção por clique, partilhada por formas E bonecos (Fase
@@ -9433,7 +9517,10 @@ function renderTokens(){
     let playerName = null;
     if(kind==='player'){
       const p = tk.pid ? playerById(tk.teamId, tk.pid) : null;
-      playerName = p ? p.name : null;
+      // Ronda de reorganização (lote B) — tk.nameOverride (novo, painel de propriedades) tem
+      // prioridade sobre o nome vindo da escalação quando definido; undefined/'' em qualquer token
+      // anterior a este lote cai sempre no comportamento de sempre (nome da escalação, ou nenhum).
+      playerName = tk.nameOverride || (p ? p.name : null);
       if(labelMode==='initials'){
         const initials = playerName ? initialsFromName(playerName) : '';
         el.textContent = initials || tk.num;
@@ -9935,16 +10022,84 @@ function finishTacticShapeCreated(shape){
   if(!tToolPinned) setTacticTool('move');
   redrawTactic(); renderTokens(); updateTacticDeleteButton();
 }
-mountColorPicker('tacticStrokeColorPicker', tColor, c=>tColor=c);
-mountColorPicker('tacticFillColorPicker', tFillColor, c=>tFillColor=c);
-wireLineStyleGroup('tacticLineStyleGroup', v=>tLineStyle=v);
+// ===================================================================
+// Ronda de reorganização (lote B) — painel de propriedades ao vivo (ponto 3)
+// ===================================================================
+// Com nada selecionado, os controlos abaixo continuam a fazer EXATAMENTE o que já faziam nos lotes
+// anteriores: mudam tColor/tLineStyle/etc., as propriedades por omissão do PRÓXIMO desenho. Com uma
+// ou mais formas/bonecos selecionados, os MESMOS controlos passam a escrever diretamente no(s)
+// objeto(s) selecionado(s) e a aplicar de imediato — psApplyToShapes()/psApplyToTokens() devolvem
+// true quando há seleção (e já trataram da mudança); cada handler só cai para o valor por omissão
+// (tColor=...) quando devolvem false.
+//
+// Que campo cada tipo de forma guarda foi confirmado por leitura direta do código de criação de
+// cada uma (finishTacticDrawing e afins) — nunca assumido:
+//   color (stroke/texto): todos os tipos · lineStyle: todos EXCETO curve · strokeWidth: todos
+//   EXCETO text · fillColor/fillPattern/fillOpacity/hatchAngle: só zone/ellipse/rect/triangle ·
+//   arrowStart/arrowEnd: só arrow/polyarrow.
+const SHAPE_CAPS = {
+  line:{stroke:true, lineStyle:true, fill:false, arrowheads:false},
+  arrow:{stroke:true, lineStyle:true, fill:false, arrowheads:true},
+  polyarrow:{stroke:true, lineStyle:true, fill:false, arrowheads:true},
+  freehand:{stroke:true, lineStyle:true, fill:false, arrowheads:false},
+  curve:{stroke:true, lineStyle:false, fill:false, arrowheads:false},
+  zone:{stroke:true, lineStyle:true, fill:true, arrowheads:false},
+  ellipse:{stroke:true, lineStyle:true, fill:true, arrowheads:false},
+  rect:{stroke:true, lineStyle:true, fill:true, arrowheads:false},
+  triangle:{stroke:true, lineStyle:true, fill:true, arrowheads:false},
+  text:{stroke:false, lineStyle:false, fill:false, arrowheads:false},
+};
+// psTargetShapes/psTargetTokens/psHistoryPushed declared earlier (near selectedShapeIds) — see the
+// comment there for why (renderTokens() already runs once before this point, at initial page load).
+// Any mouseup ends whatever discrete-or-continuous panel interaction was happening — cheap and
+// always safe to reset here even for an unrelated mouseup elsewhere.
+document.addEventListener('mouseup', ()=>{ psHistoryPushed = false; });
+function psBeginChangeIfNeeded(){
+  if(!psHistoryPushed){ pushTacticHistory(); psHistoryPushed = true; }
+}
+function psApplyToShapes(mutator){
+  if(!psTargetShapes.length) return false;
+  psBeginChangeIfNeeded();
+  psTargetShapes.forEach(mutator);
+  redrawTactic(); renderTokens();
+  return true;
+}
+function psApplyToTokens(mutator){
+  if(!psTargetTokens.length) return false;
+  psBeginChangeIfNeeded();
+  psTargetTokens.forEach(({tk})=>mutator(tk));
+  renderTokens();
+  return true;
+}
+// A live style edit on a text shape can conflict with the separate floating text-content editor
+// (double-clique) if BOTH are open for the same shape at once — that one stages edits in
+// textEditSession.working and only writes them on "Guardar", which could silently overwrite a
+// change just made here with a stale snapshot. Closing it here removes that risk entirely (it only
+// ever discards an in-progress, unsaved CONTENT edit, never something already applied).
+function psCloseFloatingEditorIfOpen(){
+  if(textEditSession) closeTextEditPanel();
+}
+mountColorPicker('tacticStrokeColorPicker', tColor, c=>{
+  const applied = psApplyToShapes(s=>{ s.color = c; });
+  if(!applied) tColor = c;
+});
+mountColorPicker('tacticFillColorPicker', tFillColor, c=>{
+  const applied = psApplyToShapes(s=>{ s.fillColor = c; });
+  if(!applied) tFillColor = c;
+});
+wireLineStyleGroup('tacticLineStyleGroup', v=>{
+  const applied = psApplyToShapes(s=>{ s.lineStyle = v; });
+  if(!applied) tLineStyle = v;
+});
 // Fase 5 — same toggle-group pattern as wireLineStyleGroup, kept separate rather than
 // generalizing that helper for a `dataset.arrowheads` key used in exactly one place.
 document.querySelectorAll('#tacticArrowheadGroup .tool-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('#tacticArrowheadGroup .tool-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    tArrowHeads = btn.dataset.arrowheads;
+    const val = btn.dataset.arrowheads;
+    const applied = psApplyToShapes(s=>{ s.arrowStart = val==='both'; s.arrowEnd = val!=='none'; });
+    if(!applied) tArrowHeads = val;
   });
 });
 // Fase 6 — same toggle-group pattern, three more "current tool setting" groups.
@@ -9952,27 +10107,244 @@ document.querySelectorAll('#tacticStrokeWidthGroup .tool-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('#tacticStrokeWidthGroup .tool-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    tStrokeWidth = Number(btn.dataset.strokewidth);
+    const val = Number(btn.dataset.strokewidth);
+    const applied = psApplyToShapes(s=>{ s.strokeWidth = val; });
+    if(!applied) tStrokeWidth = val;
   });
 });
 document.querySelectorAll('#tacticFillPatternGroup .tool-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('#tacticFillPatternGroup .tool-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    tFillPattern = btn.dataset.fillpattern;
+    const val = btn.dataset.fillpattern;
+    const applied = psApplyToShapes(s=>{ s.fillPattern = val; });
+    if(!applied) tFillPattern = val;
   });
 });
 document.querySelectorAll('#tacticHatchAngleGroup .tool-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('#tacticHatchAngleGroup .tool-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    tHatchAngle = Number(btn.dataset.hatchangle);
+    const val = Number(btn.dataset.hatchangle);
+    const applied = psApplyToShapes(s=>{ s.hatchAngle = val; });
+    if(!applied) tHatchAngle = val;
   });
 });
 document.getElementById('tacticFillOpacity').addEventListener('input', e=>{
-  tFillOpacity = Number(e.target.value)/100;
+  const val = Number(e.target.value)/100;
   document.getElementById('tacticFillOpacityVal').textContent = e.target.value+'%';
+  const applied = psApplyToShapes(s=>{ s.fillOpacity = val; });
+  if(!applied) tFillOpacity = val;
 });
+
+/* ---- Texto (só quando a seleção é toda de formas type:'text') ---- */
+mountColorPicker('tacticTextColorPicker', state.drawColors[0], c=>{
+  psCloseFloatingEditorIfOpen();
+  psApplyToShapes(s=>{ s.color = c; });
+});
+document.getElementById('psTextFontFamily').addEventListener('change', e=>{
+  psCloseFloatingEditorIfOpen();
+  psApplyToShapes(s=>{ s.fontFamily = e.target.value; });
+});
+document.getElementById('psTextBold').addEventListener('click', ()=>{
+  psCloseFloatingEditorIfOpen();
+  psApplyToShapes(s=>{ s.bold = !s.bold; });
+  psRefreshTextControlsFromSelection();
+});
+document.getElementById('psTextItalic').addEventListener('click', ()=>{
+  psCloseFloatingEditorIfOpen();
+  psApplyToShapes(s=>{ s.italic = !s.italic; });
+  psRefreshTextControlsFromSelection();
+});
+document.getElementById('psTextUnderline').addEventListener('click', ()=>{
+  psCloseFloatingEditorIfOpen();
+  psApplyToShapes(s=>{ s.underline = !s.underline; });
+  psRefreshTextControlsFromSelection();
+});
+document.getElementById('psTextSizeDown').addEventListener('click', ()=>{
+  psCloseFloatingEditorIfOpen();
+  psApplyToShapes(s=>{ s.fontScale = clamp((s.fontScale||1)-0.1, 0.4, 4); });
+  psRefreshTextControlsFromSelection();
+});
+document.getElementById('psTextSizeUp').addEventListener('click', ()=>{
+  psCloseFloatingEditorIfOpen();
+  psApplyToShapes(s=>{ s.fontScale = clamp((s.fontScale||1)+0.1, 0.4, 4); });
+  psRefreshTextControlsFromSelection();
+});
+document.querySelectorAll('#psTextAlignGroup .tool-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('#psTextAlignGroup .tool-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    psCloseFloatingEditorIfOpen();
+    psApplyToShapes(s=>{ s.align = btn.dataset.psalign; });
+  });
+});
+document.getElementById('psTextBgEnabled').addEventListener('change', e=>{
+  psCloseFloatingEditorIfOpen();
+  psApplyToShapes(s=>{ s.bgEnabled = e.target.checked; });
+  document.getElementById('psTextBgControls').style.display = e.target.checked ? '' : 'none';
+});
+mountColorPicker('tacticTextBgColorPicker', '#08110A', c=>{
+  psCloseFloatingEditorIfOpen();
+  psApplyToShapes(s=>{ s.bgColor = c; });
+});
+document.getElementById('psTextBgOpacity').addEventListener('input', e=>{
+  const val = Number(e.target.value)/100;
+  document.getElementById('psTextBgOpacityVal').textContent = e.target.value+'%';
+  psCloseFloatingEditorIfOpen();
+  psApplyToShapes(s=>{ s.bgOpacity = val; });
+});
+// Re-lê os valores (negrito/itálico/sublinhado/tamanho) da forma selecionada depois de um clique
+// que os muda — os botões toggle não têm outro sítio onde a UI se atualize sozinha.
+function psRefreshTextControlsFromSelection(){
+  if(!psTargetShapes.length || psTargetShapes[0].type!=='text') return;
+  const s = psTargetShapes[0];
+  document.getElementById('psTextBold').classList.toggle('active', !!s.bold);
+  document.getElementById('psTextItalic').classList.toggle('active', !!s.italic);
+  document.getElementById('psTextUnderline').classList.toggle('active', !!s.underline);
+  document.getElementById('psTextSizeVal').textContent = Math.round((s.fontScale||1)*100)+'%';
+}
+
+/* ---- Boneco (só bonecos selecionados, nenhuma forma) ---- */
+document.getElementById('psTokenScale').addEventListener('input', e=>{
+  const val = Number(e.target.value)/100;
+  document.getElementById('psTokenScaleVal').textContent = e.target.value+'%';
+  psApplyToTokens(tk=>{ tk.scale = val; });
+});
+document.getElementById('psTokenNum').addEventListener('input', e=>{
+  psApplyToTokens(tk=>{ tk.num = e.target.value; });
+});
+document.getElementById('psTokenName').addEventListener('input', e=>{
+  psApplyToTokens(tk=>{ tk.nameOverride = e.target.value; });
+});
+mountColorPicker('tacticTokenColorPicker', '#E2A63B', c=>{
+  psApplyToTokens(tk=>{ tk.color = c; });
+});
+
+// Ronda de reorganização (lote B) — o motor central: recalcula o que mostrar/editar de cada vez que
+// a seleção (ou a geometria, inofensivo) muda. Chamado a partir de updateTacticTransformHandles()
+// (ver mais abaixo), que por sua vez já corre depois de QUALQUER seleção/desenho/duplicar/apagar/
+// desfazer — sem precisar de um novo ponto de chamada por cada ação existente.
+function psSetSectionVisible(id, visible){
+  const el = document.getElementById(id);
+  if(el) el.style.display = visible ? '' : 'none';
+}
+function refreshPropertiesPanel(){
+  const shapeIds = Array.from(selectedShapeIds), tokenIds = Array.from(selectedTokenIds);
+  const shapes = shapeIds.map(id=>tacticShapes.find(s=>s.id===id)).filter(Boolean);
+  const toks = tokenIds.map(id=>({id, tk:tokens[id]})).filter(x=>x.tk);
+  const hasShapes = shapes.length>0, hasTokens = toks.length>0;
+
+  psTargetShapes = hasShapes && !hasTokens ? shapes : [];
+  psTargetTokens = hasTokens && !hasShapes ? toks : [];
+
+  const label = document.getElementById('psContextLabel');
+  let showStroke, showLineStyleRow, showArrow, showFill, showText, showToken;
+
+  if(!hasShapes && !hasTokens){
+    // Nada selecionado — comportamento do lote A: mostra e edita as propriedades por omissão.
+    label.textContent = 'Propriedades do próximo desenho';
+    showStroke = showLineStyleRow = showArrow = showFill = true;
+    showText = showToken = false;
+  } else if(hasShapes && !hasTokens){
+    const allText = shapes.every(s=>s.type==='text');
+    const styleShapes = shapes.filter(s=>s.type!=='text');
+    showText = allText;
+    // Uma seleção misturada de texto + outra forma não tem nada de estilo genuinamente em comum
+    // (ver comentário mais completo junto de SHAPE_CAPS) — fica sem secção específica, em vez de
+    // mostrar controlos que só se aplicariam a parte da seleção.
+    showStroke = !allText && styleShapes.length>0 && styleShapes.every(s=>SHAPE_CAPS[s.type] && SHAPE_CAPS[s.type].stroke);
+    showLineStyleRow = showStroke && styleShapes.every(s=>SHAPE_CAPS[s.type].lineStyle);
+    showArrow = !allText && styleShapes.length>0 && styleShapes.every(s=>SHAPE_CAPS[s.type] && SHAPE_CAPS[s.type].arrowheads);
+    showFill = !allText && styleShapes.length>0 && styleShapes.every(s=>SHAPE_CAPS[s.type] && SHAPE_CAPS[s.type].fill);
+    showToken = false;
+    const typeLabel = shapes.length===1 ? TACTIC_DRAW_TOOL_META[shapes[0].type]?.label || shapes[0].type
+      : (allText ? shapes.length+' textos' : shapes.length+' formas');
+    label.textContent = shapes.length===1 ? 'A editar: '+typeLabel : 'A editar '+typeLabel;
+  } else if(hasTokens && !hasShapes){
+    showStroke = showLineStyleRow = showArrow = showFill = showText = false;
+    showToken = true;
+    label.textContent = toks.length===1 ? 'A editar: boneco' : 'A editar '+toks.length+' bonecos';
+  } else {
+    // Seleção mista de formas + bonecos — sem edição em conjunto (ver SHAPE_CAPS): nenhuma secção
+    // específica, evita aplicar uma mudança "de contorno" a um boneco ou "de boneco" a uma forma.
+    showStroke = showLineStyleRow = showArrow = showFill = showText = showToken = false;
+    label.textContent = 'A editar '+(shapes.length+toks.length)+' objetos (tipos diferentes)';
+  }
+
+  psSetSectionVisible('psSectionStroke', showStroke);
+  psSetSectionVisible('psLineStyleRow', showLineStyleRow);
+  psSetSectionVisible('psSectionArrow', showArrow);
+  psSetSectionVisible('psSectionFill', showFill);
+  psSetSectionVisible('psSectionText', showText);
+  psSetSectionVisible('psSectionToken', showToken);
+
+  // Sincroniza os VALORES mostrados com a forma/boneco selecionado (representa a seleção pelo
+  // primeiro elemento quando há vários com valores diferentes — "aplica a todos" continua a aplicar
+  // a mudança a todos, só a pré-visualização do valor atual é que usa um representante).
+  // hasShapes (não só show*) guarda estes blocos: show* também fica true no modo "nada
+  // selecionado" (defaults do lote A), onde não existe nenhum shapes[0] — nesse modo os controlos já
+  // mostram o valor certo desde a montagem inicial (mountColorPicker/wireLineStyleGroup), não há
+  // nada para sincronizar.
+  if(showStroke && hasShapes){
+    const s = shapes[0];
+    document.getElementById('tacticStrokeColorPickerPreview').style.background = s.color || '#ECEFF2';
+    if(showLineStyleRow){
+      document.querySelectorAll('#tacticLineStyleGroup .tool-btn').forEach(b=>b.classList.toggle('active', b.dataset.lstyle===(s.lineStyle||'solid')));
+    }
+    document.querySelectorAll('#tacticStrokeWidthGroup .tool-btn').forEach(b=>b.classList.toggle('active', Number(b.dataset.strokewidth)===(s.strokeWidth||2.5)));
+  }
+  if(showArrow && hasShapes){
+    const s = shapes[0];
+    const ah = s.arrowStart && s.arrowEnd ? 'both' : (!s.arrowStart && !s.arrowEnd ? 'none' : 'end');
+    document.querySelectorAll('#tacticArrowheadGroup .tool-btn').forEach(b=>b.classList.toggle('active', b.dataset.arrowheads===ah));
+  }
+  if(showFill && hasShapes){
+    const s = shapes[0];
+    document.getElementById('tacticFillColorPickerPreview').style.background = s.fillColor || '#ECEFF2';
+    document.querySelectorAll('#tacticFillPatternGroup .tool-btn').forEach(b=>b.classList.toggle('active', b.dataset.fillpattern===(s.fillPattern||'solid')));
+    document.querySelectorAll('#tacticHatchAngleGroup .tool-btn').forEach(b=>b.classList.toggle('active', Number(b.dataset.hatchangle)===(s.hatchAngle!=null?s.hatchAngle:45)));
+    const op = s.fillOpacity!=null ? s.fillOpacity : 0.16;
+    document.getElementById('tacticFillOpacity').value = Math.round(op*100);
+    document.getElementById('tacticFillOpacityVal').textContent = Math.round(op*100)+'%';
+  }
+  if(showText){
+    const s = shapes[0];
+    document.getElementById('tacticTextColorPickerPreview').style.background = s.color || '#ECEFF2';
+    document.getElementById('psTextFontFamily').value = s.fontFamily || 'Inter, sans-serif';
+    psRefreshTextControlsFromSelection();
+    document.querySelectorAll('#psTextAlignGroup .tool-btn').forEach(b=>b.classList.toggle('active', b.dataset.psalign===(s.align||'left')));
+    document.getElementById('psTextBgEnabled').checked = !!s.bgEnabled;
+    document.getElementById('psTextBgControls').style.display = s.bgEnabled ? '' : 'none';
+    document.getElementById('tacticTextBgColorPickerPreview').style.background = s.bgColor || '#08110A';
+    const bgOp = s.bgOpacity!=null ? s.bgOpacity : 0.7;
+    document.getElementById('psTextBgOpacity').value = Math.round(bgOp*100);
+    document.getElementById('psTextBgOpacityVal').textContent = Math.round(bgOp*100)+'%';
+  }
+  if(showToken){
+    const tk = toks[0].tk;
+    const kind = tk.kind || (tk.teamId==='ball' ? 'ball' : 'player');
+    const isPlayer = kind==='player';
+    const allPlayer = toks.every(({tk:t})=>(t.kind || (t.teamId==='ball'?'ball':'player'))==='player');
+    const noneLinked = toks.every(({tk:t})=>!t.pid);
+    const noneImage = toks.every(({tk:t})=>(t.kind||'')!=='image');
+    psSetSectionVisible('psTokenNumRow', allPlayer);
+    psSetSectionVisible('psTokenNameRow', allPlayer);
+    psSetSectionVisible('psTokenColorRow', noneLinked && noneImage);
+    const scale = tk.scale!=null ? tk.scale : 1;
+    document.getElementById('psTokenScale').value = Math.round(scale*100);
+    document.getElementById('psTokenScaleVal').textContent = Math.round(scale*100)+'%';
+    if(allPlayer){
+      document.getElementById('psTokenNum').value = tk.num!=null ? tk.num : '';
+      const p = tk.pid ? playerById(tk.teamId, tk.pid) : null;
+      document.getElementById('psTokenName').value = tk.nameOverride || '';
+      document.getElementById('psTokenName').placeholder = p ? p.name : '(sem jogador ligado)';
+    }
+    if(noneLinked && noneImage){
+      document.getElementById('tacticTokenColorPickerPreview').style.background = tk.color || '#ECEFF2';
+    }
+  }
+}
 
 // Fase 9 — o que mostrar em cada boneco jogador. Ao contrário de tStrokeWidth/tFillPattern acima
 // (ajustes da PRÓXIMA forma a desenhar, nunca gravados), esta é uma preferência do PROJETO — vale
@@ -10788,6 +11160,13 @@ function currentSingleTransformTarget(){
   return null;
 }
 function updateTacticTransformHandles(){
+  // Ronda de reorganização (lote B) — chamado incondicionalmente, ANTES dos "return" abaixo: esta
+  // função já corre depois de qualquer seleção/desenho/duplicar/apagar/desfazer (ver redrawTactic()
+  // e renderTokens()), por isso é o único ponto que precisa de saber refrescar o painel de
+  // propriedades — inclui zero selecionados (defaults) e vários selecionados (sem alças de
+  // transformação de um único alvo, mas o painel continua a precisar de recalcular "aplica a
+  // todos"), que os "return" adiante saltariam.
+  refreshPropertiesPanel();
   const target = currentSingleTransformTarget();
   if(!target || tTool!=='move'){ tacticTransformHandlesEl.style.display='none'; return; }
   const bounds = target.getBoundsPx();
@@ -11185,7 +11564,9 @@ function drawTokenToCanvas(ctx, canvas, tk){
       // there's no linked player or usable name.
       const labelMode = state.tokenLabelMode || 'number';
       const p = tk.pid ? playerById(tk.teamId, tk.pid) : null;
-      const playerName = p ? p.name : null;
+      // Ronda de reorganização (lote B) — mesma prioridade de tk.nameOverride do renderTokens() DOM,
+      // para a exportação (vídeo/imagem) mostrar sempre o mesmo nome que o quadro tático ao vivo.
+      const playerName = tk.nameOverride || (p ? p.name : null);
       const label = labelMode==='initials' ? ((playerName && initialsFromName(playerName)) || String(tk.num||'')) : String(tk.num||'');
       if(striped){
         // Matches the DOM view's white-text + dark-outline treatment (see .token-striped) — a
