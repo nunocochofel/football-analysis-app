@@ -322,8 +322,21 @@
   .zoom-control .mono{color:var(--chalk); width:36px;}
 
   .possession-control{display:flex; align-items:center; gap:6px;}
-  .poss-btn{font-size:12px; padding:5px 10px;}
-  .poss-btn.active{color:#08110A; font-weight:700;}
+  .poss-btn{font-size:12px; padding:5px 10px; transition:background .12s ease, border-color .12s ease;}
+  /* Pedido: o estado ativo tem de ser inequívoco DE RELANCE, sem ler texto — antes disto só o
+     texto ficava a negrito/escuro sobre o MESMO fundo do botão inativo (praticamente impercetível
+     a olhar para o vídeo, não para a barra). Preenchido a cor de código inline (não CSS estático)
+     porque tem de ser a cor REAL da equipa (state.roster[team].color), a mesma já usada na barra
+     de posse das Estatísticas — não uma cor genérica de "ativo". */
+  .poss-btn.active{color:#08110A; font-weight:700; border-color:transparent;}
+  /* Terceiro estado (parada) — mesma exigência de ser óbvio sem ler: o botão ⏹ também fica
+     preenchido quando é esse o estado atual, em vez de "nenhum botão aceso" ser a única pista. */
+  #btnPossStop.active{background:var(--line); border-color:var(--line); color:var(--chalk);}
+  /* Destaque momentâneo ao mudar de estado (tecla ou botão) — confirma que registou sem desviar o
+     olhar do vídeo. Curto de propósito (350ms): é feedback de confirmação, não deve continuar a
+     chamar a atenção depois de a tecla já ter sido premida. */
+  @keyframes possFlash{ 0%{ box-shadow:0 0 0 3px rgba(242,194,48,.85); } 100%{ box-shadow:0 0 0 3px rgba(242,194,48,0); } }
+  .poss-btn.poss-flash, #btnPossStop.poss-flash{ animation:possFlash .35s ease-out; }
   .poss-split-bar{display:flex; height:28px; border-radius:6px; overflow:hidden; margin:4px 0 8px;}
   .poss-split-seg{display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#08110A; transition:width .3s ease; white-space:nowrap;}
   .poss-split-labels{display:flex; justify-content:space-between; font-size:12px; color:var(--muted);}
@@ -1808,11 +1821,11 @@
             <span class="mono" id="zoomReadout">1.0×</span>
           </label>
           <div class="toolbar-sep"></div>
-          <div class="possession-control" id="possessionControl" title="Regista quem tem a posse de bola, para calcular a percentagem de posse nas Estatísticas">
+          <div class="possession-control" id="possessionControl" title="Regista quem tem a posse de bola, para calcular a percentagem de posse nas Estatísticas — atalho: \ (barra invertida) alterna Time A → Time B → parada">
             <span class="mono" style="color:var(--muted); font-size:11px;">Posse:</span>
-            <button class="btn poss-btn" id="btnPossA" data-team="A">Time A</button>
-            <button class="btn poss-btn" id="btnPossB" data-team="B">Time B</button>
-            <button class="btn icon" id="btnPossStop" title="Parar contagem de posse (bola fora/parada)">⏹</button>
+            <button class="btn poss-btn" id="btnPossA" data-team="A" title="Dá a posse ao Time A (atalho: \)">Time A</button>
+            <button class="btn poss-btn" id="btnPossB" data-team="B" title="Dá a posse ao Time B (atalho: \)">Time B</button>
+            <button class="btn icon" id="btnPossStop" title="Parar contagem de posse — bola fora/parada (atalho: \)">⏹</button>
             <span class="mono" id="possReadout" style="color:var(--muted); font-size:11px;"></span>
           </div>
           <div class="toolbar-sep"></div>
@@ -2440,7 +2453,7 @@
         <li><b>Marcação em dois toques</b> — prime a tecla de uma categoria (ou clica no botão dela no grelha) para <b>iniciar</b> o corte; o vídeo continua a correr; prime outra vez a mesma tecla/botão para <b>terminar</b> — o corte fica com o tempo real da jogada. O botão da categoria pisca a vermelho ("● a gravar…") enquanto está à espera do segundo toque; <b>Esc</b> cancela uma gravação em curso.</li>
         <li><b>Categorias novas</b> — qualquer tecla de letra/número ainda sem categoria abre um criador rápido para inventares um novo tipo de corte sem abrir as definições.</li>
         <li><b>Botões rápidos por equipa</b> — Passe certo/errado, Remate e Remate à baliza têm botões dedicados por equipa na barra do vídeo, para marcar sem tirar as mãos do rato. O Remate à baliza soma automaticamente ao total de Remates.</li>
-        <li><b>Posse de bola</b> — os botões "Posse" da equipa A/B começam/trocam o cronómetro de posse; a percentagem no relatório é o tempo de cada equipa a dividir pelo total acumulado das duas.</li>
+        <li><b>Posse de bola</b> — os botões "Posse" da equipa A/B começam/trocam o cronómetro de posse; a percentagem no relatório é o tempo de cada equipa a dividir pelo total acumulado das duas. Atalho <b>\</b> (barra invertida) alterna Time A → Time B → parada → Time A, sem tirar as mãos do rato; o botão ativo fica preenchido com a cor da equipa e pisca um instante a confirmar.</li>
         <li><b>Local do evento</b> — clica no mini-campo da barra lateral para marcar onde a jogada aconteceu (opcional, aparece depois no mapa de calor).</li>
       </ul>
 
@@ -2492,6 +2505,7 @@
         <li>Espaço — play/pause do vídeo.</li>
         <li>← / → — recua/avança 5s.</li>
         <li>Ctrl+C / Ctrl+V — copiar/colar o desenho por baixo do rato (vídeo) ou a seleção (quadro tático).</li>
+        <li><b>\</b> (barra invertida) — alterna a posse de bola: Time A → Time B → parada → Time A. Funciona em vídeo gravado e em live tagging.</li>
         <li>Esc — cancela uma gravação de corte em curso, uma zona a meio de ser desenhada, ou fecha o menu de contexto de um corte.</li>
         <li><b>?</b> — abre este tutorial, em qualquer separador.</li>
       </ul>
@@ -5430,21 +5444,68 @@ function possessionTotals(){
   });
   return totals;
 }
+// Pedido — indicador tem de ser inequívoco de relance: preenche o botão ativo com a cor REAL da
+// equipa (a mesma já usada na barra de posse das Estatísticas), não só texto a negrito sobre o
+// mesmo fundo do botão inativo (o que havia antes, e era genuinamente difícil de ver a olhar para
+// o vídeo em vez de para a barra). O botão ⏹ funciona como o "terceiro estado" — fica ele próprio
+// preenchido quando é esse o estado atual, em vez de "nenhum dos dois" ser a única pista.
 function renderPossessionControl(){
   const open = currentPossessionEntry();
   document.querySelectorAll('.poss-btn').forEach(b=>{
-    b.classList.toggle('active', !!(open && open.team===b.dataset.team));
+    const isActive = !!(open && open.team===b.dataset.team);
+    b.classList.toggle('active', isActive);
+    b.style.background = isActive ? state.roster[b.dataset.team].color : '';
     b.textContent = state.roster[b.dataset.team].name;
   });
+  document.getElementById('btnPossStop').classList.toggle('active', !open);
   const totals = possessionTotals();
   const sum = totals.A + totals.B;
   const readout = document.getElementById('possReadout');
   if(readout) readout.textContent = sum>0 ? Math.round(totals.A/sum*100)+'% / '+Math.round(totals.B/sum*100)+'%' : '';
 }
-document.getElementById('btnPossA').addEventListener('click', ()=>setPossession('A'));
-document.getElementById('btnPossB').addEventListener('click', ()=>setPossession('B'));
-document.getElementById('btnPossStop').addEventListener('click', stopPossession);
+// Destaque momentâneo (ver @keyframes possFlash) — só chamado a partir de uma mudança de estado
+// REAL (clique num botão, tecla, ou o ciclo abaixo), nunca a partir do timeupdate que já corre
+// continuamente enquanto um intervalo está aberto (senão pisca sem parar durante a reprodução).
+function flashPossessionIndicator(btn){
+  btn.classList.remove('poss-flash');
+  void btn.offsetWidth; // força reflow — reinicia a animação mesmo se ainda estiver a decorrer de um flash anterior
+  btn.classList.add('poss-flash');
+}
+document.getElementById('btnPossA').addEventListener('click', ()=>{ setPossession('A'); flashPossessionIndicator(document.getElementById('btnPossA')); });
+document.getElementById('btnPossB').addEventListener('click', ()=>{ setPossession('B'); flashPossessionIndicator(document.getElementById('btnPossB')); });
+document.getElementById('btnPossStop').addEventListener('click', ()=>{ stopPossession(); flashPossessionIndicator(document.getElementById('btnPossStop')); });
 videoEl.addEventListener('timeupdate', ()=>{ if(currentPossessionEntry()) renderPossessionControl(); });
+
+// Atalho de teclado — pedido explícito: tecla \\ (barra invertida) alterna Time A → Time B →
+// parada → Time A. Escolhida pelo utilizador pela posição física no teclado português (canto
+// inferior esquerdo, à esquerda do Z), por isso usa-se e.code (a tecla FÍSICA), nunca e.key (o
+// caráter produzido, que em PT dá "\" sem modificador e "|" com AltGr — mudaria consoante o
+// AltGr estivesse ou não premido, o oposto do que se quer de um atalho "de cor").
+// Ouvem-se DOIS códigos porque há uma inconsistência conhecida do Chromium/Windows sobre qual dos
+// dois nomes é reportado para esta tecla extra ISO consoante o teclado/driver exato — ouvir ambos
+// evita ter de adivinhar qual o deste utilizador reporta.
+// Sem verificação de modificadores (Ctrl/Alt/Shift) de propósito — é uma tecla única dedicada, tal
+// como Espaço/setas/Delete já são nesta app; só a guarda de "não escrever num campo" se aplica.
+function cyclePossession(){
+  const open = currentPossessionEntry();
+  if(!open){ setPossession('A'); flashPossessionIndicator(document.getElementById('btnPossA')); }
+  else if(open.team==='A'){ setPossession('B'); flashPossessionIndicator(document.getElementById('btnPossB')); }
+  else { stopPossession(); flashPossessionIndicator(document.getElementById('btnPossStop')); }
+}
+document.addEventListener('keydown', e=>{
+  if(e.code!=='Backslash' && e.code!=='IntlBackslash') return;
+  const activeEl = document.activeElement;
+  const activeTag = activeEl ? activeEl.tagName : '';
+  // Mesma regra de sempre nesta app: suspenso a escrever texto em qualquer campo/textarea/select/
+  // contenteditable (nome de categoria, conteúdo de uma forma de texto, etc.).
+  if(activeTag==='INPUT' || activeTag==='SELECT' || activeTag==='TEXTAREA' || (activeEl && activeEl.isContentEditable)) return;
+  // Funciona em vídeo gravado E em live tagging ("Sem vídeo"/cronómetro) — ambos vivem na mesma
+  // aba (tab-video), só muda o "mode" interno; currentTimeValue()/setPossession() já são
+  // agnósticos a isso (os botões no ecrã já lhes chamam sem distinguir os dois modos).
+  if(!document.getElementById('tab-video').classList.contains('active')) return;
+  e.preventDefault();
+  cyclePossession();
+});
 
 // The canvas must match the video's actual rendered content box, not the whole video-wrap —
 // the <video> element scales itself down (max-width/max-height, flex-centered) to preserve its

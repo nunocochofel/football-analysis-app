@@ -41,36 +41,28 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.81 specifically — update this block for whatever the next release's own
+          # v0.8.82 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Quadro tático — sem alças de redimensionar em jogadores e objetos**
+            **Atalho de teclado para a posse de bola, e indicador bem mais visível**
 
-            Jogadores e objetos (bola, cones, balizas, marcadores, etc.) são pequenos — as 8 alças
-            de redimensionar tapavam-nos, com o número do jogador quase invisível por baixo.
+            - Nova tecla **\ (barra invertida)** alterna Time A → Time B → parada → Time A, sem
+            tirar as mãos do rato/teclado numérico. Usa o código físico da tecla (não o caráter),
+            por isso funciona igual independentemente de estar ou não a usar AltGr. Funciona em
+            vídeo gravado e em live tagging; suspensa a escrever em qualquer campo, como todos os
+            outros atalhos desta app; os botões no ecrã continuam exatamente iguais.
+            - **Indicador corrigido** — antes, o botão da equipa ativa só ficava com texto a
+            negrito sobre o MESMO fundo do botão inativo, praticamente impercetível a olhar para o
+            vídeo em vez de para a barra. Agora fica preenchido com a cor real da equipa (a mesma
+            usada nas Estatísticas), o botão "parar" também se destaca quando é esse o estado
+            atual, e há um pisca-pisca breve (350ms) em qualquer mudança — tecla ou clique — a
+            confirmar que registou sem precisares de desviar o olhar.
+            - Tooltips atualizadas com a tecla, e o Tutorial já lista o atalho.
 
-            - Selecionar um jogador ou objeto mostra só o contorno discreto de seleção (já
-            existia) — sem as 8 alças.
-            - A pega de rotação mantém-se, exatamente como já funcionava.
-            - O tamanho muda-se agora pelo slider "Tamanho" no painel da direita, ou continua a
-            roda do rato sobre o objeto (inalterada). Novo slider "Direção" no painel faz o mesmo
-            que arrastar a pega de rotação — útil em touch e para um valor exato.
-            - Formas desenhadas, texto e imagens mantêm as 8 alças, sem nenhuma mudança.
-            - Seleção, arrastar, Delete e menu de contexto continuam exatamente iguais — de
-            caminho, corrigido um efeito secundário exposto por este teste: depois de mexer num
-            campo do painel (Tamanho, Direção, Número, Nome), clicar num boneco para o selecionar
-            de novo por vezes não devolvia o foco do teclado, e o Delete a seguir não fazia nada
-            (ficava "desativado por estar a escrever num campo" mesmo já não estando). Corrigido
-            para toda a seleção por clique, formas incluídas.
-
-            **Compatibilidade**: tamanho e rotação continuam exatamente os mesmos campos de sempre
-            (scale/angle) — só mudou a forma de os alterar. Cenas e projetos já gravados abrem
-            iguais.
-
-            Verificado com testes automatizados reais (Electron + Playwright, 23 cenários):
-            jogadores/bola/objetos sem as 8 alças mas com a pega de rotação; formas/texto/imagem
-            inalterados; arrastar a pega ou o slider "Direção" fazem o mesmo; roda do rato e slider
-            "Tamanho" fazem o mesmo; seleção múltipla aplica a todos; Delete/arrastar/menu de
-            contexto confirmados a funcionar depois de usar os campos do painel; tamanho/rotação
-            sobrevivem a gravar cena + reiniciar a app; painel alcançável e funcional em iPad.
+            Verificado com testes automatizados reais (Electron + Playwright, 14 cenários): as
+            três voltas do ciclo funcionam pela tecla e pelo código físico alternativo
+            (IntlBackslash); o fundo do botão ativo é mesmo a cor da equipa, não uma cor genérica;
+            suspenso a escrever num campo de categoria; os botões no ecrã continuam a funcionar;
+            funciona em live tagging; não dispara no separador do quadro tático; e não cria
+            nenhuma marcação/categoria por engano.
