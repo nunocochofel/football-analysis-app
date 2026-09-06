@@ -41,40 +41,36 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.80 specifically — update this block for whatever the next release's own
+          # v0.8.81 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Reorganização da interface do quadro tático — lote C: últimos botões uniformizados**
+            **Quadro tático — sem alças de redimensionar em jogadores e objetos**
 
-            Afinação final depois dos três lotes anteriores (v0.8.77-79) — os últimos botões da
-            barra de cima que ainda abriam uma lista por baixo (não um popup) passam para o mesmo
-            padrão de todos os outros, e a barra deixa de poder voltar a quebrar para duas filas.
+            Jogadores e objetos (bola, cones, balizas, marcadores, etc.) são pequenos — as 8 alças
+            de redimensionar tapavam-nos, com o número do jogador quase invisível por baixo.
 
-            - **"Campo"** (modo do quadro) e **"Número/Iniciais/Nome"** (o que mostrar em cada
-            jogador — antes 3 botões sempre visíveis) passam a popup, no mesmo estilo do "+
-            Objeto".
-            - **"Vídeo" e "Imagem" juntam-se num único botão "Exportar"**, com as duas secções
-            dentro (não havia nenhuma opção de qualidade/resolução a preservar — a exportação de
-            vídeo nunca teve, a de imagem usa sempre a mesma alta resolução fixa).
-            - **"Reproduzir sequência de cenas"** já tinha ido para a faixa de cenas no lote
-            anterior — confirmado, não precisou de mudar outra vez.
-            - **A barra nunca mais quebra para uma segunda fila.** Se não couber (janela estreita,
-            iPad), os botões menos usados (modo de rótulo, Formações, + Imagem, + Jogador, +
-            Objeto, por esta ordem) mudam-se sozinhos para um popup "⋯ Mais", e voltam ao lugar
-            quando há espaço outra vez — nunca desenhar/mover/campo/exportar, esses ficam sempre à
-            vista.
+            - Selecionar um jogador ou objeto mostra só o contorno discreto de seleção (já
+            existia) — sem as 8 alças.
+            - A pega de rotação mantém-se, exatamente como já funcionava.
+            - O tamanho muda-se agora pelo slider "Tamanho" no painel da direita, ou continua a
+            roda do rato sobre o objeto (inalterada). Novo slider "Direção" no painel faz o mesmo
+            que arrastar a pega de rotação — útil em touch e para um valor exato.
+            - Formas desenhadas, texto e imagens mantêm as 8 alças, sem nenhuma mudança.
+            - Seleção, arrastar, Delete e menu de contexto continuam exatamente iguais — de
+            caminho, corrigido um efeito secundário exposto por este teste: depois de mexer num
+            campo do painel (Tamanho, Direção, Número, Nome), clicar num boneco para o selecionar
+            de novo por vezes não devolvia o foco do teclado, e o Delete a seguir não fazia nada
+            (ficava "desativado por estar a escrever num campo" mesmo já não estando). Corrigido
+            para toda a seleção por clique, formas incluídas.
 
-            Todos os popups da barra (eram 8, agora são todos) partilham o mesmo comportamento:
-            nunca cortados nem atrás do campo, nunca saem da janela, fecham ao clicar fora/escolher
-            uma opção/Esc, só um aberto de cada vez, ícone+nome em cada opção.
+            **Compatibilidade**: tamanho e rotação continuam exatamente os mesmos campos de sempre
+            (scale/angle) — só mudou a forma de os alterar. Cenas e projetos já gravados abrem
+            iguais.
 
-            Verificado com testes automatizados reais (Electron + Playwright, 37 cenários): os três
-            botões convertidos abrem/fecham/aplicam corretamente; a barra mede-se e confirma-se
-            numa só fila a 1440px, 1200px, 1000px (nada precisa de colapsar até aqui) e continua
-            numa só fila a 900/800/700px (com itens a mudar-se para "⋯ Mais" e a voltar
-            corretamente ao alargar a janela outra vez); um popup já colapsado continua a abrir o
-            seu próprio popup aninhado sem problemas; o campo mede uma área bem maior do que antes
-            de toda a reorganização; painel de propriedades reconfirmado a aplicar-se de facto ao
-            objeto selecionado (com undo a provar que não é só visual); tudo testado também em
-            simulação de iPad em retrato.
+            Verificado com testes automatizados reais (Electron + Playwright, 23 cenários):
+            jogadores/bola/objetos sem as 8 alças mas com a pega de rotação; formas/texto/imagem
+            inalterados; arrastar a pega ou o slider "Direção" fazem o mesmo; roda do rato e slider
+            "Tamanho" fazem o mesmo; seleção múltipla aplica a todos; Delete/arrastar/menu de
+            contexto confirmados a funcionar depois de usar os campos do painel; tamanho/rotação
+            sobrevivem a gravar cena + reiniciar a app; painel alcançável e funcional em iPad.

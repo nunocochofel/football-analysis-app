@@ -2322,18 +2322,27 @@
           </div>
         </div>
       </div>
-      <!-- Ronda de reorganização (lote B) — bonecos: tamanho é só um mostrador do que já se edita
-           pelas alças/roda do rato; número/nome/cor por-boneco são capacidade nova (autorizada
-           explicitamente para este lote). Número/Nome só fazem sentido para bonecos de jogador
-           (escondidos para bola/objetos/imagem); Cor só se aplica a bonecos SEM jogador ligado da
-           escalação (pid) — nesse caso a cor vem sempre da escalação e editá-la aqui não teria
-           efeito nenhum, por isso fica oculta em vez de enganar. -->
+      <!-- Ronda de reorganização (lote B, + pedido de remoção das 8 alças em bonecos) — tamanho e
+           direção são controlos ALTERNATIVOS ao que já existia (roda do rato para tamanho, arrastar
+           a pega de rotação para direção — ambos continuam a funcionar); número/nome/cor por-boneco
+           são capacidade nova. Número/Nome só fazem sentido para bonecos de jogador (escondidos
+           para bola/objetos/imagem); Cor só se aplica a bonecos SEM jogador ligado da escalação
+           (pid) — nesse caso a cor vem sempre da escalação e editá-la aqui não teria efeito
+           nenhum, por isso fica oculta em vez de enganar. -->
       <div class="side-section" id="psSectionToken" style="display:none;">
         <h4 class="side-section-h">Boneco</h4>
         <div class="side-row" style="align-items:center; gap:6px;">
-          <span class="mono" style="font-size:11px; color:var(--muted);">Tamanho</span>
+          <span class="mono" style="font-size:11px; color:var(--muted); min-width:44px;">Tamanho</span>
           <input type="range" id="psTokenScale" min="40" max="300" style="flex:1;">
           <span class="mono" id="psTokenScaleVal" style="font-size:10px; color:var(--muted); min-width:2.5em;">100%</span>
+        </div>
+        <!-- Pedido do utilizador — a pega de rotação nas alças continua a funcionar (arrastar é
+             mais direto), isto é só uma segunda forma de o fazer, útil em touch/precisão fina, e o
+             valor exato fica sempre visível sem ter de olhar para o boneco. -->
+        <div class="side-row" style="align-items:center; gap:6px;">
+          <span class="mono" style="font-size:11px; color:var(--muted); min-width:44px;">Direção</span>
+          <input type="range" id="psTokenAngle" min="0" max="359" style="flex:1;">
+          <span class="mono" id="psTokenAngleVal" style="font-size:10px; color:var(--muted); min-width:2.5em;">0°</span>
         </div>
         <div class="side-row" id="psTokenNumRow" style="align-items:center; gap:6px;">
           <span class="mono" style="font-size:11px; color:var(--muted); min-width:44px;">Número</span>
@@ -2462,7 +2471,7 @@
         <li><b>Adicionar</b> — "+ Jogador" coloca jogadores um a um (com a cor e a marcação de guarda-redes definidas na escalação); "+ Objeto" traz bola, balizas, cones, marcadores, postes, barreira e escada de agilidade; "+ Imagem" traz uma imagem do computador; o popup "Desenhar" tem linha, seta, seta poligonal, mão livre, curva, zona, elipse, retângulo, triângulo e texto.</li>
         <li><b>Formações</b> — botão "Formações" no topo, com o Time A e o Time B no mesmo popup; aplica-se só ao Campo Inteiro/Campo p/ Zonas — Área e Na Profundidade começam sempre vazios.</li>
         <li><b>Estilo do desenho</b> — o painel à direita mostra cor de contorno/preenchimento, tipo e espessura de linha, pontas de seta, padrão e transparência de preenchimento — o que estiver escolhido aí aplica-se ao próximo desenho.</li>
-        <li><b>Mover/rodar/redimensionar</b> — arrasta para mover; arrasta a pega ⚪ acima de cada objeto para rodar; arrasta uma das 8 alças à volta de uma forma/texto/imagem selecionada para redimensionar (Shift mantém a proporção), ou roda o rato sobre um jogador/objeto para o aumentar/diminuir.</li>
+        <li><b>Mover/rodar/redimensionar</b> — arrasta para mover; arrasta a pega ⚪ acima de cada objeto para rodar. Formas/texto/imagem: arrasta uma das 8 alças à volta para redimensionar (Shift mantém a proporção). Jogadores e objetos (bola, cones, balizas, etc.): sem alças (ficam pequenos e tapavam o número) — roda o rato por cima para o tamanho, ou usa "Tamanho"/"Direção" no painel da direita.</li>
         <li><b>Selecionar/apagar</b> — clica para selecionar; Shift+clique adiciona à seleção; Delete/Backspace ou botão direito → "Apagar" remove a seleção.</li>
         <li><b>Depois de desenhar</b> — ao terminar uma forma, linha, seta ou zona, a ferramenta volta automaticamente a "mover" e a forma fica selecionada, pronta a ajustar; duplo-clique numa ferramenta dentro do popup "Desenhar" fixa-a, para desenhar várias formas seguidas sem reabrir o popup.</li>
         <li><b>Cenas</b> — guarda posições como "cenas" para montar uma sequência animada de um lance (bola parada, exercício de treino); reproduz com transição animada entre cenas, ou descarrega a sequência como vídeo/GIF. A tira de cenas por baixo do campo pode ser recolhida para ganhar espaço vertical.</li>
@@ -9233,6 +9242,16 @@ function tacticSelectionEmpty(){ return selectedShapeIds.size===0 && selectedTok
 // era metade da razão da seleção parecer errática). Sem Shift: colapsa para só este objeto. Com
 // Shift: alterna só a pertença deste objeto, sem tocar no resto da seleção.
 function applyTacticSelectionClick(kind, id, shiftKey){
+  // Corrigido durante o pedido de remover as alças dos bonecos — o painel de propriedades (lote B)
+  // trouxe inputs de verdade (Tamanho, Direção, Número, Nome) para dentro do quadro tático; um
+  // mousedown num boneco/forma não tira o foco de um <input> que já o tinha (o handler de
+  // mousedown do boneco chama preventDefault, que também suprime a mudança de foco automática do
+  // browser) — Delete continuava "desativado por estar a escrever num campo" mesmo depois de
+  // clicar claramente noutra coisa. Confirmado com teste real: sem isto, editar o tamanho no
+  // painel e depois clicar no boneco para o selecionar de novo deixava o Delete sem efeito.
+  if(document.activeElement && typeof document.activeElement.blur==='function' && document.activeElement!==document.body){
+    document.activeElement.blur();
+  }
   const mine = kind==='shape' ? selectedShapeIds : selectedTokenIds;
   if(shiftKey){
     if(mine.has(id)) mine.delete(id); else mine.add(id);
@@ -9251,6 +9270,9 @@ function applyTacticSelectionClick(kind, id, shiftKey){
 // imprevisibilidade reportada.
 function openTacticContextMenuFor(kind, id, clientX, clientY){
   if(tacticSelectionEmpty()){
+    if(document.activeElement && typeof document.activeElement.blur==='function' && document.activeElement!==document.body){
+      document.activeElement.blur(); // mesma razão do applyTacticSelectionClick logo acima
+    }
     (kind==='shape' ? selectedShapeIds : selectedTokenIds).add(id);
     redrawTactic(); renderTokens(); updateTacticDeleteButton();
   }
@@ -10290,6 +10312,11 @@ document.getElementById('psTokenScale').addEventListener('input', e=>{
   document.getElementById('psTokenScaleVal').textContent = e.target.value+'%';
   psApplyToTokens(tk=>{ tk.scale = val; });
 });
+document.getElementById('psTokenAngle').addEventListener('input', e=>{
+  const val = Number(e.target.value);
+  document.getElementById('psTokenAngleVal').textContent = val+'°';
+  psApplyToTokens(tk=>{ tk.angle = val; });
+});
 document.getElementById('psTokenNum').addEventListener('input', e=>{
   psApplyToTokens(tk=>{ tk.num = e.target.value; });
 });
@@ -10413,6 +10440,9 @@ function refreshPropertiesPanel(){
     const scale = tk.scale!=null ? tk.scale : 1;
     document.getElementById('psTokenScale').value = Math.round(scale*100);
     document.getElementById('psTokenScaleVal').textContent = Math.round(scale*100)+'%';
+    const angle = tk.angle||0;
+    document.getElementById('psTokenAngle').value = angle;
+    document.getElementById('psTokenAngleVal').textContent = Math.round(angle)+'°';
     if(allPlayer){
       document.getElementById('psTokenNum').value = tk.num!=null ? tk.num : '';
       const p = tk.pid ? playerById(tk.teamId, tk.pid) : null;
@@ -11266,6 +11296,17 @@ function updateTacticTransformHandles(){
     const el = tacticTransformHandlesEl.querySelector(`[data-handle="${name}"]`);
     const p = positions[name];
     el.style.left = p.x+'px'; el.style.top = p.y+'px';
+  });
+  // Pedido do utilizador — jogadores/objetos são pequenos, as 8 alças tapavam-nos (o número do
+  // jogador quase desaparecia por baixo); ficam só com um contorno discreto de seleção (já existia,
+  // .token.selected no CSS) e a pega de rotação (continua útil, mantém-se). O tamanho passa a
+  // mudar-se só pelo painel da direita (#psTokenScale, já existe) ou pela roda do rato sobre o
+  // token (já existia, código à parte, não tocado) — display:none também desliga a interação (um
+  // elemento sem caixa de renderização não recebe mousedown/touchstart), não só a aparência.
+  // Formas/texto/imagem continuam com as 8 alças, exatamente como antes.
+  const hideResizeHandles = target.kind === 'token';
+  HANDLE_NAMES.forEach(name=>{
+    tacticTransformHandlesEl.querySelector(`[data-handle="${name}"]`).style.display = hideResizeHandles ? 'none' : '';
   });
   // Fase 5 — curve control points: only shown for a selected curve (getControlPointsPx returns
   // c1/c2 only for that type — see the guarded `cps[which]` lookup, not just `!cps`, now that
