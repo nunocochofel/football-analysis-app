@@ -6470,6 +6470,18 @@ function cloneShapeGeometry(shape){
   if(shape.type==='text' || shape.type==='image') return {p:{...shape.p}};
   return {};
 }
+// Correção urgente — bug crítico de redimensionamento: resizeShapeToBoundsPx precisa também dos
+// campos ESCALARES (fontScale/scale/radius) tal como estavam no INÍCIO do arrasto, pelo mesmo
+// motivo que precisa da geometria de pontos original — ver o comentário grande em
+// resizeShapeToBoundsPx. cloneShapeGeometry por si só (usada também para duplicar/mover, onde o
+// tamanho nunca muda) não guarda isto; esta função acrescenta só o que falta, sem duplicar nada.
+function cloneShapeGeometryForResize(shape){
+  const base = cloneShapeGeometry(shape);
+  if(shape.type==='vignette') base.radius = shape.radius;
+  else if(shape.type==='text') base.fontScale = shape.fontScale;
+  else if(shape.type==='image') base.scale = shape.scale;
+  return base;
+}
 function applyShapeGeometry(shape, orig, dx, dy){
   if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler' || shape.type==='ellipse' || shape.type==='rect' || shape.type==='triangle'){
     shape.p1 = {x:orig.p1.x+dx, y:orig.p1.y+dy};
@@ -10420,7 +10432,10 @@ function makeShapeTransformTarget(shape){
     getBoundsPx(){ return getShapeBounds(shape, tacticCanvas); },
     getRotation(){ return shape.rotation||0; },
     setRotation(deg){ shape.rotation = deg; },
-    applyBounds(next, orig){ resizeShapeToBoundsPx(shape, orig, next, tacticCanvas); },
+    // Correção urgente — capturada UMA VEZ no mousedown (ver startTacticTransform) e reutilizada
+    // em todos os mousemove do mesmo arrasto, nunca relida depois de a forma já ter sido mutada.
+    captureOrigState(){ return cloneShapeGeometryForResize(shape); },
+    applyBounds(next, orig, origState){ resizeShapeToBoundsPx(shape, origState, orig, next, tacticCanvas); },
     // Fase 5 — curve's two Bézier control points, in canvas-pixel space, so a caller never needs
     // to know curves store them as relative 0-1 coords like everything else.
     // Fase 10 — polyarrow's own points[], same idea generalized to however many there are (keyed
@@ -10468,10 +10483,18 @@ function makeTokenTransformTarget(id){
     },
     getRotation(){ const tk = tokens[id]; return tk ? (tk.angle||0) : 0; },
     setRotation(deg){ const tk = tokens[id]; if(tk) tk.angle = deg; },
-    applyBounds(next, orig){
+    // Correção urgente — bug crítico: isto lia tk.scale (JÁ atualizado por um mousemove anterior
+    // do MESMO arrasto) como base para o cálculo seguinte, em vez da escala com que o arrasto
+    // começou. `next`/`orig` já são sempre a proporção ABSOLUTA entre as bounds atuais do rato e as
+    // bounds originais (orig nunca muda durante o arrasto) — multiplicar por tk.scale (que já
+    // continha essa mesma proporção de um frame anterior) compunha o erro a cada pixel de
+    // movimento: um arrasto pequeno acabava por parecer uma explosão de tamanho. Corrigido para
+    // multiplicar sempre a escala ORIGINAL (capturada uma vez no mousedown), nunca a atual.
+    captureOrigState(){ const tk = tokens[id]; return { scale: tk ? (tk.scale||1) : 1 }; },
+    applyBounds(next, orig, origState){
       const tk = tokens[id]; if(!tk || !orig.width || !orig.height) return;
       const sf = Math.sqrt((next.width/orig.width) * (next.height/orig.height));
-      tk.scale = clamp((tk.scale||1)*sf, 0.4, 3);
+      tk.scale = clamp(origState.scale*sf, 0.4, 3);
       const r = tacticPitch.getBoundingClientRect();
       tk.x = clamp((next.x+next.width/2)/r.width*100, 0, 100);
       tk.y = clamp((next.y+next.height/2)/r.height*100, 0, 100);
@@ -10486,7 +10509,19 @@ function makeTokenTransformTarget(id){
 // whose "size" is really a single scalar (text's fontScale, image's scale, vignette's radius) get
 // that scalar rescaled by the geometric mean of the width/height ratio instead, since they have no
 // independent width and height to remap two points against.
-function resizeShapeToBoundsPx(shape, orig, next, canvas){
+//
+// Correção urgente — bug crítico: isto costumava ler e escrever os pontos/escalar diretamente em
+// `shape` (o objeto AO VIVO), a cada mousemove do arrasto. Numa alça de canto, cada mousemove
+// chama isto de novo com o MESMO `orig` (as bounds capturadas uma vez no mousedown) — mas ao ler
+// `shape.p1` já não lê a posição ORIGINAL, lê a posição já remapeada pelo mousemove ANTERIOR. Cada
+// frame recalculava a fração a partir de um ponto que já tinha sido deslocado, compondo o erro a
+// cada pixel de movimento do rato — exatamente o "aumento exagera, diminuir encolhe demais"
+// relatado. Agora recebe `origGeometry` (uma cópia tirada UMA VEZ no mousedown, ver
+// cloneShapeGeometryForResize/startTacticTransform) e lê SEMPRE dali, nunca da forma ao vivo —
+// cada frame recalcula do zero a partir do estado original, como já acontecia correspondentemente
+// bem para as alças de forma-com-pontos (linha/seta/etc.), só que através de shape.p1 em vez de
+// uma cópia — a única forma de o erro não se acumular é nunca reler o que já foi escrito.
+function resizeShapeToBoundsPx(shape, origGeometry, orig, next, canvas){
   const remapPt = p=>{
     const px = p.x*canvas.width, py = p.y*canvas.height;
     const fx = orig.width ? (px-orig.x)/orig.width : 0.5;
@@ -10494,26 +10529,26 @@ function resizeShapeToBoundsPx(shape, orig, next, canvas){
     return { x: (next.x+fx*next.width)/canvas.width, y: (next.y+fy*next.height)/canvas.height };
   };
   if(shape.type==='line' || shape.type==='arrow' || shape.type==='ruler' || shape.type==='ellipse' || shape.type==='rect' || shape.type==='triangle'){
-    shape.p1 = remapPt(shape.p1); shape.p2 = remapPt(shape.p2);
+    shape.p1 = remapPt(origGeometry.p1); shape.p2 = remapPt(origGeometry.p2);
   } else if(shape.type==='zone' || shape.type==='freehand' || shape.type==='polyarrow'){
-    shape.points = shape.points.map(remapPt);
+    shape.points = origGeometry.points.map(remapPt);
   } else if(shape.type==='curve'){
-    shape.p1 = remapPt(shape.p1); shape.p2 = remapPt(shape.p2);
-    shape.c1 = remapPt(shape.c1); shape.c2 = remapPt(shape.c2);
+    shape.p1 = remapPt(origGeometry.p1); shape.p2 = remapPt(origGeometry.p2);
+    shape.c1 = remapPt(origGeometry.c1); shape.c2 = remapPt(origGeometry.c2);
   } else if(!orig.width || !orig.height){
     /* degenerate origin box (a fresh zero-size shape) — nothing sane to scale from, skip */
   } else if(shape.type==='vignette'){
     const sf = Math.sqrt((next.width/orig.width)*(next.height/orig.height));
-    shape.radius = Math.max(0.02, (shape.radius||0.15)*sf);
-    shape.center = remapPt(shape.center);
+    shape.radius = Math.max(0.02, (origGeometry.radius||0.15)*sf);
+    shape.center = remapPt(origGeometry.center);
   } else if(shape.type==='text'){
     const sf = Math.sqrt((next.width/orig.width)*(next.height/orig.height));
-    shape.fontScale = clamp((shape.fontScale||1)*sf, 0.4, 4);
-    shape.p = remapPt(shape.p);
+    shape.fontScale = clamp((origGeometry.fontScale||1)*sf, 0.4, 4);
+    shape.p = remapPt(origGeometry.p);
   } else if(shape.type==='image'){
     const sf = Math.sqrt((next.width/orig.width)*(next.height/orig.height));
-    shape.scale = clamp((shape.scale||1)*sf, 0.2, 6);
-    shape.p = remapPt(shape.p);
+    shape.scale = clamp((origGeometry.scale||1)*sf, 0.2, 6);
+    shape.p = remapPt(origGeometry.p);
   }
 }
 const HANDLE_NAMES = ['nw','n','ne','e','se','s','sw','w'];
@@ -10605,11 +10640,14 @@ function startTacticTransform(handle, clientX, clientY){
   const target = currentSingleTransformTarget();
   if(!target) return;
   pushTacticHistory();
-  tacticTransformSession = { target, handle, origBoundsPx: target.getBoundsPx(), origRotation: target.getRotation() };
+  // Correção urgente — origState (a geometria/escala tal como estava no PRECISO instante do
+  // mousedown) é capturado uma única vez aqui e nunca mais tocado durante o arrasto — ver os
+  // comentários em resizeShapeToBoundsPx e em cada captureOrigState() para o porquê.
+  tacticTransformSession = { target, handle, origBoundsPx: target.getBoundsPx(), origRotation: target.getRotation(), origState: target.captureOrigState() };
 }
 function updateTacticTransform(clientX, clientY, shiftHeld){
   if(!tacticTransformSession) return;
-  const { target, handle, origBoundsPx, origRotation } = tacticTransformSession;
+  const { target, handle, origBoundsPx, origRotation, origState } = tacticTransformSession;
   const r = tacticPitch.getBoundingClientRect();
   const mx = clientX-r.left, my = clientY-r.top;
   const cx = origBoundsPx.x+origBoundsPx.width/2, cy = origBoundsPx.y+origBoundsPx.height/2;
@@ -10649,7 +10687,7 @@ function updateTacticTransform(clientX, clientY, shiftHeld){
     if(handle==='n') y0=local.y; else if(handle==='s') y1=local.y;
     next = { x:Math.min(x0,x1), y:Math.min(y0,y1), width:Math.abs(x1-x0), height:Math.abs(y1-y0) };
   }
-  target.applyBounds(next, origBoundsPx);
+  target.applyBounds(next, origBoundsPx, origState);
   redrawTactic(); renderTokens();
 }
 function endTacticTransform(){ tacticTransformSession = null; }

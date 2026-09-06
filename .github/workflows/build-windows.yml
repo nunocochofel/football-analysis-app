@@ -41,36 +41,29 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.74 specifically — update this block for whatever the next release's own
+          # v0.8.75 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Ronda de estabilização (2/N): a ferramenta volta sozinha à seleção depois de
-            desenhar**
+            **Correção urgente: redimensionar pelas alças exagerava (crescia/encolhia muito mais
+            do que o gesto do rato)**
 
-            Comportamento tipo PowerPoint/Google Slides: ao terminar qualquer forma, a ferramenta
-            volta automaticamente a "mover" e a forma que se acabou de desenhar fica logo
-            selecionada, com as alças visíveis — pronta a mover, redimensionar ou mudar de cor sem
-            ir à barra trocar de ferramenta. Antes disto, a ferramenta ficava armada e era fácil
-            continuar a desenhar sem querer.
+            Duas causas, ambas no mesmo mecanismo (as 8 alças de redimensionar, partilhadas por
+            formas, texto e bonecos):
+            - Formas liam a sua própria posição já alterada pelo movimento de rato ANTERIOR do
+            mesmo arrasto, em vez da posição com que o arrasto começou — cada novo movimento do
+            rato compunha o erro em cima do anterior.
+            - Bonecos multiplicavam o tamanho já atualizado pelo fator do momento atual, em vez do
+            tamanho original — o mesmo tipo de erro a compor-se a cada pixel de movimento.
 
-            - Aplica-se a todas as ferramentas de desenho: linha, seta, seta poligonal, mão livre,
-            curva, zona, elipse, retângulo, triângulo e texto.
-            - Nas ferramentas de vários pontos (zona, seta poligonal), só volta à seleção quando a
-            forma está terminada (duplo-clique a fechar), não a cada ponto.
-            - Texto entra logo em modo de edição ao ser colocado, sem precisar de um duplo-clique
-            extra — e os atalhos de letra continuam suspensos enquanto se escreve, como já
-            acontecia.
-            - **Fixar uma ferramenta** — duplo-clique no botão de uma ferramenta de desenho
-            mantém-na ativa depois de cada forma (a mesma convenção do PowerPoint/Google Slides/
-            draw.io), para desenhar várias seguidas sem trocar de ferramenta a cada uma. Um ponto
-            no canto do botão mostra quando está fixa; um simples clique (mesmo na mesma
-            ferramenta) desarma-a sempre.
+            Corrigido para guardar a geometria/tamanho original UMA VEZ no início do arrasto e
+            calcular sempre a partir daí — nunca a partir do que já foi alterado durante o próprio
+            gesto. Confirmado também que a roda do rato sobre um boneco (não tinha este bug) e o
+            cálculo do ponto fixo oposto à alça arrastada (já estava correto) continuam bem.
 
-            Testado (47 verificações reais, Playwright + Electron): as 7 ferramentas de
-            arrastar-e-largar mais zona e seta poligonal, cada uma confirmada a voltar a "mover"
-            com a forma selecionada e as alças visíveis; zona confirmada a NÃO voltar a cada um
-            dos 5 pontos, só ao fechar; texto confirmado a abrir o editor de imediato; fixar uma
-            ferramenta por duplo-clique confirmado a manter duas formas seguidas sem trocar, e um
-            clique simples confirmado a desarmar; gravação de cena e exportação de vídeo (MP4)
+            Testado (25 verificações reais, Playwright + Electron): as 8 alças, uma a uma, num
+            retângulo — cada uma confirmada a mover-se exatamente 1:1 com o rato (15px de arrasto =
+            15px de mudança); a mesma alça testada a crescer e a encolher; boneco confirmado a
+            crescer/encolher de forma proporcional ao gesto, não exponencial; roda do rato sobre um
+            boneco confirmada sem regressão; gravação de cena e exportação de vídeo (MP4)
             confirmadas sem alterações.
