@@ -324,7 +324,7 @@
 
   .video-zoom-layer{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; transform-origin:center center;}
   .stage-toolbar{
-    display:flex; align-items:center; gap:6px; padding:5px 10px;
+    display:flex; align-items:center; gap:5px; padding:5px 8px;
     background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap;
   }
   .tool-btn{
@@ -349,7 +349,7 @@
   }
   .tool-toggle-btn:hover{color:var(--chalk);}
   .tool-toggle-btn.active{background:var(--amber); border-color:var(--amber); color:#08110A; font-weight:600;}
-  .toolbar-sep{width:1px; height:22px; background:var(--line); margin:0 4px;}
+  .toolbar-sep{width:1px; height:22px; background:var(--line); margin:0 2px;}
   .tool-group{
     display:flex; align-items:center; gap:3px; padding:3px; border-radius:calc(var(--radius-sm) + 3px);
     background:var(--panel-alt); border:1px solid var(--line);
@@ -364,7 +364,7 @@
      and a favorites row with its own toggle. */
   .color-picker-trigger{ width:26px; height:26px; border-radius:6px; padding:0; }
   .color-picker-trigger .cp-swatch{ display:block; width:100%; height:100%; border-radius:4px; border:1px solid var(--line); }
-  .color-picker-flyout{ width:168px; }
+  .color-picker-flyout{ width:168px; min-width:168px; }
   .cp-grid{ display:grid; grid-template-columns:repeat(8, 1fr); gap:5px; margin-bottom:6px; }
   .cp-grid .color-swatch{ width:16px; height:16px; }
   .cp-section-label{ font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin:6px 0 4px; display:flex; align-items:center; justify-content:space-between; }
@@ -1040,9 +1040,21 @@
   .scene-actions button:hover{background:rgba(0,0,0,.75);}
   .scene-actions button:disabled{opacity:.3; cursor:default;}
   .scene-add{flex-shrink:0; width:74px; height:50px; border-radius:6px; border:2px dashed var(--line); background:transparent; color:var(--muted); display:flex; align-items:center; justify-content:center; font-size:18px;}
-  .tactic-side{width:230px; background:var(--panel); border-left:1px solid var(--line); padding:14px; overflow-y:auto; flex-shrink:0;}
+  .tactic-side{width:230px; background:var(--panel); border-left:1px solid var(--line); padding:14px; overflow-y:auto; flex-shrink:0; display:flex; flex-direction:column; gap:16px;}
   .formation-btns{display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:14px;}
   .formation-btns button{width:100%; text-align:center; padding:6px 4px; font-size:12px;}
+  /* Ronda de reorganização (lote A) — os grupos de estilo que antes viviam numa fila horizontal na
+     barra de cima (separados por .toolbar-sep) agora empilham verticalmente no painel da direita;
+     .side-section-h reaproveita o estilo dos títulos "Formação — Time A/B" já existentes. */
+  .side-section{display:flex; flex-direction:column; gap:8px;}
+  .side-section-h{font-size:11px; text-transform:uppercase; color:var(--muted); margin:0 0 2px; letter-spacing:.5px;}
+  .side-row{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
+  #tacticStylePanel .tool-group{flex-wrap:wrap;}
+  /* Ronda de reorganização (lote A) — só nesta barra: menos padding horizontal por botão de texto
+     (era 12px, o padrão da app), para caber tudo numa só fila à largura por omissão da janela
+     (1440px) sem abreviar mais nenhum rótulo. Não é uma mudança global de estilo. */
+  #tacticToolbar .btn{padding:7px 9px;}
+  #tacticToolbar .btn.icon{padding:7px; width:32px;}
 
   /* Stats tab */
   #tab-stats{overflow-y:auto; padding:20px 26px; gap:18px; display:flex; flex-direction:column;}
@@ -1962,9 +1974,9 @@
       <div class="stage-toolbar" id="tacticToolbar">
         <!-- Mobile only: opens .tactic-side (formations + config) as a drawer/collapsible column —
              same DRAWER_TARGETS.tactic mechanism as the clip/tag drawers, no new interaction model. -->
-        <button class="btn icon mobile-toolbar-primary touch-only" id="btnOpenTacticDrawer" title="Formações e configuração">🗂</button>
+        <button class="btn icon mobile-toolbar-primary touch-only" id="btnOpenTacticDrawer" title="Configuração do desenho">🗂</button>
         <div class="tool-flyout-wrap" id="boardModeFlyoutWrap">
-          <button class="btn" id="boardModeBtn">Campo Inteiro ▾</button>
+          <button class="btn" id="boardModeBtn">Campo ▾</button>
           <div class="tool-flyout" id="boardModeFlyout">
             <button class="btn" data-boardmode="full" title="Campo inteiro, com formações">Campo Inteiro</button>
             <button class="btn" data-boardmode="zones" title="Campo inteiro com grelha de zonas tracejada, para análise posicional">Campo p/ Zonas</button>
@@ -2005,52 +2017,9 @@
         </div>
         <button class="tool-btn mobile-toolbar-primary" data-ttool="eraser" title="Borracha — clica ou arrasta sobre um desenho para o apagar (também podes selecionar e premir Delete, ou clicar com o botão direito → Apagar)">🧹</button>
         <div class="toolbar-sep"></div>
-        <!-- Fase 7 — mounted dynamically by mountColorPicker() (JS), one flyout per picker,
-             reusing the exact same .tool-flyout-wrap/.tool-flyout pattern already used elsewhere
-             in this toolbar (board mode, +Objeto, +Jogador) instead of a new interaction model. -->
-        <div id="tacticStrokeColorPicker" title="Cor do contorno"></div>
-        <div class="toolbar-sep"></div>
-        <div id="tacticFillColorPicker" title="Cor de preenchimento (zona/elipse/retângulo/triângulo)"></div>
-        <div class="toolbar-sep"></div>
-        <div id="tacticLineStyleGroup" class="tool-group" title="Estilo do contorno/linha/seta">
-          <button class="tool-btn active" data-lstyle="solid" title="Contínua — convenção: passe">▬</button>
-          <button class="tool-btn" data-lstyle="dashed" title="Tracejada — convenção: movimento sem bola">┅</button>
-          <button class="tool-btn" data-lstyle="dotted" title="Pontilhada">┈</button>
-          <button class="tool-btn" data-lstyle="dashdot" title="Traço-ponto">┉</button>
-          <button class="tool-btn" data-lstyle="zigzag" title="Ondulada — convenção: drible">〰</button>
-        </div>
-        <div class="toolbar-sep"></div>
-        <div id="tacticStrokeWidthGroup" class="tool-group" title="Espessura do contorno/linha/seta">
-          <button class="tool-btn" data-strokewidth="1.5" title="Fina">▬</button>
-          <button class="tool-btn active" data-strokewidth="2.5" title="Média">▬</button>
-          <button class="tool-btn" data-strokewidth="4.5" title="Grossa">▬</button>
-        </div>
-        <div class="toolbar-sep"></div>
-        <div id="tacticArrowheadGroup" class="tool-group" title="Pontas da seta (aplica-se à ferramenta Seta)">
-          <button class="tool-btn active" data-arrowheads="end" title="Seta só no fim">→</button>
-          <button class="tool-btn" data-arrowheads="both" title="Seta em ambos os extremos">↔</button>
-          <button class="tool-btn" data-arrowheads="none" title="Sem seta (linha simples)">—</button>
-        </div>
-        <div class="toolbar-sep"></div>
-        <!-- Fase 6 — preenchimento (zona/elipse/retângulo/triângulo). Sem preenchimento fica com
-             o slider desativado (title explica) em vez de escondido, para não saltar o layout. -->
-        <div id="tacticFillPatternGroup" class="tool-group" title="Padrão de preenchimento (zona/elipse/retângulo/triângulo)">
-          <button class="tool-btn active" data-fillpattern="solid" title="Sólido">■</button>
-          <button class="tool-btn" data-fillpattern="hatch" title="Riscas">▤</button>
-          <button class="tool-btn" data-fillpattern="dots" title="Pontinhos">▦</button>
-          <button class="tool-btn" data-fillpattern="grid" title="Quadrícula">▧</button>
-          <button class="tool-btn" data-fillpattern="none" title="Sem preenchimento (só contorno)">▢</button>
-        </div>
-        <div id="tacticHatchAngleGroup" class="tool-group" title="Ângulo das riscas">
-          <button class="tool-btn active" data-hatchangle="45" title="45°">╱</button>
-          <button class="tool-btn" data-hatchangle="0" title="0°">▬</button>
-          <button class="tool-btn" data-hatchangle="90" title="90°">┃</button>
-        </div>
-        <div class="tool-group" title="Transparência do preenchimento" style="display:flex; align-items:center; gap:6px;">
-          <input type="range" id="tacticFillOpacity" min="0" max="100" value="16" style="width:70px;">
-          <span id="tacticFillOpacityVal" class="mono" style="font-size:10px; color:var(--muted); min-width:2.5em;">16%</span>
-        </div>
-        <div class="toolbar-sep"></div>
+        <!-- Ronda de reorganização (lote A) — cor/tipo/espessura de linha, pontas de seta, padrão e
+             transparência de preenchimento saíram daqui para o painel #tacticStylePanel à direita
+             (mesmos ids, mesma wiring JS — só mudou onde vivem no HTML). -->
         <button class="btn icon mobile-toolbar-primary" id="btnTacticUndo" title="Desfazer (Ctrl+Z)" disabled>↶</button>
         <button class="btn icon" id="btnTacticRedo" title="Refazer (Ctrl+Shift+Z)" disabled>↷</button>
         <button class="btn icon" id="btnTacticDuplicate" title="Duplicar seleção (Ctrl+D)" disabled>⧉</button>
@@ -2078,14 +2047,51 @@
             <button class="popup-menu-item" data-object="ladder" title="Escada de agilidade"><span class="pm-icon">🪜</span> Escada</button>
           </div>
         </div>
-        <div class="tool-flyout-wrap" id="playerFlyoutWrap">
-          <button class="btn">+ Jogador</button>
-          <div class="tool-flyout" id="playerFlyout" style="max-height:260px; overflow-y:auto; min-width:170px;"></div>
+        <!-- Ronda de reorganização (lote A) — mesma correção do "+ Objeto" (lote 1): position:fixed
+             em vez de position:absolute, para nunca ficar cortado. -->
+        <div class="popup-menu-wrap" id="playerFlyoutWrap">
+          <button class="btn popup-menu-trigger-btn" id="playerPopupTrigger">+ Jogador ▾</button>
+          <div class="popup-menu" id="playerFlyout" style="max-height:260px; overflow-y:auto; min-width:190px;"></div>
         </div>
         <label class="btn" title="Adicionar imagem do computador (escudo, foto, etc.)">
           🖼 + Imagem
           <input type="file" id="fileTacticImage" accept="image/*" style="display:none">
         </label>
+        <!-- Ronda de reorganização (lote A, ponto 2) — as formações saíram do painel da direita
+             (que agora é o painel de estilo, #tacticStylePanel) para aqui, no mesmo padrão visual
+             dos outros popups. Time A e Time B no mesmo popup, separados por cabeçalho — como
+             pedido. formationSections/boxModeHint mantêm os mesmos ids: a troca de visibilidade
+             feita em setBoardMode() ao mudar de modo de campo continua a funcionar sem alterações. -->
+        <div class="popup-menu-wrap" id="formationsFlyoutWrap">
+          <button class="btn popup-menu-trigger-btn" id="formationsPopupTrigger">Formações ▾</button>
+          <div class="popup-menu" id="formationsPopup" style="min-width:250px;">
+            <div id="formationSections">
+              <h4 class="side-section-h">Formação — Time A</h4>
+              <div class="formation-btns">
+                <button class="btn" data-formation="4-4-2" data-fteam="A">4-4-2</button>
+                <button class="btn" data-formation="4-3-3" data-fteam="A">4-3-3</button>
+                <button class="btn" data-formation="3-5-2" data-fteam="A">3-5-2</button>
+                <button class="btn" data-formation="4-2-3-1" data-fteam="A">4-2-3-1</button>
+                <button class="btn" data-formation="5-3-2" data-fteam="A">5-3-2</button>
+                <button class="btn" data-formation="4-5-1" data-fteam="A">4-5-1</button>
+                <button class="btn" data-formation="3-4-3" data-fteam="A">3-4-3</button>
+              </div>
+              <h4 class="side-section-h">Formação — Time B</h4>
+              <div class="formation-btns">
+                <button class="btn" data-formation="4-4-2" data-fteam="B">4-4-2</button>
+                <button class="btn" data-formation="4-3-3" data-fteam="B">4-3-3</button>
+                <button class="btn" data-formation="3-5-2" data-fteam="B">3-5-2</button>
+                <button class="btn" data-formation="4-2-3-1" data-fteam="B">4-2-3-1</button>
+                <button class="btn" data-formation="5-3-2" data-fteam="B">5-3-2</button>
+                <button class="btn" data-formation="4-5-1" data-fteam="B">4-5-1</button>
+                <button class="btn" data-formation="3-4-3" data-fteam="B">3-4-3</button>
+              </div>
+            </div>
+            <p id="boxModeHint" style="display:none; color:var(--muted); font-size:12px; line-height:1.5;">
+              Este quadro começa vazio — usa "+ Jogador" para colocar só quem precisas (ex.: os que estão numa jogada de bola parada). É independente do Campo Inteiro: as cenas guardadas aqui não se misturam com as do campo inteiro.
+            </p>
+          </div>
+        </div>
         <!-- Fase 9 — o que aparece dentro/junto de cada boneco jogador: número (como sempre foi),
              iniciais (cabe na mesma bolinha), ou nome completo (numa etiqueta por baixo, a bolinha
              continua a mostrar o número). Preferência do projeto, não por jogador. -->
@@ -2094,10 +2100,17 @@
           <button class="tool-btn" data-labelmode="initials" title="Iniciais">AB</button>
           <button class="tool-btn" data-labelmode="name" title="Nome completo">Nome</button>
         </div>
-        <span class="mono" style="color:var(--muted); font-size:11px;">(arrasta a pega ⚪ acima do objeto para o rodar · seleciona e Delete ou botão direito → Apagar remove · arrasta as alças ou roda o rato sobre um objeto para o redimensionar · ao terminar uma forma volta a "mover" e a forma fica selecionada — duplo-clique numa ferramenta de desenho fixa-a para desenhar várias seguidas)</span>
-        <div style="flex:1;"></div>
-        <div class="tool-flyout-wrap" id="exportFlyoutWrap">
-          <button class="btn">⬇ Descarregar vídeo</button>
+        <!-- Ronda de reorganização (lote A) — este texto de ajuda comprido saiu daqui para a secção
+             "Quadro tático" do Tutorial (já existente), como pedido, para a barra ficar numa só
+             fila. O separador flex:1 que empurrava os botões de exportar para a direita também saiu
+             — num flex-wrap, um item flex:1 vazio não ajuda a caber mais na fila (o browser decide
+             o que cabe pela largura mínima de cada item, antes de distribuir o espaço sobrante) e
+             só ocupa espaço que faz falta; margin-left:auto no botão de vídeo já obtém o mesmo
+             alinhamento à direita sem gastar esse espaço. -->
+        <!-- Ronda de reorganização (lote A) — rótulo mais curto (era "Descarregar vídeo"), para a
+             barra caber numa só fila; o popup em si já deixa claro que exporta vídeo (MP4/GIF). -->
+        <div class="tool-flyout-wrap" id="exportFlyoutWrap" style="margin-left:auto;">
+          <button class="btn">⬇ Vídeo</button>
           <div class="tool-flyout" id="exportFlyout">
             <button class="btn" data-export-format="mp4">Vídeo (MP4)</button>
             <button class="btn" data-export-format="gif">GIF animado</button>
@@ -2106,8 +2119,10 @@
         <!-- Fase 11 — imagem estática em alta resolução do que o quadro mostra agora (não uma
              cena gravada da faixa em baixo) — acrescenta-se à exportação de vídeo acima, não a
              substitui. -->
+        <!-- Ronda de reorganização (lote A) — rótulo mais curto (era "Exportar imagem"), mesma
+             razão do botão de vídeo acima. -->
         <div class="tool-flyout-wrap" id="exportImageFlyoutWrap">
-          <button class="btn">📷 Exportar imagem</button>
+          <button class="btn">📷 Imagem</button>
           <div class="tool-flyout" id="exportImageFlyout" style="min-width:170px;">
             <button class="btn" data-export-image="landscape">🖼 Paisagem</button>
             <button class="btn" data-export-image="portrait">🖼 Retrato</button>
@@ -2116,7 +2131,6 @@
             </label>
           </div>
         </div>
-        <button class="btn primary" id="btnPlayScenes">▶ Reproduzir sequência de cenas</button>
       </div>
       <div class="tactic-pitch-wrap">
         <div class="tactic-pitch" id="tacticPitch">
@@ -2163,6 +2177,13 @@
       <!-- Correção urgente pós-v0.8.69 — o campo é o elemento principal; esta faixa fica pequena
            por omissão e pode ser recolhida por completo (mais espaço vertical para o campo). -->
       <div class="scenes-strip" id="scenesStrip">
+        <!-- Ronda de reorganização (lote A) — "Reproduzir sequência de cenas" mudou-se para aqui
+             (antes vivia na barra de cima, com o texto completo "Reproduzir sequência de cenas") —
+             a faixa de cenas é onde faz mais sentido, e liberta espaço para a barra caber numa só
+             fila. Primeiro elemento fixo (antes do toggle/contagem/miniaturas), para nunca ficar
+             fora de vista quando a faixa tiver muitas cenas e o scroll horizontal entrar em jogo
+             (as miniaturas inserem-se sempre antes de #btnAddScene — ver renderScenesStrip). -->
+        <button class="btn primary" id="btnPlayScenes" title="Reproduzir sequência de cenas" style="flex-shrink:0;">▶ Reproduzir</button>
         <button class="scenes-strip-toggle" id="btnToggleScenesStrip" title="Esconder a faixa de cenas">▾</button>
         <span class="scenes-strip-count" id="scenesStripCount"></span>
         <button class="scene-add" id="btnAddScene" title="Salvar cena atual">+</button>
@@ -2172,37 +2193,63 @@
          tablet landscape .tactic-side becomes a real in-flow panel instead of a drawer, so it
          needs the same collapse toggle instead of (or in addition to) #btnOpenTacticDrawer.
          display:none by default (phone/desktop); CSS turns it on only under tablet landscape. -->
-    <button class="panel-collapse-btn touch-only" id="btnToggleTacticPanel" title="Formações e configuração" aria-label="Mostrar/esconder formações e configuração">🗂</button>
-    <aside class="tactic-side">
-      <div id="formationSections">
-        <h4 style="font-size:11px; text-transform:uppercase; color:var(--muted); margin-bottom:10px; letter-spacing:.5px;">Formação — Time A</h4>
-        <div class="formation-btns">
-          <button class="btn" data-formation="4-4-2" data-fteam="A">4-4-2</button>
-          <button class="btn" data-formation="4-3-3" data-fteam="A">4-3-3</button>
-          <button class="btn" data-formation="3-5-2" data-fteam="A">3-5-2</button>
-          <button class="btn" data-formation="4-2-3-1" data-fteam="A">4-2-3-1</button>
-          <button class="btn" data-formation="5-3-2" data-fteam="A">5-3-2</button>
-          <button class="btn" data-formation="4-5-1" data-fteam="A">4-5-1</button>
-          <button class="btn" data-formation="3-4-3" data-fteam="A">3-4-3</button>
+    <button class="panel-collapse-btn touch-only" id="btnToggleTacticPanel" title="Configuração do desenho" aria-label="Mostrar/esconder configuração do desenho">🗂</button>
+    <!-- Ronda de reorganização (lote A, ponto 3 preparado aqui) — este painel guardava antes as
+         formações e o texto de ajuda; ambos saíram (formações → popup "Formações" no topo; texto de
+         ajuda → Tutorial). No lugar entram os controlos de ESTILO que antes viviam espalhados pela
+         barra de cima (cor, tipo/espessura de linha, pontas de seta, padrão/transparência de
+         preenchimento) — pura relocalização, o comportamento é exatamente o mesmo: define o que se
+         aplica ao PRÓXIMO desenho. Isto é também a base sobre a qual o lote B constrói o painel de
+         edição ao vivo do objeto selecionado (mesmos elementos, comportamento novo por cima). -->
+    <aside class="tactic-side" id="tacticStylePanel">
+      <div class="side-section">
+        <h4 class="side-section-h">Contorno</h4>
+        <div class="side-row">
+          <div id="tacticStrokeColorPicker" title="Cor do contorno"></div>
+          <div id="tacticLineStyleGroup" class="tool-group" title="Estilo do contorno/linha/seta">
+            <button class="tool-btn active" data-lstyle="solid" title="Contínua — convenção: passe">▬</button>
+            <button class="tool-btn" data-lstyle="dashed" title="Tracejada — convenção: movimento sem bola">┅</button>
+            <button class="tool-btn" data-lstyle="dotted" title="Pontilhada">┈</button>
+            <button class="tool-btn" data-lstyle="dashdot" title="Traço-ponto">┉</button>
+            <button class="tool-btn" data-lstyle="zigzag" title="Ondulada — convenção: drible">〰</button>
+          </div>
         </div>
-        <h4 style="font-size:11px; text-transform:uppercase; color:var(--muted); margin-bottom:10px; letter-spacing:.5px;">Formação — Time B</h4>
-        <div class="formation-btns">
-          <button class="btn" data-formation="4-4-2" data-fteam="B">4-4-2</button>
-          <button class="btn" data-formation="4-3-3" data-fteam="B">4-3-3</button>
-          <button class="btn" data-formation="3-5-2" data-fteam="B">3-5-2</button>
-          <button class="btn" data-formation="4-2-3-1" data-fteam="B">4-2-3-1</button>
-          <button class="btn" data-formation="5-3-2" data-fteam="B">5-3-2</button>
-          <button class="btn" data-formation="4-5-1" data-fteam="B">4-5-1</button>
-          <button class="btn" data-formation="3-4-3" data-fteam="B">3-4-3</button>
+        <div id="tacticStrokeWidthGroup" class="tool-group" title="Espessura do contorno/linha/seta">
+          <button class="tool-btn" data-strokewidth="1.5" title="Fina">▬</button>
+          <button class="tool-btn active" data-strokewidth="2.5" title="Média">▬</button>
+          <button class="tool-btn" data-strokewidth="4.5" title="Grossa">▬</button>
         </div>
       </div>
-      <p id="boxModeHint" style="display:none; color:var(--muted); font-size:12px; line-height:1.5;">
-        Este quadro começa vazio — usa "+ Jogador" para colocar só quem precisas (ex.: os que estão numa jogada de bola parada). É independente do Campo Inteiro: as cenas guardadas aqui não se misturam com as do campo inteiro.
-      </p>
-      <p style="color:var(--muted); font-size:12px; line-height:1.5;">
-        Arraste os jogadores e objetos para montar a jogada; arrasta a pega ⚪ acima de cada um para rodar e definir a direção, e usa a roda do rato sobre um objeto para o aumentar/diminuir. Use "+ Objeto" para adicionar bola, balizas, cones, marcadores, postes, barreiras e escada de agilidade, "+ Jogador" para colocar jogadores um a um, e "+ Imagem" para trazer uma imagem do computador — úteis também para desenhar exercícios de treino. Use as ferramentas de desenho para linhas de movimento e zonas.
-        Salve "cenas" para criar uma sequência animada de um lance (ex.: escanteio, tiro de meta, exercício de treino), e descarrega-a como vídeo ou GIF para partilhar.
-      </p>
+      <div class="side-section">
+        <h4 class="side-section-h">Seta</h4>
+        <div id="tacticArrowheadGroup" class="tool-group" title="Pontas da seta (aplica-se à ferramenta Seta)">
+          <button class="tool-btn active" data-arrowheads="end" title="Seta só no fim">→</button>
+          <button class="tool-btn" data-arrowheads="both" title="Seta em ambos os extremos">↔</button>
+          <button class="tool-btn" data-arrowheads="none" title="Sem seta (linha simples)">—</button>
+        </div>
+      </div>
+      <!-- Fase 6 — preenchimento (zona/elipse/retângulo/triângulo). Sem preenchimento fica com o
+           slider desativado (title explica) em vez de escondido, para não saltar o layout. -->
+      <div class="side-section">
+        <h4 class="side-section-h">Preenchimento</h4>
+        <div id="tacticFillColorPicker" title="Cor de preenchimento (zona/elipse/retângulo/triângulo)"></div>
+        <div id="tacticFillPatternGroup" class="tool-group" title="Padrão de preenchimento (zona/elipse/retângulo/triângulo)">
+          <button class="tool-btn active" data-fillpattern="solid" title="Sólido">■</button>
+          <button class="tool-btn" data-fillpattern="hatch" title="Riscas">▤</button>
+          <button class="tool-btn" data-fillpattern="dots" title="Pontinhos">▦</button>
+          <button class="tool-btn" data-fillpattern="grid" title="Quadrícula">▧</button>
+          <button class="tool-btn" data-fillpattern="none" title="Sem preenchimento (só contorno)">▢</button>
+        </div>
+        <div id="tacticHatchAngleGroup" class="tool-group" title="Ângulo das riscas">
+          <button class="tool-btn active" data-hatchangle="45" title="45°">╱</button>
+          <button class="tool-btn" data-hatchangle="0" title="0°">▬</button>
+          <button class="tool-btn" data-hatchangle="90" title="90°">┃</button>
+        </div>
+        <div class="tool-group" title="Transparência do preenchimento" style="display:flex; align-items:center; gap:6px;">
+          <input type="range" id="tacticFillOpacity" min="0" max="100" value="16" style="width:70px;">
+          <span id="tacticFillOpacityVal" class="mono" style="font-size:10px; color:var(--muted); min-width:2.5em;">16%</span>
+        </div>
+      </div>
     </aside>
   </section>
 
@@ -2314,9 +2361,13 @@
       <h4 class="tut-h">Quadro tático</h4>
       <ul class="info-list">
         <li><b>4 modos de quadro</b> — Campo Inteiro e Campo p/ Zonas começam com uma formação 4-4-2 automática; Área (grande área) e Na Profundidade (campo em perspetiva, visto de trás de uma baliza) começam vazios. Cada modo tem cenas próprias e independentes.</li>
-        <li><b>Adicionar</b> — "+ Jogador" coloca jogadores um a um (com a cor e a marcação de guarda-redes definidas na escalação); "+ Objeto" traz bola, balizas, cones, marcadores, postes, barreira e escada de agilidade; "+ Imagem" traz uma imagem do computador.</li>
-        <li><b>Mover/rodar/redimensionar</b> — arrasta para mover; arrasta a pega ⚪ acima de cada objeto para rodar; roda do rato sobre um objeto para aumentar/diminuir.</li>
-        <li><b>Cenas</b> — guarda posições como "cenas" para montar uma sequência animada de um lance (bola parada, exercício de treino); reproduz com transição animada entre cenas, ou descarrega a sequência como vídeo/GIF.</li>
+        <li><b>Adicionar</b> — "+ Jogador" coloca jogadores um a um (com a cor e a marcação de guarda-redes definidas na escalação); "+ Objeto" traz bola, balizas, cones, marcadores, postes, barreira e escada de agilidade; "+ Imagem" traz uma imagem do computador; o popup "Desenhar" tem linha, seta, seta poligonal, mão livre, curva, zona, elipse, retângulo, triângulo e texto.</li>
+        <li><b>Formações</b> — botão "Formações" no topo, com o Time A e o Time B no mesmo popup; aplica-se só ao Campo Inteiro/Campo p/ Zonas — Área e Na Profundidade começam sempre vazios.</li>
+        <li><b>Estilo do desenho</b> — o painel à direita mostra cor de contorno/preenchimento, tipo e espessura de linha, pontas de seta, padrão e transparência de preenchimento — o que estiver escolhido aí aplica-se ao próximo desenho.</li>
+        <li><b>Mover/rodar/redimensionar</b> — arrasta para mover; arrasta a pega ⚪ acima de cada objeto para rodar; arrasta uma das 8 alças à volta de uma forma/texto/imagem selecionada para redimensionar (Shift mantém a proporção), ou roda o rato sobre um jogador/objeto para o aumentar/diminuir.</li>
+        <li><b>Selecionar/apagar</b> — clica para selecionar; Shift+clique adiciona à seleção; Delete/Backspace ou botão direito → "Apagar" remove a seleção.</li>
+        <li><b>Depois de desenhar</b> — ao terminar uma forma, linha, seta ou zona, a ferramenta volta automaticamente a "mover" e a forma fica selecionada, pronta a ajustar; duplo-clique numa ferramenta dentro do popup "Desenhar" fixa-a, para desenhar várias formas seguidas sem reabrir o popup.</li>
+        <li><b>Cenas</b> — guarda posições como "cenas" para montar uma sequência animada de um lance (bola parada, exercício de treino); reproduz com transição animada entre cenas, ou descarrega a sequência como vídeo/GIF. A tira de cenas por baixo do campo pode ser recolhida para ganhar espaço vertical.</li>
       </ul>
 
       <h4 class="tut-h">Estatísticas e relatório</h4>
@@ -6080,18 +6131,21 @@ function pushRecentColor(hex){
   if(list.length > TACTIC_RECENT_COLORS_MAX) list = list.slice(0, TACTIC_RECENT_COLORS_MAX);
   saveColorList(TACTIC_RECENT_COLORS_KEY, list);
 }
-// Mounts a trigger button + flyout (the same .tool-flyout-wrap/.tool-flyout pattern already used
-// for board mode/+Objeto/+Jogador elsewhere in this toolbar) into an existing empty container.
-// Returns nothing — onChange(hex) is the only way callers observe a pick, matching how
-// tColor/tLineStyle/etc. are already just plain "current tool setting" variables, not state
-// exposed through a return value.
+// Mounts a trigger button + popup (the same .popup-menu-wrap/.popup-menu pattern used by "+
+// Objeto"/"Desenhar"/"Formações") into an existing empty container. Returns nothing — onChange(hex)
+// is the only way callers observe a pick, matching how tColor/tLineStyle/etc. are already just
+// plain "current tool setting" variables, not state exposed through a return value.
+// Ronda de reorganização (lote A) — antes usava .tool-flyout-wrap/.tool-flyout (position:absolute);
+// mudou para .popup-menu-wrap/.popup-menu (position:fixed) porque este picker agora vive dentro do
+// painel #tacticStylePanel, que tem overflow-y:auto — o mesmo corte que afetava o "+ Objeto" na
+// barra de cima (lote 1) aconteceria aqui se ficasse com o mecanismo antigo.
 function mountColorPicker(containerId, initialColor, onChange){
   const container = document.getElementById(containerId);
   const wrapId = containerId+'Wrap', flyoutId = containerId+'Flyout';
   container.innerHTML = `
-    <div class="tool-flyout-wrap" id="${wrapId}">
-      <button class="btn color-picker-trigger" id="${containerId}Trigger" type="button"><span class="cp-swatch" id="${containerId}Preview"></span></button>
-      <div class="tool-flyout color-picker-flyout" id="${flyoutId}">
+    <div class="popup-menu-wrap" id="${wrapId}">
+      <button class="btn color-picker-trigger popup-menu-trigger-btn" id="${containerId}Trigger" type="button"><span class="cp-swatch" id="${containerId}Preview"></span></button>
+      <div class="popup-menu color-picker-flyout" id="${flyoutId}">
         <div class="cp-grid" id="${containerId}Palette"></div>
         <div class="cp-custom-row">
           <input type="color" id="${containerId}Custom" title="Cor livre (roda/hex)">
@@ -6158,10 +6212,7 @@ function mountColorPicker(containerId, initialColor, onChange){
     refreshActiveStates();
   });
   customInput.addEventListener('input', ()=>{ setCurrent(customInput.value); refreshActiveStates(); });
-  trigger.addEventListener('click', e=>{ e.stopPropagation(); flyout.classList.toggle('pinned'); });
-  document.addEventListener('click', e=>{
-    if(!e.target.closest('#'+wrapId)) flyout.classList.remove('pinned');
-  });
+  trigger.addEventListener('click', e=>{ e.stopPropagation(); togglePopupMenu(flyout, trigger); });
   renderSwatchRow(document.getElementById(containerId+'Recent'), loadColorList(TACTIC_RECENT_COLORS_KEY), 'Nenhuma ainda');
   renderSwatchRow(document.getElementById(containerId+'FavGrid'), loadColorList(TACTIC_FAVORITE_COLORS_KEY), 'Nenhuma ainda');
   setCurrent(initialColor, {skipRecent:true});
@@ -9182,7 +9233,10 @@ let boardMode = 'full';
 // same starting formation as 'full', since it's meant to behave like Campo Inteiro plus a grid,
 // not like the deliberately-blank Área/Profundidade boards.
 const boardBuffers = { full: null, box: {tokens:{}, shapes:[]}, zones: null, depth: {tokens:{}, shapes:[]} };
-const BOARD_MODE_LABELS = { full:'Campo Inteiro', zones:'Campo p/ Zonas', box:'Área', depth:'Na Profundidade' };
+// Ronda de reorganização (lote A) — rótulos do BOTÃO mais curtos que antes (só o texto que aparece
+// sempre visível no topo), para a barra caber numa só fila; o popup do próprio modo mantém o nome
+// descritivo completo + tooltip (não mudou), por isso a escolha continua clara ao abrir o popup.
+const BOARD_MODE_LABELS = { full:'Campo', zones:'Zonas', box:'Área', depth:'Profundidade' };
 function activeScenesArray(){
   if(boardMode==='box') return state.boxScenes;
   if(boardMode==='zones') return state.zoneScenes;
@@ -9319,7 +9373,14 @@ document.querySelectorAll('[data-formation]').forEach(b=>{
     Object.keys(tokens).forEach(k=>{ if(k.startsWith(b.dataset.fteam+'-')) delete tokens[k]; });
     Object.assign(tokens, coords);
     renderTokens();
+    closePopupMenu(); // Ronda de reorganização (lote A) — mesma convenção do "+ Objeto": escolher fecha o popup
   });
+});
+// Ronda de reorganização (lote A, ponto 2) — botão "Formações" no topo, mesmo mecanismo dos outros
+// popups desta ronda (togglePopupMenu/openPopupMenuEl, definidos perto do "+ Objeto").
+document.getElementById('formationsPopupTrigger').addEventListener('click', e=>{
+  e.stopPropagation();
+  togglePopupMenu(document.getElementById('formationsPopup'), e.currentTarget);
 });
 defaultTokens();
 
@@ -9558,10 +9619,6 @@ document.getElementById('objectPopupTrigger').addEventListener('click', e=>{
   e.stopPropagation();
   togglePopupMenu(document.getElementById('objectFlyout'), e.currentTarget);
 });
-document.addEventListener('click', e=>{
-  if(!e.target.closest('#playerFlyoutWrap')) document.getElementById('playerFlyout').classList.remove('pinned');
-});
-
 // "+ Jogador" — places one specific roster player at a time (as opposed to a whole formation),
 // usable on both the full-pitch and the box board; the flyout is rebuilt on open so it always
 // reflects the current roster.
@@ -9578,21 +9635,24 @@ function renderPlayerFlyout(){
     const team = state.roster[tid];
     if(!team.players.length) return '';
     return `<div class="mono" style="color:var(--muted); font-size:10px; text-transform:uppercase; margin:${tid==='A'?'0':'8px'} 0 2px;">${escapeHtml(team.name)}</div>`
-      + team.players.map(p=>`<button class="btn" data-team="${tid}" data-pid="${p.id}" style="width:100%; text-align:left;">${escapeHtml(p.num)} — ${escapeHtml(p.name)}${p.isGK?' (GR)':''}</button>`).join('');
+      + team.players.map(p=>`<button class="popup-menu-item" data-team="${tid}" data-pid="${p.id}">${escapeHtml(p.num)} — ${escapeHtml(p.name)}${p.isGK?' (GR)':''}</button>`).join('');
   }).join('');
   el.querySelectorAll('[data-pid]').forEach(b=>{
     b.addEventListener('click', ()=>{
       const p = playerById(b.dataset.team, b.dataset.pid);
       if(p) addPlayer(b.dataset.team, p);
-      el.classList.remove('pinned');
+      closePopupMenu();
     });
   });
 }
 renderPlayerFlyout();
-document.querySelector('#playerFlyoutWrap > .btn').addEventListener('click', e=>{
+// Ronda de reorganização (lote A) — mesma correção do "+ Objeto" (lote 1): position:fixed em vez
+// de position:absolute, para nunca ficar cortado (o painel não tinha overflow próprio antes, mas
+// evita a mesma classe de bug se algum dia vier a ter).
+document.getElementById('playerPopupTrigger').addEventListener('click', e=>{
   e.stopPropagation();
   renderPlayerFlyout();
-  document.getElementById('playerFlyout').classList.toggle('pinned');
+  togglePopupMenu(document.getElementById('playerFlyout'), e.currentTarget);
 });
 
 // "+ Imagem" — reuses the token drag/rotate/scale machinery already built for objects; an image
