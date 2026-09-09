@@ -9405,7 +9405,11 @@ let tDragId = null;
 // gesture that starts but never actually moves anything pushes nothing, and one that moves 50
 // times pushes exactly once, not 50.
 let tDragHistoryPushed = false;
-let tacticShapeDragSession = null; // {shape, startX, startY, orig} — dragging a canvas text shape
+// Correção de regressão — generalizado de {shape, startX, startY, orig} (um único shape, só
+// type==='text') para {startX, startY, shapes:[{shape,orig}], tokens:[{tk,origX,origY}]}: cobre
+// qualquer tipo de forma, e move toda a seleção atual (formas E bonecos) junta quando há mais do
+// que um objeto selecionado — ver startTacticMoveDrag.
+let tacticShapeDragSession = null;
 // Which single Touch.identifier currently owns whichever single-finger gesture (token drag, rotate,
 // shape drag, drawing) is active — null when none is, or when the active gesture started with the
 // mouse. Needed because a stray SECOND finger landing anywhere on the pitch (very plausible on a
@@ -10217,14 +10221,40 @@ window.addEventListener('touchend', e=>{ if(tacticTouchGestureEnded(e)) endTacti
 // a cancelled drag could leave a token looking stuck to the last position update it ever received.
 window.addEventListener('touchcancel', e=>{ if(tacticTouchGestureEnded(e)) endTacticDragOrRotate(); });
 
+// Captura a geometria original de TODA a seleção atual UMA VEZ, no mousedown — nunca relida do
+// objeto já mutado num frame anterior (a mesma regra que corrigiu o exagero das 8 alças: calcular
+// sempre a partir do snapshot inicial, não do resultado do frame anterior, ou o erro compõe-se a
+// cada pixel de movimento do rato). Chamada a partir de startTacticCanvasInteraction (arrastar uma
+// forma) — bonecos entram aqui só se JÁ estiverem selecionados ao mesmo tempo que uma forma (o
+// arrasto iniciado a partir de um boneco continua no seu próprio mecanismo de sempre, tDragId,
+// não tocado por esta correção).
+function startTacticMoveDrag(startX, startY){
+  const shapes = tacticShapes
+    .filter(s=>selectedShapeIds.has(s.id) && !s.locked)
+    .map(s=>({shape:s, orig:cloneShapeGeometry(s)}));
+  const dragTokens = [...selectedTokenIds]
+    .map(id=>tokens[id])
+    .filter(tk=>tk && !tk.locked)
+    .map(tk=>({tk, origX:tk.x, origY:tk.y}));
+  if(!shapes.length && !dragTokens.length) return;
+  tacticShapeDragSession = {startX, startY, shapes, tokens:dragTokens};
+  tDragHistoryPushed = false;
+}
 function updateTacticShapeDrag(clientX, clientY){
   if(!tacticShapeDragSession) return;
   if(!tDragHistoryPushed){ pushTacticHistory(); tDragHistoryPushed = true; }
   const r = tacticPitch.getBoundingClientRect();
   const dx = (clientX-tacticShapeDragSession.startX)/r.width;
   const dy = (clientY-tacticShapeDragSession.startY)/r.height;
-  applyShapeGeometry(tacticShapeDragSession.shape, tacticShapeDragSession.orig, dx, dy);
+  tacticShapeDragSession.shapes.forEach(({shape, orig})=>applyShapeGeometry(shape, orig, dx, dy));
+  tacticShapeDragSession.tokens.forEach(({tk, origX, origY})=>{
+    tk.x = clamp(origX + dx*100, 0, 100);
+    tk.y = clamp(origY + dy*100, 0, 100);
+  });
   redrawTactic();
+  // Só redesenha os bonecos quando algum está realmente a mover-se nesta sessão — evita o custo de
+  // destruir/recriar todos os elementos de boneco em cada frame de um arrasto que é só de formas.
+  if(tacticShapeDragSession.tokens.length) renderTokens();
 }
 window.addEventListener('mousemove', e=>updateTacticShapeDrag(e.clientX, e.clientY));
 window.addEventListener('touchmove', e=>{
@@ -10234,9 +10264,19 @@ window.addEventListener('touchmove', e=>{
   e.preventDefault();
   updateTacticShapeDrag(t.clientX, t.clientY);
 }, {passive:false});
-window.addEventListener('mouseup', ()=>{ tacticShapeDragSession = null; });
-window.addEventListener('touchend', e=>{ if(tacticTouchGestureEnded(e)) tacticShapeDragSession = null; });
-window.addEventListener('touchcancel', e=>{ if(tacticTouchGestureEnded(e)) tacticShapeDragSession = null; });
+// tDragHistoryPushed só passa a true na primeira mutação REAL (ver updateTacticShapeDrag) — nunca
+// true significa que este mousedown->mouseup nunca chegou a mover nada: um clique a sério, não um
+// arrasto. Só nesse caso é que colapsa a seleção para a forma que foi clicada (ver clickCollapseId,
+// definido em startTacticCanvasInteraction só para o caso "clique num item já multi-selecionado").
+function endTacticShapeDrag(){
+  if(tacticShapeDragSession && !tDragHistoryPushed && tacticShapeDragSession.clickCollapseId){
+    applyTacticSelectionClick('shape', tacticShapeDragSession.clickCollapseId, false);
+  }
+  tacticShapeDragSession = null;
+}
+window.addEventListener('mouseup', endTacticShapeDrag);
+window.addEventListener('touchend', e=>{ if(tacticTouchGestureEnded(e)) endTacticShapeDrag(); });
+window.addEventListener('touchcancel', e=>{ if(tacticTouchGestureEnded(e)) endTacticShapeDrag(); });
 
 // Ronda de estabilização — "fixar" uma ferramenta de desenho: duplo-clique no seu botão (a
 // convenção que o utilizador escolheu, a mesma do PowerPoint/Google Slides/draw.io) mantém-na
@@ -10772,10 +10812,31 @@ function startTacticCanvasInteraction(e){
     if(hit){
       e.preventDefault();
       const shift = !!e.shiftKey;
+      // Correção de regressão — antes só type==='text' começava uma sessão de arrasto aqui; todos
+      // os outros tipos (linha, seta, seta poligonal, curva, mão livre, zona, retângulo, elipse,
+      // triângulo, imagem) ficavam só selecionados e nunca se moviam ao arrastar o corpo da forma —
+      // confirmado por leitura direta do código, não por suposição (ver o commit para o diagnóstico
+      // completo: não era um conflito de handlers, era esta condição a restringir a um único tipo).
+      // Generalizado para qualquer tipo, e para TODA a seleção atual via startTacticMoveDrag.
+      //
+      // Um clique (sem Shift) numa forma que já faz parte de uma seleção múltipla é um caso
+      // especial: applyTacticSelectionClick colapsaria logo no mousedown para só esta forma —
+      // correto para um CLIQUE a sério, mas destruiria o grupo ANTES de um arrasto ter hipótese de
+      // mover o grupo inteiro. Adia-se a decisão para o mouseup: começa já a arrastar o grupo
+      // completo tal como estava, e só colapsa para esta forma se afinal não se moveu nada (ver o
+      // mouseup mais abaixo) — o mesmo truque "clique vs. arrasto" que qualquer editor gráfico usa.
+      const wasMultiSelected = !shift && selectedShapeIds.has(hit.id) && (selectedShapeIds.size + selectedTokenIds.size) > 1;
+      if(wasMultiSelected){
+        startTacticMoveDrag(clientPt.x, clientPt.y);
+        if(tacticShapeDragSession) tacticShapeDragSession.clickCollapseId = hit.id;
+        tActiveTouchId = touchId;
+        return;
+      }
       applyTacticSelectionClick('shape', hit.id, shift);
-      if(hit.type==='text' && (!shift || selectedShapeIds.has(hit.id))){
-        tacticShapeDragSession = {shape:hit, startX:clientPt.x, startY:clientPt.y, orig:cloneShapeGeometry(hit)};
-        tDragHistoryPushed = false;
+      // (!shift || selectedShapeIds.has(hit.id)) preserva o comportamento de sempre: um shift-click
+      // que acabou de RETIRAR esta forma da seleção não deve continuar a arrastá-la.
+      if(!shift || selectedShapeIds.has(hit.id)){
+        startTacticMoveDrag(clientPt.x, clientPt.y);
         tActiveTouchId = touchId;
       }
       return;
@@ -11343,7 +11404,12 @@ function makeShapeTransformTarget(shape){
         return { c1: {x:shape.c1.x*tacticCanvas.width, y:shape.c1.y*tacticCanvas.height},
                  c2: {x:shape.c2.x*tacticCanvas.width, y:shape.c2.y*tacticCanvas.height} };
       }
-      if(shape.type==='polyarrow'){
+      // Correção do arrasto — zona tem a mesma forma de dados (points[]) que polyarrow, mas não
+      // estava aqui: nunca teve pegas de ponto individual, só a seleção. Pedido explícito do
+      // utilizador — arrastar de dentro de uma zona move-a inteira (já corrigido acima, em
+      // startTacticMoveDrag/shapeHitTest), arrastar um PONTO move só esse ponto, tal como já
+      // acontecia para polyarrow.
+      if(shape.type==='polyarrow' || shape.type==='zone'){
         const pts = {};
         shape.points.forEach((p,i)=>{ pts['pt'+i] = {x:p.x*tacticCanvas.width, y:p.y*tacticCanvas.height}; });
         return pts;
@@ -11355,7 +11421,7 @@ function makeShapeTransformTarget(shape){
         shape[which] = {x:xPx/tacticCanvas.width, y:yPx/tacticCanvas.height};
         return;
       }
-      if(shape.type==='polyarrow' && which.startsWith('pt')){
+      if((shape.type==='polyarrow' || shape.type==='zone') && which.startsWith('pt')){
         const idx = Number(which.slice(2));
         shape.points[idx] = {x:xPx/tacticCanvas.width, y:yPx/tacticCanvas.height};
       }

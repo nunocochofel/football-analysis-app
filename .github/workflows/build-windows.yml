@@ -41,33 +41,34 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.83 specifically — update this block for whatever the next release's own
+          # v0.8.84 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Tecla da posse de bola agora é configurável (a tecla fixa "\" não funcionava em todos os teclados)**
+            **Correção: arrastar formas no quadro tático — não funcionava para (quase) nenhum tipo**
 
-            A v0.8.82 fixava a tecla `\`, mas o código físico que essa tecla envia varia por
-            teclado/driver do Windows — não havia como acertar uma tecla fixa que funcionasse para
-            todos. Em vez de tentar adivinhar outra, a tecla passa a ser escolhida por ti.
+            Diagnóstico confirmado por leitura direta do código, não suposição: o mousedown sobre
+            uma forma selecionada só começava uma sessão de arrasto quando `type==='text'` — todos
+            os outros tipos (linha, seta, seta poligonal, curva, mão livre, zona, retângulo, elipse,
+            triângulo) ficavam só selecionados e nunca se moviam ao arrastar o corpo. Não era um
+            conflito de handlers com as alças ou o desenhar — era esta condição a restringir a um
+            único tipo. Corrigido generalizando para qualquer tipo, reaproveitando a mesma
+            `applyShapeGeometry`/`cloneShapeGeometry` que o vídeo já usava (nenhuma implementação
+            nova a divergir) — geometria original capturada uma vez no mousedown, nunca relida do
+            frame anterior, a mesma regra que corrigiu o exagero das 8 alças.
 
-            - Em "Times & categorias" → "Editar categorias", novo botão **"🎹 Premir tecla…"**:
-            clicas, primes a tecla que queres, e a app regista exatamente o que o teu teclado
-            enviou — nome legível mostrado logo a seguir, para confirmares que é a certa.
-            - Em branco por omissão — nenhuma tecla atribuída até definires uma; nunca arrisca
-            colidir sozinha com uma categoria tua.
-            - Avisa na hora se a tecla já está a ser usada por Espaço, ←/→, Esc, ou por uma
-            categoria — não bloqueia (podes decidir na mesma), mas nunca fica em silêncio.
-            - Configurável por projeto, e também como predefinição para projetos novos (no ecrã
-            inicial, junto às categorias predefinidas) — igual ao que já existia para categorias.
-            - Indicador de posse continua preenchido com a cor real da equipa (herdado da versão
-            anterior) — tooltips e Tutorial atualizados para refletirem a tecla configurada em vez
-            de um atalho fixo.
+            - Arrastar de dentro de qualquer forma move-a; nas de vários pontos (zona, seta
+            poligonal, curva), arrastar de dentro move a forma inteira, arrastar um ponto move só
+            esse ponto — zona ganhou pegas de ponto individual, que nunca tinha tido.
+            - Com vários objetos selecionados, arrastar um move todos juntos, num só passo de undo.
+            Corrigido de caminho: um clique simples (sem arrastar) num item já multi-selecionado
+            continua a colapsar para só esse, exatamente como já acontecia — só decide isso ao
+            soltar o rato, não mais cedo, para não destruir o grupo antes de um arrasto ter hipótese
+            de mover o conjunto inteiro.
+            - Redimensionar pelas alças e rodar continuam exatamente iguais.
 
-            Verificado com testes automatizados reais (Electron + Playwright, 25 cenários): captura
-            regista o código correto e mostra o nome legível; Esc cancela sem alterar o que já
-            estava definido; aviso aparece para Espaço e para uma categoria existente; a tecla
-            escolhida cicla mesmo os três estados; um projeto novo herda a predefinição, um projeto
-            já existente NUNCA é alterado por uma predefinição mudada depois; suspenso a escrever
-            num campo; funciona em live tagging; não dispara no quadro tático; botões no ecrã
-            continuam a funcionar.
+            Verificado com testes automatizados reais (Electron + Playwright, 23 cenários): as 10
+            formas confirmadas a mover 1:1 com o cursor; zona com arrasto do corpo e de um ponto
+            individual, os dois corretos; seleção múltipla confirmada por pixel a mover-se toda
+            junta e a desfazer num só passo; clique simples continua a colapsar a seleção como
+            antes; redimensionar e rodar reconfirmados a funcionar depois da correção.
