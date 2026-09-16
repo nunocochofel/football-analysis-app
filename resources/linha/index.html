@@ -652,6 +652,23 @@
   .stopwatch-view .time{font-family:'IBM Plex Mono'; font-size:64px; font-weight:500;}
   .stopwatch-view .hint{color:var(--muted); font-size:13px;}
 
+  .clip-note-panel{
+    display:flex; align-items:flex-start; gap:8px; padding:6px 12px;
+    background:var(--panel); border-top:1px solid var(--line); flex-shrink:0;
+  }
+  .clip-note-panel textarea{
+    flex:1; resize:vertical; min-height:34px; max-height:140px; font-size:12.5px; line-height:1.4;
+    font-family:inherit; background:var(--panel-alt); border:1px solid var(--line); border-radius:var(--radius-sm);
+    color:var(--chalk); padding:6px 8px;
+  }
+  .clip-note-panel textarea:disabled{opacity:.5; cursor:not-allowed;}
+  .clip-note-status{font-size:10.5px; color:var(--muted); white-space:nowrap; margin-top:9px; min-width:52px;}
+  .clip-note-dot{font-size:11px; margin-left:2px;}
+  .flag-note-dot{
+    position:absolute; top:-5px; left:2px; width:5px; height:5px; border-radius:50%;
+    background:var(--chalk); border:1px solid #08110A; pointer-events:none;
+  }
+
   .playback-bar{
     display:flex; align-items:center; gap:10px; padding:5px 12px;
     background:var(--panel); border-top:1px solid var(--line); flex-shrink:0;
@@ -1921,6 +1938,11 @@
             </div>
             <div class="hint">Codificação sem vídeo — as marcações usam o tempo do cronômetro e são sincronizadas com o vídeo depois.</div>
           </div>
+        </div>
+
+        <div class="clip-note-panel" id="clipNotePanel">
+          <textarea id="clipNoteInput" rows="2" disabled placeholder='Sem clipe em edição — usa "🖊 Editar desenhos" num clipe para escrever uma nota.'></textarea>
+          <span class="clip-note-status" id="clipNoteStatus"></span>
         </div>
 
         <div class="playback-bar" id="playbackBar">
@@ -3570,7 +3592,7 @@ async function loadState(){
       });
       backfillMissingCategoryColors();
       state.tags = parsed.tags || [];
-      state.tags.forEach(t=>{ if(!t.freezes) t.freezes = []; });
+      state.tags.forEach(t=>{ if(!t.freezes) t.freezes = []; if(t.note == null) t.note = ''; });
       state.possession = parsed.possession || [];
       // Nunca cai para a predefinição global aqui — só '' (desligado), mesmo que exista uma
       // predefinição configurada agora. Um projeto já existente que nunca teve tecla atribuída
@@ -4417,6 +4439,7 @@ function createTag(catId, forceTeamId, overrideRange){
     shapes: [],
     zoom: null,
     freezes: [],
+    note: '',
   };
   state.tags.push(tag);
   state.tags.sort((a,b)=>a.time-b.time);
@@ -4569,9 +4592,9 @@ function exitClipEdit(){
 }
 function renderClipEditBanner(){
   const el = document.getElementById('clipEditBanner');
-  if(!selectedClipId){ el.style.display = 'none'; return; }
+  if(!selectedClipId){ el.style.display = 'none'; renderClipNotePanel(); return; }
   const clip = state.tags.find(t => t.id === selectedClipId);
-  if(!clip){ selectedClipId = null; el.style.display = 'none'; return; }
+  if(!clip){ selectedClipId = null; el.style.display = 'none'; renderClipNotePanel(); return; }
   const cat = catById(clip.categoryId);
   el.style.display = 'flex';
   el.innerHTML = `
@@ -4582,7 +4605,61 @@ function renderClipEditBanner(){
   `;
   el.querySelector('#btnReviewClip').addEventListener('click', () => reviewClip(clip));
   el.querySelector('#btnExitClipEdit').addEventListener('click', exitClipEdit);
+  renderClipNotePanel();
 }
+// Nota livre por marcação: vive na própria tag (não há "clip" separado de "marcação" neste
+// modelo — renderClipTable() já lista state.tags diretamente), e segue selectedClipId como o
+// resto do painel de edição (banner, zoom, timeline de desenhos). Autosave, sem botão de
+// guardar: 'input' grava com um pequeno debounce, 'blur' grava de imediato. O atalho de
+// teclado global já se suspende sozinho em qualquer INPUT/SELECT/TEXTAREA/contentEditable (ver
+// o handler em KEYBOARD SHORTCUTS) — nada de especial precisa de ser feito aqui para isso.
+let clipNoteSaveTimer = null;
+let clipNoteStatusTimer = null;
+function renderClipNotePanel(){
+  const ta = document.getElementById('clipNoteInput');
+  const status = document.getElementById('clipNoteStatus');
+  const clip = selectedClipId ? state.tags.find(t => t.id === selectedClipId) : null;
+  if(!clip){
+    ta.disabled = true;
+    ta.value = '';
+    delete ta.dataset.clipId;
+    status.textContent = '';
+    return;
+  }
+  ta.disabled = false;
+  // Só substitui o valor da caixa quando o clipe ativo mudou de facto — nunca pisa o que está a
+  // ser escrito agora só porque outra coisa (ex: mover o playhead) disparou um re-render.
+  if(ta.dataset.clipId !== clip.id){
+    ta.value = clip.note || '';
+    ta.dataset.clipId = clip.id;
+  }
+}
+function saveClipNoteNow(){
+  const ta = document.getElementById('clipNoteInput');
+  const clip = ta.dataset.clipId ? state.tags.find(t => t.id === ta.dataset.clipId) : null;
+  if(!clip) return;
+  if(clip.note === ta.value) return;
+  clip.note = ta.value;
+  saveState();
+  renderClipTable();
+  renderTouchlineFlags();
+  const status = document.getElementById('clipNoteStatus');
+  status.textContent = 'Guardado';
+  clearTimeout(clipNoteStatusTimer);
+  clipNoteStatusTimer = setTimeout(()=>{ status.textContent = ''; }, 1500);
+}
+(function initClipNotePanel(){
+  const ta = document.getElementById('clipNoteInput');
+  ta.addEventListener('input', () => {
+    document.getElementById('clipNoteStatus').textContent = 'A escrever…';
+    clearTimeout(clipNoteSaveTimer);
+    clipNoteSaveTimer = setTimeout(saveClipNoteNow, 600);
+  });
+  ta.addEventListener('blur', () => {
+    clearTimeout(clipNoteSaveTimer);
+    saveClipNoteNow();
+  });
+})();
 // "Rever" just needs this clip to be the one governing playback — the shared timeupdate
 // handler further down (bounds clamping, freeze points, shape rendering) already does the
 // rest for whichever clip is selected, the same way it does for plain manual play/pause.
@@ -6201,8 +6278,8 @@ function renderTouchlineFlags(){
     const f = document.createElement('div');
     f.className='flag'; f.style.left=clamp(pct,0,100)+'%'; f.style.setProperty('--flag-color', cat.color);
     const p = playerById(tag.teamId, tag.playerId);
-    f.dataset.label = fmtTime(tag.time)+' · '+cat.label+(p?' · '+p.name:'');
-    f.innerHTML = '<div class="flag-pole"></div>';
+    f.dataset.label = fmtTime(tag.time)+' · '+cat.label+(p?' · '+p.name:'')+(tag.note && tag.note.trim() ? ' · 📝 tem nota' : '');
+    f.innerHTML = '<div class="flag-pole"></div>'+(tag.note && tag.note.trim() ? '<div class="flag-note-dot"></div>' : '');
     f.addEventListener('click', ev=>{ ev.stopPropagation(); if(videoEl.duration){ videoEl.currentTime = tag.time; } });
     touchline.appendChild(f);
   });
@@ -7933,6 +8010,7 @@ function renderClipRow(t, cat){
       <span class="clip-row-time">${fmtTime(t.inSec)}–${fmtTime(t.outSec)}</span>
       <span class="clip-row-player">${p ? escapeHtml(p.name) : '—'}</span>
       ${t.outcome ? `<span title="${t.outcome==='positive'?'Positiva':'Negativa'}">${t.outcome==='positive'?'👍':'👎'}</span>` : ''}
+      ${t.note && t.note.trim() ? `<span class="clip-note-dot" title="Tem nota">📝</span>` : ''}
       <span>${isExpanded ? '▾' : '▸'}</span>
     </div>
     ${isExpanded ? `
@@ -8003,7 +8081,7 @@ document.getElementById('clipContextMenu').addEventListener('click', e=>{
     if(!confirm('Remover este corte?')) return;
     state.tags = state.tags.filter(x=>x.id!==id);
     if(selectedClipId===id) selectedClipId = null;
-    renderClipTable(); renderTouchlineFlags(); saveState();
+    renderClipTable(); renderTouchlineFlags(); renderClipEditBanner(); saveState();
   }
 });
 document.addEventListener('click', e=>{
@@ -8088,7 +8166,7 @@ function wireClipRows(container){
         state.tags = state.tags.filter(x => x.id !== id);
         if(selectedClipId === id) selectedClipId = null;
         exportSelectedIds.delete(id);
-        renderClipTable(); renderTouchlineFlags(); saveState();
+        renderClipTable(); renderTouchlineFlags(); renderClipEditBanner(); saveState();
       }
       else if(act === 'posOutcome'){
         t.outcome = t.outcome==='positive' ? null : 'positive';
@@ -12389,6 +12467,7 @@ function refreshAllUI(){
   safeRender(refreshFilterOptions);
   safeRender(renderClipTable);
   safeRender(renderTouchlineFlags);
+  safeRender(renderClipEditBanner);
   safeRender(defaultTokens);
   safeRender(syncTacticLabelModeButtons);
   safeRender(renderTokens);

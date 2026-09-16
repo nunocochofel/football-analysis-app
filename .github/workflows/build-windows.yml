@@ -41,34 +41,27 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.84 specifically — update this block for whatever the next release's own
+          # v0.8.85 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Correção: arrastar formas no quadro tático — não funcionava para (quase) nenhum tipo**
+            **Nova: nota livre por marcação, por baixo do vídeo**
 
-            Diagnóstico confirmado por leitura direta do código, não suposição: o mousedown sobre
-            uma forma selecionada só começava uma sessão de arrasto quando `type==='text'` — todos
-            os outros tipos (linha, seta, seta poligonal, curva, mão livre, zona, retângulo, elipse,
-            triângulo) ficavam só selecionados e nunca se moviam ao arrastar o corpo. Não era um
-            conflito de handlers com as alças ou o desenhar — era esta condição a restringir a um
-            único tipo. Corrigido generalizando para qualquer tipo, reaproveitando a mesma
-            `applyShapeGeometry`/`cloneShapeGeometry` que o vídeo já usava (nenhuma implementação
-            nova a divergir) — geometria original capturada uma vez no mousedown, nunca relida do
-            frame anterior, a mesma regra que corrigiu o exagero das 8 alças.
+            Cada marcação/clipe (já é a mesma entidade neste modelo — não existiam separados) pode
+            agora ter uma nota de texto livre. Caixa por baixo do vídeo, sempre visível enquanto um
+            clipe está em edição ("🖊 Editar desenhos") — sem precisar de abrir nada. Guarda
+            sozinha, sem botão: enquanto escreve (curto debounce) e imediatamente ao sair do campo.
+            Ao mudar de clipe a caixa troca sempre para a nota desse clipe, nunca fica com a
+            anterior. Um pontinho 📝 assinala quais têm nota, na lista de clipes e na timeline do
+            vídeo.
 
-            - Arrastar de dentro de qualquer forma move-a; nas de vários pontos (zona, seta
-            poligonal, curva), arrastar de dentro move a forma inteira, arrastar um ponto move só
-            esse ponto — zona ganhou pegas de ponto individual, que nunca tinha tido.
-            - Com vários objetos selecionados, arrastar um move todos juntos, num só passo de undo.
-            Corrigido de caminho: um clique simples (sem arrastar) num item já multi-selecionado
-            continua a colapsar para só esse, exatamente como já acontecia — só decide isso ao
-            soltar o rato, não mais cedo, para não destruir o grupo antes de um arrasto ter hipótese
-            de mover o conjunto inteiro.
-            - Redimensionar pelas alças e rodar continuam exatamente iguais.
+            - Atalhos de teclado (categorias, espaço, setas) já ficam automaticamente suspensos ao
+            escrever aqui — é a mesma regra que já protegia qualquer campo de texto da app,
+            confirmado a escrever uma frase longa com espaços sem disparar play/pause nem criar
+            marcações por acidente.
+            - Aditivo aos dados: um clipe antigo sem nota abre normalmente com a caixa vazia.
+            - Funciona em PWA/iPad: confirmado que o teclado do ecrã não tapa a caixa nem empurra o
+            vídeo para fora da vista.
 
-            Verificado com testes automatizados reais (Electron + Playwright, 23 cenários): as 10
-            formas confirmadas a mover 1:1 com o cursor; zona com arrasto do corpo e de um ponto
-            individual, os dois corretos; seleção múltipla confirmada por pixel a mover-se toda
-            junta e a desfazer num só passo; clique simples continua a colapsar a seleção como
-            antes; redimensionar e rodar reconfirmados a funcionar depois da correção.
+            Verificado com testes automatizados reais (Electron + Playwright, 22 cenários, mais 9
+            adicionais num iPad simulado para o comportamento com teclado no ecrã).
