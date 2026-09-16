@@ -322,7 +322,6 @@
   .zoom-control .mono{color:var(--chalk); width:36px;}
 
   .possession-control{display:flex; align-items:center; gap:6px;}
-  #possessionPopupTrigger.active{background:var(--pitch); border-color:var(--pitch); color:#08110A; font-weight:600;}
   .poss-btn{font-size:12px; padding:5px 10px; transition:background .12s ease, border-color .12s ease;}
   /* Pedido: o estado ativo tem de ser inequívoco DE RELANCE, sem ler texto — antes disto só o
      texto ficava a negrito/escuro sobre o MESMO fundo do botão inativo (praticamente impercetível
@@ -1759,9 +1758,14 @@
                elements are gated the opposite way). Nowhere near the video/export engine —
                this only ever changes what videoEl.src points to, exactly like loadVideoFile vs
                loadVideoFromElectronPath already do for the two existing local-file strategies. -->
-          <div class="tool-flyout-wrap" id="liveFlyoutWrap">
-            <button class="btn" id="btnLiveOpen">🔴 <span id="liveBtnLabel">LIVE</span></button>
-            <div class="tool-flyout live-panel" id="livePanel">
+          <!-- Correção urgente: usava .tool-flyout (position:absolute), que fica sujeito ao
+               overflow:hidden de #videoToolbar (necessário para o mecanismo "⋯ Mais" não deixar a
+               barra quebrar) — o popup aparecia cortado/atrás do vídeo. Mesma correção já aplicada
+               no quadro tático: .popup-menu (position:fixed + posição calculada em JS) escapa a
+               qualquer overflow de antepassado. -->
+          <div class="popup-menu-wrap" id="liveFlyoutWrap">
+            <button class="btn popup-menu-trigger-btn" id="btnLiveOpen">🔴 <span id="liveBtnLabel">LIVE</span></button>
+            <div class="popup-menu live-panel" id="livePanel">
               <!-- YouTube LIVE: fonte experimental de teste (ver src/main/liveInput.ts) — o RTMP
                    continua a ser a fonte "a sério"; isto só existe para testar o motor LIVE sem
                    depender de teres uma fonte Veo/RTMP disponível. -->
@@ -1817,9 +1821,11 @@
           </div>
           <div class="toolbar-sep"></div>
 
-          <div class="tool-flyout-wrap mobile-toolbar-primary" id="toolFlyoutWrap">
-            <button class="btn" id="toolFlyoutTrigger" aria-label="Desenhar">🖊<span class="btn-label"> Desenhar</span> <span id="activeToolIcon">✋</span></button>
-            <div class="tool-flyout" id="toolFlyout">
+          <!-- Correção urgente: mesmo bug de empilhamento do "+ Objeto" no quadro tático — ver o
+               comentário junto a #liveFlyoutWrap acima. -->
+          <div class="popup-menu-wrap mobile-toolbar-primary" id="toolFlyoutWrap">
+            <button class="btn popup-menu-trigger-btn" id="toolFlyoutTrigger" aria-label="Desenhar">🖊<span class="btn-label"> Desenhar</span> <span id="activeToolIcon">✋</span></button>
+            <div class="popup-menu" id="toolFlyout" style="min-width:230px;">
               <div class="tool-group">
                 <button class="tool-btn active" data-tool="none" title="Ponteiro — clique pausa/inicia o vídeo, arrasta move a imagem quando há zoom">✋</button>
                 <button class="tool-btn" data-tool="line" title="Linha">╱</button>
@@ -1853,23 +1859,17 @@
             <span class="mono" id="zoomReadout">1.0×</span>
           </label>
           <div class="toolbar-sep"></div>
-          <!-- Convertido a popup (mesmo padrão .popup-menu do quadro tático, lote C) — "Time A"/
-               "Time B" eram os botões que empurravam esta barra para uma 2ª linha em janelas mais
-               estreitas, roubando altura ao vídeo. O gatilho mostra sempre o estado atual (equipa
-               com posse, ou "Posse" quando parada) para não perder a leitura ao relance que a barra
-               tinha antes — ver o fim de renderPossessionControl(). Os botões dentro do popup não o
-               fecham ao clicar (ver o comentário junto ao listener do trigger): trocar de posse
-               repetidamente durante o jogo é o uso normal deste controlo. -->
-          <div class="popup-menu-wrap" id="possessionFlyoutWrap">
-            <button class="btn popup-menu-trigger-btn" id="possessionPopupTrigger" title="Regista quem tem a posse de bola, para calcular a percentagem de posse nas Estatísticas">⚽ Posse</button>
-            <div class="popup-menu" id="possessionPopup" style="min-width:210px;">
-              <div class="possession-control" id="possessionControl">
-                <button class="btn poss-btn" id="btnPossA" data-team="A">Time A</button>
-                <button class="btn poss-btn" id="btnPossB" data-team="B">Time B</button>
-                <button class="btn icon" id="btnPossStop" title="Parar contagem de posse — bola fora/parada">⏹</button>
-              </div>
-              <div class="mono" id="possReadout" style="color:var(--muted); font-size:11px; text-align:center; margin-top:6px;"></div>
-            </div>
+          <!-- REVERTIDO (pedido urgente) — tinha ido a popup na ronda do layout do vídeo para
+               resolver a barra a quebrar para 2ª linha, mas a posse é usada em tempo real, a olhar
+               para o vídeo: um popup a abrir torna a troca lenta. Fica sempre visível, como
+               sempre foi; quickTagA/quickTagB é que absorvem a falta de espaço quando a janela é
+               mesmo estreita (ver VIDEO_TOOLBAR_COLLAPSE_ORDER) — possessionControl nunca colapsa. -->
+          <div class="possession-control" id="possessionControl" title="Regista quem tem a posse de bola, para calcular a percentagem de posse nas Estatísticas">
+            <span class="mono" style="color:var(--muted); font-size:11px;">Posse:</span>
+            <button class="btn poss-btn" id="btnPossA" data-team="A">Time A</button>
+            <button class="btn poss-btn" id="btnPossB" data-team="B">Time B</button>
+            <button class="btn icon" id="btnPossStop" title="Parar contagem de posse — bola fora/parada">⏹</button>
+            <span class="mono" id="possReadout" style="color:var(--muted); font-size:11px;"></span>
           </div>
           <div class="toolbar-sep"></div>
           <div class="possession-control" id="quickTagA" title="Marca estes eventos para esta equipa com um clique — usa a categoria correspondente, criando-a se ainda não existir">
@@ -5316,14 +5316,11 @@ if(isElectron()){
   // 'reconnect' that closes the gap, a terminal one just leaves it unclosed and harmless until the
   // next fresh "Ligar" resets everything).
 
+  // Popup-menu (position:fixed) em vez do antigo .tool-flyout/pinned — ver o comentário no HTML
+  // junto a #liveFlyoutWrap. Fecho ao clicar fora/Esc já é genérico (openPopupMenu/closePopupMenu).
   document.getElementById('btnLiveOpen').addEventListener('click', e=>{
     e.stopPropagation();
-    livePanel.classList.toggle('pinned');
-  });
-  // Self-contained click-outside-closes handler, rather than extending the tactic board's own
-  // #objectFlyoutWrap/#playerFlyoutWrap listener far away in the file for an unrelated panel.
-  document.addEventListener('click', e=>{
-    if(!e.target.closest('#liveFlyoutWrap')) livePanel.classList.remove('pinned');
+    togglePopupMenu(livePanel, e.currentTarget);
   });
 
   function selectedLiveSourceType(){
@@ -5752,13 +5749,6 @@ function renderPossessionControl(){
   const sum = totals.A + totals.B;
   const readout = document.getElementById('possReadout');
   if(readout) readout.textContent = sum>0 ? Math.round(totals.A/sum*100)+'% / '+Math.round(totals.B/sum*100)+'%' : '';
-  // O gatilho do popup precisa de mostrar o estado atual sozinho — é a única parte disto que
-  // continua visível na barra depois da conversão a popup (lote de correção do layout do vídeo).
-  const trigger = document.getElementById('possessionPopupTrigger');
-  if(trigger){
-    trigger.classList.toggle('active', !!open);
-    trigger.textContent = open ? '⚽ '+state.roster[open.team].name : '⚽ Posse';
-  }
 }
 // Destaque momentâneo (ver @keyframes possFlash) — só chamado a partir de uma mudança de estado
 // REAL (clique num botão, tecla, ou o ciclo abaixo), nunca a partir do timeupdate que já corre
@@ -6754,14 +6744,12 @@ document.querySelectorAll('#videoToolbar .tool-btn').forEach(b=>{
   b.addEventListener('click', ()=>setVideoTool(b.dataset.tool));
 });
 
-// Tool flyout: opens on hover (CSS) or click; click on the trigger pins it open
-// so it also works reliably on touch devices / without a mouse hover state.
+// Popup-menu (position:fixed) em vez do antigo .tool-flyout (position:absolute, hover/pinned) —
+// abrir/fechar por clique e o fecho ao clicar fora/Esc já são geridos pelo mecanismo genérico
+// (openPopupMenu/closePopupMenu, ver KEYBOARD SHORTCUTS/popup-menu mais abaixo no ficheiro).
 document.getElementById('toolFlyoutTrigger').addEventListener('click', e=>{
   e.stopPropagation();
-  document.getElementById('toolFlyout').classList.toggle('pinned');
-});
-document.addEventListener('click', e=>{
-  if(!e.target.closest('#toolFlyoutWrap')) document.getElementById('toolFlyout').classList.remove('pinned');
+  togglePopupMenu(document.getElementById('toolFlyout'), e.currentTarget);
 });
 
 let drawing = false, startPt=null, zonePts=[], calibForm=null;
@@ -12401,14 +12389,6 @@ document.getElementById('exportPopupTrigger').addEventListener('click', e=>{
   e.stopPropagation();
   togglePopupMenu(document.getElementById('exportPopup'), e.currentTarget);
 });
-// Sem closePopupMenu() nos botões lá dentro (ao contrário do #exportPopup) — trocar de posse
-// repetidamente durante o jogo é o uso normal deste controlo, fechar a cada clique obrigava a
-// reabrir o popup constantemente.
-document.getElementById('possessionPopupTrigger').addEventListener('click', e=>{
-  e.stopPropagation();
-  togglePopupMenu(document.getElementById('possessionPopup'), e.currentTarget);
-});
-
 /* ===================================================================
    STATISTICS TAB
 =================================================================== */

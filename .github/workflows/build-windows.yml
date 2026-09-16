@@ -41,32 +41,27 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.87 specifically — update this block for whatever the next release's own
+          # v0.8.88 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Correção: zoom exportado no sítio errado (e desenhos com zoom ativo também)**
+            **Correção urgente: popups escondidos atrás do vídeo, e posse de bola volta a estar
+            sempre visível**
 
-            Causa confirmada por teste real, não suposição: o arrastar do zoom era calculado como
-            fração da LARGURA DO CONTENTOR do vídeo, que inclui as barras pretas do letterbox
-            quando a proporção não bate certo — mas a exportação aplicava essa fração diretamente
-            sobre o frame original, sem barras nenhumas. Na pré-visualização não se notava (o CSS
-            desloca contentor e vídeo juntos); na exportação o desvio era proporcional à largura das
-            barras, exatamente como suspeitado. Os desenhos nunca tiveram este problema em si — já
-            usavam a caixa de conteúdo certa — mas quando exportados NUM CLIPE COM ZOOM, ficavam nas
-            coordenadas do frame inteiro por cima de um vídeo já recortado pelo zoom; agora recebem
-            o mesmo recorte.
+            - **"Desenhar" e "LIVE" apareciam por trás do vídeo, inutilizáveis.** Mesma causa do
+            "+ Objeto" já corrigido no quadro tático: usavam um popup `position:absolute`, que fica
+            sujeito ao `overflow:hidden` de qualquer antepassado — neste caso o mecanismo "⋯ Mais"
+            da barra do vídeo, introduzido na correção do layout. Convertidos para o mesmo popup
+            `position:fixed` (com posição calculada em JS) já usado no resto da app: nunca mais
+            fica escondido, nunca sai da janela, fecha ao clicar fora ou com Esc.
+            - **Posse de bola volta a ter os três botões sempre visíveis na barra** (Time A / Time
+            B / parada) — tinham passado a popup na correção do layout anterior, mas a posse
+            muda-se em tempo real a olhar para o jogo, e abrir um popup para isso tornava-se lento.
+            O botão ativo continua preenchido com a cor da equipa, para ver de relance.
 
-            - Corrigido guardando o arrasto do zoom sempre como fração do vídeo real, nunca do
-            contentor — confirmado com testes automáticos que ligam zoom aos 4 cantos e ao centro,
-            num vídeo 16:9 e noutro 4:3 com barras a sério, comparando o ficheiro exportado
-            (não a pré-visualização) a cada vez.
-            - Corrigido o mesmo recorte a aplicar-se aos desenhos quando o clipe também tem zoom.
-            - Investigada a fundo a trava/salto de frames ao exportar uma régua: desenhar uma régua
-            não demora mais do que uma seta (medido: ~1.1-1.3x, dentro do ruído), a contagem de
-            frames bate certo e o tempo total de exportação não muda — não foi possível reproduzir
-            este segundo problema num teste controlado. Não é a mesma causa do zoom (matemática de
-            coordenadas vs. desempenho) — a decorrer mais detalhes do utilizador para isolar.
+            Regra para o futuro: só o que se usa ocasionalmente vai a popup — o que se usa em tempo
+            real durante o jogo (posse, categorias, controlos de reprodução) fica sempre visível.
 
-            Verificado com testes automatizados reais (Electron + Playwright), incluindo comparação
-            pixel a pixel do ficheiro exportado contra o esperado.
+            Verificado com testes automatizados reais (Electron + Playwright): os dois popups
+            confirmados visualmente por cima do vídeo (não só presentes no HTML) e interativos,
+            fecho por Esc e por clique fora, e a posse a ativar num único clique sem popup.
