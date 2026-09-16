@@ -5680,7 +5680,14 @@ function tryDataUrlFallback(file){
   reader.readAsDataURL(file);
 }
 videoEl.addEventListener('loadedmetadata', ()=>{ sizeDrawCanvas(); updateTimeReadout(); renderTouchlineTicks(); });
-window.addEventListener('resize', ()=>{ sizeDrawCanvas(); sizeTacticCanvas(); });
+window.addEventListener('resize', ()=>{
+  sizeDrawCanvas(); sizeTacticCanvas();
+  // O novo transform de zoom (ver applyZoom()) usa píxeis derivados da caixa de conteúdo atual,
+  // ao contrário do % antigo (relativo ao próprio contentor, por isso sempre "ao vivo" sozinho) —
+  // sem isto, redimensionar a janela enquanto uma marcação com zoom está aberta deixava o pan
+  // visualmente desalinhado até à próxima interação.
+  applyZoom();
+});
 
 /* ---------- Ball possession — start/stop intervals per team, not an instant tag ---------- */
 // Unlike createTag() (a short fixed-length clip around one moment), possession genuinely needs a
@@ -5809,13 +5816,23 @@ function sizeDrawCanvas(){
   // flex sibling (see PLATFORM DETECTION / #mobileCatBar), so videoWrap's own rect is wider than
   // just the video — measuring the wrong box would size/position this drawing overlay across both
   // the video AND the category panel instead of just the video.
-  const r = document.getElementById('videoZoomLayer').getBoundingClientRect();
+  //
+  // CORREÇÃO (bug do zoom/desenhos): usava getBoundingClientRect(), que reflete o transform CSS do
+  // zoom — drawCanvas é filho do mesmo elemento transformado que o vídeo, por isso o seu tamanho
+  // LOCAL (pré-transform) ficava calculado a partir de uma caixa JÁ ampliada, e depois o MESMO
+  // transform do pai ampliava-o outra vez, ficando duplamente maior/deslocado do que o vídeo por
+  // baixo (confirmado a sério: drawCanvas media ~1182px de largura com o layer a 914px, só a
+  // scale=2). clientWidth/clientHeight NÃO refletem transform (são só layout, nunca pintura) — dão
+  // sempre o tamanho sem zoom, exatamente como o vídeo (também 100% do layer) precisa que o
+  // drawCanvas tenha para o transform do pai os ampliar os dois em conjunto, na mesma proporção.
+  const zl = document.getElementById('videoZoomLayer');
+  const lw = zl.clientWidth, lh = zl.clientHeight;
   const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
-  let w = r.width, h = r.height, left = 0, top = 0;
-  if(vw && vh && r.width && r.height){
-    const scale = Math.min(r.width/vw, r.height/vh);
+  let w = lw, h = lh, left = 0, top = 0;
+  if(vw && vh && lw && lh){
+    const scale = Math.min(lw/vw, lh/vh);
     w = vw*scale; h = vh*scale;
-    left = (r.width-w)/2; top = (r.height-h)/2;
+    left = (lw-w)/2; top = (lh-h)/2;
   }
   drawCanvas.width = w; drawCanvas.height = h;
   drawCanvas.style.width = w+'px'; drawCanvas.style.height = h+'px';
@@ -6084,19 +6101,47 @@ zoomSlider.addEventListener('input', e=>{
   currentZoom.scale = Number(e.target.value);
   applyZoom();
 });
+// CORREÇÃO: zoom exportado no sítio errado. Causa confirmada por leitura direta do código —
+// panX/panY eram uma fração da LARGURA DO CONTENTOR (videoWrap/zoomLayer), que inclui as barras
+// pretas do letterbox/pillarbox quando a proporção do vídeo não bate certo com a do contentor.
+// Na pré-visualização isso não se nota — o transform CSS aplica-se ao contentor inteiro (vídeo +
+// barras, tudo pixels do mesmo <video>), por isso tudo se move em conjunto e parece correto. Mas
+// drawExportFrameContent() aplica a MESMA fração diretamente sobre exportCanvas, que é só o frame
+// original, sem barras nenhumas — a fração calculada sobre um contentor mais largo do que o
+// conteúdo fica sistematicamente errada por aí, proporcionalmente à largura das barras (por isso
+// o desvio é um fator de escala, não um offset fixo). Corrigido guardando panX/panY SEMPRE como
+// fração do CONTEÚDO real do vídeo (a mesma caixa "contain" que sizeDrawCanvas() já calcula para
+// posicionar o drawCanvas dos desenhos — por isso os desenhos nunca tiveram este problema: já
+// usavam relPt()/drawCanvas.getBoundingClientRect(), que é essa caixa de conteúdo, nunca o
+// contentor inteiro). drawExportFrameContent() não precisa de nenhuma alteração: já tratava
+// panX*exportCanvas.width como fração do frame — estava certo, só recebia o número errado.
+function getVideoContentBox(){
+  const lw = zoomLayer.clientWidth, lh = zoomLayer.clientHeight;
+  const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+  if(!vw || !vh || !lw || !lh) return {width: lw||1, height: lh||1};
+  const s = Math.min(lw/vw, lh/vh);
+  return {width: vw*s, height: vh*s};
+}
 function applyZoom(){
   // At 1x there is no zoomed-in image to pan around, so any leftover pan
   // offset must be zeroed out here — otherwise turning the zoom back off
   // still shifts the video, revealing the black video-wrap background at
   // the edges instead of the frame filling it exactly like before.
+  const box = getVideoContentBox();
   if(currentZoom.scale<=1){
     currentZoom.scale=1; currentZoom.panX=0; currentZoom.panY=0;
   } else {
-    const maxPan = (currentZoom.scale-1)/2;
-    currentZoom.panX = clamp(currentZoom.panX, -maxPan, maxPan);
-    currentZoom.panY = clamp(currentZoom.panY, -maxPan, maxPan);
+    // Limite geométrico de pan em fração do CONTEÚDO — maior que o antigo (scale-1)/2 (que era em
+    // fração do contentor) na mesma proporção em que o conteúdo é mais estreito que o contentor.
+    const maxPanX = (currentZoom.scale-1)/2 * (zoomLayer.clientWidth/box.width);
+    const maxPanY = (currentZoom.scale-1)/2 * (zoomLayer.clientHeight/box.height);
+    currentZoom.panX = clamp(currentZoom.panX, -maxPanX, maxPanX);
+    currentZoom.panY = clamp(currentZoom.panY, -maxPanY, maxPanY);
   }
-  zoomLayer.style.transform = `scale(${currentZoom.scale}) translate(${currentZoom.panX*100/currentZoom.scale}%, ${currentZoom.panY*100/currentZoom.scale}%)`;
+  // translate em píxeis (não %) — % no CSS translate() é sempre relativo à própria caixa do
+  // elemento transformado (o contentor inteiro), exatamente a ambiguidade que causou o bug; em
+  // píxeis, controla-se exatamente quantos píxeis de CONTEÚDO se desloca, sem essa ambiguidade.
+  zoomLayer.style.transform = `scale(${currentZoom.scale}) translate(${currentZoom.panX*box.width/currentZoom.scale}px, ${currentZoom.panY*box.height/currentZoom.scale}px)`;
   document.getElementById('zoomReadout').textContent = currentZoom.scale.toFixed(1)+'×';
   if(selectedClipId){
     const clip = state.tags.find(t=>t.id===selectedClipId);
@@ -6127,9 +6172,13 @@ zoomLayer.addEventListener('mousedown', e=>{
 });
 window.addEventListener('mousemove', e=>{
   if(shapeDragSession){
-    const r = drawCanvas.getBoundingClientRect();
-    const dx = (e.clientX-shapeDragSession.startX)/r.width;
-    const dy = (e.clientY-shapeDragSession.startY)/r.height;
+    // relPt() (não mais getBoundingClientRect() bruto) — mesma correção do zoom: arrastar uma
+    // forma já existente enquanto a vista está ampliada precisa do delta em fração do frame
+    // INTEIRO, não da vista ampliada, senão a forma desloca-se mais ou menos do que o rato conforme
+    // o zoom (a mesma família do bug do zoom/desenhos, aqui a afetar mover formas já desenhadas).
+    const startP = relPt({clientX:shapeDragSession.startX, clientY:shapeDragSession.startY});
+    const nowP = relPt(e);
+    const dx = nowP.x-startP.x, dy = nowP.y-startP.y;
     applyShapeGeometry(shapeDragSession.shape, shapeDragSession.orig, dx, dy);
     redrawShapes();
     return;
@@ -6138,9 +6187,11 @@ window.addEventListener('mousemove', e=>{
   if(Math.hypot(e.clientX-panStart.x, e.clientY-panStart.y) > 4) panStart.moved = true;
   if(currentZoom.scale<=1) return;
   panningVideo = true;
-  const r = videoWrap.getBoundingClientRect();
-  currentZoom.panX = panStart.panX + (e.clientX-panStart.x)/r.width;
-  currentZoom.panY = panStart.panY + (e.clientY-panStart.y)/r.height;
+  // Fração do CONTEÚDO real do vídeo, não do contentor (ver o comentário grande em applyZoom) —
+  // era videoWrap.getBoundingClientRect() antes, que inclui as barras pretas do letterbox.
+  const box = getVideoContentBox();
+  currentZoom.panX = panStart.panX + (e.clientX-panStart.x)/box.width;
+  currentZoom.panY = panStart.panY + (e.clientY-panStart.y)/box.height;
   applyZoom();
 });
 window.addEventListener('mouseup', ()=>{
@@ -6715,9 +6766,26 @@ document.addEventListener('click', e=>{
 
 let drawing = false, startPt=null, zonePts=[], calibForm=null;
 
+// CORREÇÃO: desenhar (ou arrastar) uma forma ENQUANTO já há zoom aplicado guardava a coordenada
+// errada — confirmado a sério (não só suposto): desenhar uma seta no centro visual de uma vista já
+// ampliada 2x guardava p1/p2 à volta de (0.5,0.5), como se o que se via fosse o frame inteiro, em
+// vez da fração do frame REAL que a vista ampliada mostra (ex.: perto de 0.25,0.25 para um zoom
+// bem no canto superior esquerdo). Causa: usava drawCanvas.getBoundingClientRect(), que reflete o
+// transform CSS do zoom (drawCanvas é filho do mesmo elemento transformado que o vídeo) — correto
+// para posicionar o próprio drawCanvas no ecrã, errado como referência para normalizar um clique
+// ao frame inteiro. videoWrap nunca tem o transform (só o filho zoomLayer tem), por isso o seu
+// getBoundingClientRect() continua a ser a caixa ESTÁVEL, sem zoom, em qualquer altura — invertendo
+// a partir dela a mesma transformação scale+translate que applyZoom() aplica (ver esse comentário)
+// dá exatamente o ponto no frame INTEIRO correspondente ao clique, zoom ou não.
 function relPt(e){
-  const r = drawCanvas.getBoundingClientRect();
-  return {x:(e.clientX-r.left)/r.width, y:(e.clientY-r.top)/r.height};
+  const layerRect = videoWrap.getBoundingClientRect();
+  const S = currentZoom.scale;
+  const box = getVideoContentBox();
+  const txPx = currentZoom.panX*box.width/S, tyPx = currentZoom.panY*box.height/S;
+  const lx = (e.clientX-layerRect.left-layerRect.width/2)/S - txPx + layerRect.width/2;
+  const ly = (e.clientY-layerRect.top-layerRect.height/2)/S - tyPx + layerRect.height/2;
+  const contentLeft = (layerRect.width-box.width)/2, contentTop = (layerRect.height-box.height)/2;
+  return { x:(lx-contentLeft)/box.width, y:(ly-contentTop)/box.height };
 }
 
 /* ---------- Erase: right-click (any tool) or the 🧹 eraser tool (click/drag) ---------- */
@@ -8532,19 +8600,35 @@ function canvasToJpegBytes(canvas, quality, bench){
 // and neither can drift from the other.
 function drawExportFrameContent(ectx, exportCanvas, tag, atTime, source){
   const zoom = tag.zoom;
+  // sx/sy/sw/sh: the region of the FULL frame that the zoom crops into (in exportCanvas px,
+  // pre-zoom coordinate space) — identity (0,0,full width,full height) when there's no zoom.
+  let sx = 0, sy = 0, sw = exportCanvas.width, sh = exportCanvas.height;
   if(zoom && zoom.scale > 1){
-    const sw = exportCanvas.width/zoom.scale, sh = exportCanvas.height/zoom.scale;
-    const sx = clamp((exportCanvas.width-sw)/2 - zoom.panX*exportCanvas.width, 0, exportCanvas.width-sw);
-    const sy = clamp((exportCanvas.height-sh)/2 - zoom.panY*exportCanvas.height, 0, exportCanvas.height-sh);
+    sw = exportCanvas.width/zoom.scale; sh = exportCanvas.height/zoom.scale;
+    sx = clamp((exportCanvas.width-sw)/2 - zoom.panX*exportCanvas.width, 0, exportCanvas.width-sw);
+    sy = clamp((exportCanvas.height-sh)/2 - zoom.panY*exportCanvas.height, 0, exportCanvas.height-sh);
     ectx.drawImage(source, sx, sy, sw, sh, 0, 0, exportCanvas.width, exportCanvas.height);
   } else {
     ectx.drawImage(source, 0, 0, exportCanvas.width, exportCanvas.height);
   }
+  // CORREÇÃO: com zoom, os desenhos saíam no sítio errado tal como o próprio zoom (bug
+  // relacionado, mesma família, causa distinta) — drawShapeToCanvas() desenha sempre em
+  // coordenadas do frame INTEIRO (canvas.width/height), exatamente como sempre fez e como a
+  // pré-visualização também faz (redrawShapes() em drawCanvas, sem transform nenhum próprio) — só
+  // que na pré-visualização o CSS transform do zoom.zoomLayer já apanha drawCanvas de character
+  // (é filho do mesmo elemento transformado), arrastando os desenhos com o vídeo automaticamente.
+  // Na exportação não há elemento nenhum a herdar transform de ninguém — é só um canvas plano — por
+  // isso precisa do MESMO recorte/escala aplicado explicitamente antes de desenhar, ou os desenhos
+  // ficam nas coordenadas do frame inteiro por cima do vídeo já recortado/esticado pelo zoom.
+  const shapeScale = exportCanvas.width/sw; // === zoom.scale quando há zoom, 1 caso contrário
+  ectx.save();
+  if(zoom && zoom.scale > 1) ectx.setTransform(shapeScale, 0, 0, shapeScale, -sx*shapeScale, -sy*shapeScale);
   (tag.shapes||[]).forEach(s => {
     const start = s.startSec!=null ? s.startSec : tag.inSec;
     const end = s.endSec!=null ? s.endSec : tag.outSec;
     if(atTime>=start && atTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
   });
+  ectx.restore();
 }
 
 async function drawExportFrame(ectx, exportCanvas, tag, atTime, source, bench){

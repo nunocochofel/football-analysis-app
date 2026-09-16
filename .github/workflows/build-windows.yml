@@ -41,30 +41,32 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.86 specifically — update this block for whatever the next release's own
+          # v0.8.87 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Correção: vídeo pequeno com barras pretas — o vídeo passa a ser o elemento principal**
+            **Correção: zoom exportado no sítio errado (e desenhos com zoom ativo também)**
 
-            Diagnóstico confirmado por medição real: `object-fit:contain` nunca corta a imagem,
-            preserva sempre a proporção — quando a caixa à volta do vídeo tem uma proporção
-            diferente da do vídeo, o espaço que sobra é inevitavelmente pintado a preto. O problema
-            não era esse comportamento em si, era a caixa estar desproporcionalmente larga por
-            várias coisas a roubar-lhe altura sem necessidade: a barra de cima tinha uma 2ª fila
-            (Time A/B), e a nota do clipe (v0.8.85) ficava entre o vídeo e os controlos.
+            Causa confirmada por teste real, não suposição: o arrastar do zoom era calculado como
+            fração da LARGURA DO CONTENTOR do vídeo, que inclui as barras pretas do letterbox
+            quando a proporção não bate certo — mas a exportação aplicava essa fração diretamente
+            sobre o frame original, sem barras nenhumas. Na pré-visualização não se notava (o CSS
+            desloca contentor e vídeo juntos); na exportação o desvio era proporcional à largura das
+            barras, exatamente como suspeitado. Os desenhos nunca tiveram este problema em si — já
+            usavam a caixa de conteúdo certa — mas quando exportados NUM CLIPE COM ZOOM, ficavam nas
+            coordenadas do frame inteiro por cima de um vídeo já recortado pelo zoom; agora recebem
+            o mesmo recorte.
 
-            - Barra de cima já não quebra nunca para uma 2ª fila: "Posse" passa a popup (como já
-            acontecia no quadro tático), e os marcadores rápidos por equipa colapsam para um popup
-            "⋯ Mais" só quando a janela é mesmo estreita a mais para caber tudo.
-            - A nota do clipe mudou-se para depois da linha temporal, no fim da coluna, e passa a
-            **recolhível — fechada por omissão**: só ocupa espaço quando se opta por abrir. Um
-            pontinho 📝 no cabeçalho mostra se o clipe atual já tem nota escrita, mesmo fechada.
-            - Resultado medido (Electron real, vídeo 1280×720): o vídeo cresce de ~489px para
-            ~560px de altura na mesma janela — as barras laterais que sobravam ficam residuais.
-            - Atalhos continuam suspensos ao escrever na nota (sem mudanças aí — é a mesma regra de
-            sempre). Nada disto altera dados guardados.
+            - Corrigido guardando o arrasto do zoom sempre como fração do vídeo real, nunca do
+            contentor — confirmado com testes automáticos que ligam zoom aos 4 cantos e ao centro,
+            num vídeo 16:9 e noutro 4:3 com barras a sério, comparando o ficheiro exportado
+            (não a pré-visualização) a cada vez.
+            - Corrigido o mesmo recorte a aplicar-se aos desenhos quando o clipe também tem zoom.
+            - Investigada a fundo a trava/salto de frames ao exportar uma régua: desenhar uma régua
+            não demora mais do que uma seta (medido: ~1.1-1.3x, dentro do ruído), a contagem de
+            frames bate certo e o tempo total de exportação não muda — não foi possível reproduzir
+            este segundo problema num teste controlado. Não é a mesma causa do zoom (matemática de
+            coordenadas vs. desempenho) — a decorrer mais detalhes do utilizador para isolar.
 
-            Verificado com testes automatizados reais (Electron + Playwright, 23 cenários, mais 16
-            num iPad simulado em retrato e paisagem, com o encolhimento de viewport que o teclado do
-            ecrã provoca).
+            Verificado com testes automatizados reais (Electron + Playwright), incluindo comparação
+            pixel a pixel do ficheiro exportado contra o esperado.
