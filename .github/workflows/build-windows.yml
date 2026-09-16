@@ -41,28 +41,35 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.89 specifically — update this block for whatever the next release's own
+          # v0.8.90 specifically (corrected) — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Correção urgente: exportação nunca mais fica presa a meio quando o clipe tem
-            desenhos**
+            **Causa real da exportação presa nos 50%, encontrada e corrigida — reproduzida a
+            sério, não suposta**
 
-            Testados os 7 tipos de desenho (linha, seta, zona, holofote, vinheta, régua, texto),
-            vários ao mesmo tempo e zoom+desenhos juntos, sempre em exportações reais (não só a
-            barra de progresso) — nenhum ficou preso nestes testes. Mesmo assim, adicionadas três
-            proteções para o caso de acontecer com filmagem real ou uma combinação não testada:
+            Instrumentado o caminho inteiro (novo `export.log`, botão 📄 no painel de exportação,
+            regista início, cada frame, cada forma, arranque do ffmpeg, cada linha de progresso e
+            fim). Com isso reproduziu-se o bloqueio de verdade: quando o fim do corte coincide com
+            (ou está muito perto d)o fim real do vídeo fonte, o `<video>` chega ao fim e o Chromium
+            pode nunca mais entregar o frame seguinte de captura — a condição interna que termina a
+            captura nunca chega a ser avaliada outra vez, e a promessa fica à espera para sempre. O
+            log mostrou exatamente isto: o último frame do corte desenhado e codificado com
+            sucesso, e a seguir silêncio absoluto — nada mais, nunca. Só afeta clipes com
+            desenhos/zoom (o único caminho que usa este mecanismo) — sem eles a exportação lê o
+            ficheiro fonte diretamente, nunca passa por aqui.
 
-            - **Cada forma desenha-se dentro do seu próprio try/catch** — uma forma com dados
-            inválidos é ignorada (registada) em vez de arriscar todo o clipe. Corrigido também um
-            desequilíbrio de save/restore do canvas que uma forma partida a meio podia deixar,
-            capaz de corromper o desenho de todas as formas seguintes no mesmo clipe.
-            - **Cada frame tem um limite de 8 segundos** para desenhar e codificar — se nunca
-            resolver (ex.: um bug raro do próprio Chromium em que `canvas.toBlob()` não chama o
-            callback), esse frame é substituído pelo anterior e a exportação continua, em vez de
-            ficar presa para sempre à espera dele.
-            - **Aviso no fim** se alguma forma ou frame tiver falhado — "Exportado com avisos" — em
-            vez de silêncio ou uma exportação que nunca termina.
+            - Corrigido a ouvir também o evento nativo `ended` do vídeo, que dispara sempre
+            independentemente do próximo frame de captura alguma vez chegar — fecha exatamente a
+            falha encontrada.
+            - Rede de segurança adicional: um limite de tempo total na captura (duração do corte +
+            20s de folga), para qualquer outra causa ainda não vista nunca mais prender a
+            exportação para sempre.
+            - Corrigido também um bug real na própria barra de progresso: trocava o identificador
+            do trabalho pela percentagem, e nunca atualizava a barra do painel durante a
+            codificação do ffmpeg — ficava visualmente parada nos 50% mesmo quando tudo corria bem
+            por baixo. Agora avança de verdade.
 
-            Verificado com testes automatizados reais (Electron + Playwright) exportando os 7
-            tipos de desenho, vários juntos, e zoom+desenhos — todos completos sem travar.
+            Verificado reproduzindo o bloqueio de propósito (corte a terminar exactamente no fim do
+            vídeo fonte) — confirmado preso antes da correção, confirmado a completar sempre depois
+            dela, repetido várias vezes.

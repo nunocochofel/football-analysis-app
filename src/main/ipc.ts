@@ -21,6 +21,7 @@ import * as q from './db/queries'
 import { LiveSession } from './liveIngest'
 import { startLiveFromInput, stopLiveInput, createSupervisedLiveEmit } from './liveInput'
 import { exportLiveClip } from './liveClip'
+import { logExport } from './exportLog'
 import type { ExportTacticFramesRequest, LiveEvent, LiveStartRequest } from '../shared/types'
 
 // Returned so index.ts can stop any in-progress RTMP ingest on app quit (see the 'before-quit'
@@ -163,21 +164,28 @@ export function registerIpcHandlers(
       }
     ) => {
       const outputPath = args.outputPath ?? join(args.folderPath as string, args.filename as string)
-      await exportClipFramesWithAudio(
-        args.frames,
-        args.fps,
-        args.sourceVideoPath,
-        args.audioInSec,
-        args.audioOutSec,
-        outputPath,
-        args.resolution,
-        args.quality,
-        args.jobId,
-        (percent) => {
-          e.sender.send('video:exportProgress', { jobId: args.jobId, percent })
-        }
-      )
-      return outputPath
+      logExport(`[export ${args.jobId}] IPC video:exportClipFrames handler invoked, ${args.frames.length} frame buffers received`)
+      try {
+        await exportClipFramesWithAudio(
+          args.frames,
+          args.fps,
+          args.sourceVideoPath,
+          args.audioInSec,
+          args.audioOutSec,
+          outputPath,
+          args.resolution,
+          args.quality,
+          args.jobId,
+          (percent) => {
+            e.sender.send('video:exportProgress', { jobId: args.jobId, percent })
+          }
+        )
+        logExport(`[export ${args.jobId}] IPC video:exportClipFrames handler returning success`)
+        return outputPath
+      } catch (err) {
+        logExport(`[export ${args.jobId}] IPC video:exportClipFrames handler throwing: ${err instanceof Error ? err.message : err}`)
+        throw err
+      }
     }
   )
   // Direct trim (no renderer capture at all): see the big comment above exportClipDirect() in
@@ -200,22 +208,34 @@ export function registerIpcHandlers(
       }
     ) => {
       const outputPath = args.outputPath ?? join(args.folderPath as string, args.filename as string)
-      await exportClipDirect(
-        args.sourceVideoPath,
-        args.inSec,
-        args.outSec,
-        outputPath,
-        args.resolution,
-        args.quality,
-        args.jobId,
-        (percent) => {
-          e.sender.send('video:exportProgress', { jobId: args.jobId, percent })
-        }
-      )
-      return outputPath
+      logExport(`[export ${args.jobId}] IPC video:exportClipDirect handler invoked`)
+      try {
+        await exportClipDirect(
+          args.sourceVideoPath,
+          args.inSec,
+          args.outSec,
+          outputPath,
+          args.resolution,
+          args.quality,
+          args.jobId,
+          (percent) => {
+            e.sender.send('video:exportProgress', { jobId: args.jobId, percent })
+          }
+        )
+        logExport(`[export ${args.jobId}] IPC video:exportClipDirect handler returning success`)
+        return outputPath
+      } catch (err) {
+        logExport(`[export ${args.jobId}] IPC video:exportClipDirect handler throwing: ${err instanceof Error ? err.message : err}`)
+        throw err
+      }
     }
   )
   ipcMain.handle('video:cancelExport', (_e, jobId: string) => cancelExportJob(jobId))
+  // PASSO 1 do pedido urgente ("a exportação fica bloqueada nos 50%") — o renderer envia os seus
+  // próprios marcos (início da captura, frame N a desenhar, tipo de forma, fim da captura, entrega
+  // ao IPC) para este MESMO ficheiro de log, para a timeline ficar toda intercalada num só sítio —
+  // a última linha antes de bloquear diz onde parou, seja no lado do JS ou do ffmpeg.
+  ipcMain.on('log:export', (_e, line: string) => logExport(String(line)))
 
   // The export capture loop (a hidden <video> + requestVideoFrameCallback, in the renderer) is
   // otherwise subject to Electron's default backgroundThrottling — Chromium slows down a
@@ -278,6 +298,13 @@ export function registerIpcHandlers(
   )
   ipcMain.handle('project:openBackupsFolder', async () => {
     const dir = backupsDir()
+    await mkdir(dir, { recursive: true })
+    await shell.openPath(dir)
+  })
+  // Pedido urgente ("a exportação fica bloqueada nos 50%") — export.log (ver src/main/exportLog.ts)
+  // só é útil se for fácil de encontrar e enviar; mesmo padrão do botão de backups acima.
+  ipcMain.handle('logs:openFolder', async () => {
+    const dir = app.getPath('logs')
     await mkdir(dir, { recursive: true })
     await shell.openPath(dir)
   })

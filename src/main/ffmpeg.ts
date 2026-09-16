@@ -8,6 +8,7 @@ import { app } from 'electron'
 import ffmpegPathRaw from 'ffmpeg-static'
 import ffprobeStatic from 'ffprobe-static'
 import type { VideoProbeResult } from '../shared/types'
+import { logExport } from './exportLog'
 
 // ffmpeg-static/ffprobe-static compute their own binary path from `__dirname`, which for a
 // module loaded out of app.asar always resolves to the path INSIDE the archive — a virtual
@@ -28,13 +29,20 @@ const ffprobePath = { path: unpackAsarPath(ffprobeStatic.path) }
 // exporting on CPU) and to show the renderer a distinct "cancelled" state instead of an error.
 export const EXPORT_CANCELLED_MESSAGE = 'EXPORT_CANCELLED'
 
+// `label`: optional, only for the diagnostic export log (see PASSO 1 do pedido urgente) — spawn,
+// every stderr line (ffmpeg's own -stats progress), and how the process ended, ALL with a
+// timestamp, so "a última linha antes de bloquear" is unambiguous straight from the log file
+// instead of guessed. Left undefined for the probeEncoder() calibration calls (line-noisy,
+// irrelevant to a real export) so this stays silent there.
 function runProcess(
   bin: string,
   args: string[],
   onStderrLine?: (line: string) => void,
-  onProcess?: (proc: ChildProcess) => void
+  onProcess?: (proc: ChildProcess) => void,
+  label?: string
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (label) logExport(`[${label}] spawn: ${bin} ${args.join(' ')}`)
     const proc = spawn(bin, args)
     onProcess?.(proc)
     let stdout = ''
@@ -43,12 +51,20 @@ function runProcess(
     proc.stderr.on('data', (d) => {
       const chunk = d.toString()
       stderr += chunk
+      const lines = chunk.split('\n')
+      if (label) {
+        for (const line of lines) if (line.trim()) logExport(`[${label}] ffmpeg: ${line.trim()}`)
+      }
       if (onStderrLine) {
-        for (const line of chunk.split('\n')) onStderrLine(line)
+        for (const line of lines) onStderrLine(line)
       }
     })
-    proc.on('error', reject)
+    proc.on('error', (err) => {
+      if (label) logExport(`[${label}] process 'error' event: ${err && err.message}`)
+      reject(err)
+    })
     proc.on('close', (code) => {
+      if (label) logExport(`[${label}] process closed, code=${code}, killed=${proc.killed}`)
       if (code === 0) resolve(stdout)
       else if (proc.killed) reject(new Error(EXPORT_CANCELLED_MESSAGE))
       else reject(new Error(`${bin} exited with code ${code}: ${stderr.slice(-2000)}`))
@@ -284,7 +300,11 @@ export async function exportClipDirect(
     return args
   }
 
+  const label = `export ${jobId}`
+  logExport(`[${label}] exportClipDirect start: inSec=${inSec} outSec=${outSec} resolution=${resolution} quality=${quality}`)
+
   async function runEncode(hw: HwEncoder | null): Promise<void> {
+    logExport(`[${label}] starting ffmpeg direct encode, encoder=${hw ? hw.codec : 'libx264(cpu)'}`)
     await runProcess(
       ffmpegPath,
       buildArgs(hw),
@@ -292,8 +312,10 @@ export async function exportClipDirect(
         const t = parseFfmpegTimeSec(line)
         if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
       },
-      (proc) => activeExportJobs.set(jobId, proc)
+      (proc) => activeExportJobs.set(jobId, proc),
+      label
     )
+    logExport(`[${label}] ffmpeg direct encode finished`)
   }
 
   const hw = await detectHardwareEncoder()
@@ -301,12 +323,14 @@ export async function exportClipDirect(
     await runEncode(hw)
   } catch (err) {
     const cancelled = err instanceof Error && err.message === EXPORT_CANCELLED_MESSAGE
+    logExport(`[${label}] direct encode attempt failed (cancelled=${cancelled}): ${err instanceof Error ? err.message : err}`)
     if (cancelled || !hw) throw err
     await runEncode(null)
   } finally {
     activeExportJobs.delete(jobId)
   }
   await rename(tmpOutputPath, outputPath)
+  logExport(`[${label}] exportClipDirect DONE`)
 }
 
 // Fast clip export: the renderer seeks the video frame-by-frame (not real-time playback) and
@@ -336,13 +360,21 @@ export async function exportClipFramesWithAudio(
   // for everyone else.
   const bench = process.env.EXPORT_BENCH === '1'
   const tStart = bench ? Date.now() : 0
+  const label = `export ${jobId}`
+  logExport(`[${label}] exportClipFramesWithAudio start: frames=${frames.length} fps=${fps} hasAudio=${!!sourceVideoPath} resolution=${resolution} quality=${quality}`)
   const workDir = await mkdtemp(join(tmpdir(), 'football-clip-frames-'))
   try {
     const tWrite0 = bench ? Date.now() : 0
     for (let i = 0; i < frames.length; i++) {
       const framePath = join(workDir, `frame_${String(i).padStart(5, '0')}.jpg`)
       await writeFile(framePath, frames[i])
+      // Um por frame seria ruído a mais no ficheiro para um clipe com centenas de frames — a cada
+      // 25 (~1x/seg a 25fps) chega para saber se a escrita em disco é onde fica presa, sem inundar
+      // o log. A ÚLTIMA linha antes de bloquear continua a apanhar-se: se travar aqui, o log para
+      // de crescer logo a seguir ao múltiplo de 25 mais próximo.
+      if (i % 25 === 0 || i === frames.length - 1) logExport(`[${label}] wrote frame ${i + 1}/${frames.length} to disk`)
     }
+    logExport(`[${label}] all ${frames.length} frames written to disk, building ffmpeg command`)
     if (bench) console.log(`[export-bench-main] frameWriteMs=${Date.now() - tWrite0} frameCount=${frames.length}`)
     const pattern = join(workDir, 'frame_%05d.jpg')
     const durationSec = frames.length / fps
@@ -372,6 +404,7 @@ export async function exportClipFramesWithAudio(
     }
 
     async function runEncode(hw: HwEncoder | null): Promise<void> {
+      logExport(`[${label}] starting ffmpeg encode, encoder=${hw ? hw.codec : 'libx264(cpu)'}, durationSec=${durationSec.toFixed(2)}`)
       await runProcess(
         ffmpegPath,
         buildArgs(hw),
@@ -379,12 +412,16 @@ export async function exportClipFramesWithAudio(
           const t = parseFfmpegTimeSec(line)
           if (t != null && durationSec > 0) onProgress(Math.min(99, Math.round((t / durationSec) * 100)))
         },
-        (proc) => activeExportJobs.set(jobId, proc)
+        (proc) => activeExportJobs.set(jobId, proc),
+        label
       )
+      logExport(`[${label}] ffmpeg encode finished (encoder=${hw ? hw.codec : 'libx264(cpu)'})`)
     }
 
     const tHw0 = bench ? Date.now() : 0
+    logExport(`[${label}] detecting hardware encoder...`)
     const hw = await detectHardwareEncoder()
+    logExport(`[${label}] hardware encoder detection done: ${hw ? hw.codec : 'none, using libx264(cpu)'}`)
     if (bench) console.log(`[export-bench-main] hwDetectMs=${Date.now() - tHw0} encoder=${hw ? hw.codec : 'libx264(cpu)'}`)
     const tEncode0 = bench ? Date.now() : 0
     try {
@@ -396,15 +433,19 @@ export async function exportClipFramesWithAudio(
       // path fails here for a real reason, fall back to libx264 once rather than losing the
       // export outright.
       const cancelled = err instanceof Error && err.message === EXPORT_CANCELLED_MESSAGE
+      logExport(`[${label}] hardware encode attempt failed (cancelled=${cancelled}): ${err instanceof Error ? err.message : err}`)
       if (cancelled || !hw) {
         throw err
       }
+      logExport(`[${label}] falling back to libx264(cpu) after hardware encoder failure`)
       await runEncode(null)
     } finally {
       activeExportJobs.delete(jobId)
     }
     if (bench) console.log(`[export-bench-main] encodeMs=${Date.now() - tEncode0}`)
+    logExport(`[${label}] renaming temp output to final path: ${outputPath}`)
     await rename(tmpOutputPath, outputPath)
+    logExport(`[${label}] exportClipFramesWithAudio DONE`)
   } finally {
     await rm(workDir, { recursive: true, force: true })
     if (bench) console.log(`[export-bench-main] totalMs=${Date.now() - tStart}`)

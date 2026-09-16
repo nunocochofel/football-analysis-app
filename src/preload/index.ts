@@ -68,6 +68,11 @@ const api = {
       cb(data.jobId, data.percent)
     )
   },
+  // Diagnóstico ("a exportação fica bloqueada nos 50%") — fire-and-forget para o mesmo
+  // export.log do processo principal (ver src/main/exportLog.ts), para a timeline de ambos os
+  // processos ficar intercalada num só ficheiro persistente (visível mesmo numa build empacotada
+  // sem DevTools ligado).
+  logExport: (line: string): void => ipcRenderer.send('log:export', line),
   fileExists: (filePath: string): Promise<boolean> => ipcRenderer.invoke('fs:fileExists', filePath),
   showItemInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showItemInFolder', filePath),
   setBackgroundThrottling: (enabled: boolean): Promise<void> =>
@@ -77,6 +82,7 @@ const api = {
   writeProjectBackup: (args: { projectId: string; projectName: string; payload: unknown }): Promise<string> =>
     ipcRenderer.invoke('project:writeBackup', args),
   openBackupsFolder: (): Promise<void> => ipcRenderer.invoke('project:openBackupsFolder'),
+  openLogsFolder: (): Promise<void> => ipcRenderer.invoke('logs:openFolder'),
 
   createTeam: (name: string): Promise<Team> => ipcRenderer.invoke('db:createTeam', name),
   listTeams: (): Promise<Team[]> => ipcRenderer.invoke('db:listTeams'),

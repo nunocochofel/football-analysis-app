@@ -2635,6 +2635,7 @@
   <div class="export-queue-head" id="exportQueueHead">
     <span>📦 Exportação</span>
     <div class="export-queue-head-actions">
+      <button class="btn icon" id="btnOpenExportLogs" title="Abre a pasta com o registo detalhado de cada exportação (export.log) — útil para diagnosticar um problema">📄</button>
       <button class="btn" id="btnClearFinishedExports" title="Limpar concluídos">Limpar</button>
       <button class="btn danger" id="btnCancelAllExports" title="Cancelar tudo">Cancelar tudo</button>
       <button class="modal-close" id="btnCloseExportQueue" title="Fechar painel">✕</button>
@@ -3499,6 +3500,11 @@ document.getElementById('btnOpenBackups')?.addEventListener('click', async () =>
   if(!isElectron()) return;
   try{ await window.api.openBackupsFolder(); }
   catch(err){ toast('Não foi possível abrir a pasta de backups.'); }
+});
+document.getElementById('btnOpenExportLogs')?.addEventListener('click', async () => {
+  if(!isElectron()) return;
+  try{ await window.api.openLogsFolder(); }
+  catch(err){ toast('Não foi possível abrir a pasta de logs.'); }
 });
 
 function exportProjectFile(id){
@@ -5558,9 +5564,31 @@ if(window.api && window.api.onTranscodeProgress){
     if(btn && btn.disabled) btn.textContent = 'A converter… '+percent+'%';
   });
 }
+// CORREÇÃO urgente ("exportação fica bloqueada nos 50%"): este callback tinha DOIS bugs reais,
+// confirmados por leitura direta do código, não suposição:
+// 1. onExportProgress(cb) chama cb(jobId, percent) — dois argumentos — mas este handler só
+//    aceitava um parâmetro (chamado "percent"), que por isso recebia o jobId, nunca a
+//    percentagem real. O toast mostrava sempre "A finalizar em MP4… <jobId>%", nunca um número.
+// 2. Mesmo corrigido, isto só alimentava um toast (desaparece sozinho) — nunca actualizava
+//    item.progress, o valor que a PRÓPRIA barra do painel de exportação lê. Resultado: para
+//    qualquer clipe com desenhos (o único caminho que passa por aqui — o caminho direto sem
+//    desenhos nunca chega a mostrar nada além de 0% até terminar), a barra fica visualmente
+//    parada nos 50% (o valor fixado no fim da fase de captura) durante TODO o encode do ffmpeg,
+//    por mais tempo que demore — trabalho real a decorrer, sem qualquer sinal visível disso. É o
+//    sintoma reportado, com ou sem um bloqueio a sério por baixo.
 if(window.api && window.api.onExportProgress){
-  window.api.onExportProgress(percent=>{
+  window.api.onExportProgress((jobId, percent)=>{
     toast('A finalizar em MP4… '+percent+'%');
+    const item = exportQueue.find(i => i.jobId === jobId);
+    if(item && (item.status==='waiting' || item.status==='processing')){
+      // Caminho direto (sem desenhos): progress começou em 0 e nunca foi tocado — o próprio
+      // ffmpeg é aqui os 0-100% inteiros. Caminho com desenhos: a captura já reclamou 0-50%,
+      // o encode do ffmpeg ocupa o resto.
+      const base = item.fastPath ? 0 : 50;
+      const span = item.fastPath ? 100 : 50;
+      item.progress = Math.max(item.progress||0, Math.min(99, base + Math.round(percent*span/100)));
+      renderExportQueuePanel();
+    }
   });
 }
 
@@ -8628,10 +8656,13 @@ function drawExportFrameContent(ectx, exportCanvas, tag, atTime, source, drawSta
       // isto, um save() interno sem o restore() correspondente ficava a acumular-se e corrompia
       // o desenho (transform/estilo) de TODAS as formas seguintes, neste frame e nos próximos
       // (o mesmo ectx é reutilizado em todo o clipe).
+      const jobId = drawStats && drawStats.jobId;
+      exportLog(jobId, `  shape "${s.type}" draw start (t=${atTime.toFixed(3)}s)`);
       ectx.save();
-      try{ drawShapeToCanvas(ectx, exportCanvas, s); }
+      try{ drawShapeToCanvas(ectx, exportCanvas, s); exportLog(jobId, `  shape "${s.type}" draw end (ok)`); }
       catch(err){
         console.error('[export] falha ao desenhar forma, ignorada:', s.type, err);
+        exportLog(jobId, `  shape "${s.type}" draw FAILED: ${err && err.message}`);
         if(drawStats) drawStats.shapeFailures++;
       } finally { ectx.restore(); }
     }
@@ -8655,6 +8686,15 @@ async function drawExportFrame(ectx, exportCanvas, tag, atTime, source, bench, d
 // null (sentinela de "falhou"), para o Promise.all poder sempre terminar; a chamada nunca é
 // cancelada de verdade (não há como abortar canvas.toBlob() a meio), só deixa de se ESPERAR por
 // ela — o pior caso é um frame a mais a demorar em segundo plano, não a exportação inteira presa.
+// PASSO 1 do pedido urgente ("a exportação fica bloqueada nos 50%, para de adivinhar e
+// instrumenta"): log detalhado, visível na consola E persistido num ficheiro (export.log, sob
+// app.getPath('logs') — ver src/main/exportLog.ts) mesmo numa build empacotada sem DevTools
+// ligado. A ÚLTIMA linha antes de bloquear diz exatamente onde parou, sem adivinhar.
+function exportLog(jobId, line){
+  const msg = '[export '+(jobId||'?')+'] '+line;
+  console.log(msg);
+  if(window.api && window.api.logExport) window.api.logExport(msg);
+}
 const FRAME_DRAW_TIMEOUT_MS = 8000;
 function withFrameTimeout(promise, drawStats){
   return new Promise(resolve => {
@@ -8713,7 +8753,7 @@ function computeExportCanvasSize(sourceW, sourceH, resolution){
   const scale = Math.min(1, target[0]/w, target[1]/h);
   return { w: Math.max(2, Math.round(w*scale/2)*2), h: Math.max(2, Math.round(h*scale/2)*2) };
 }
-async function captureClipFrames(el, tag, fps, resolution, onProgress, isCancelled, bench){
+async function captureClipFrames(el, tag, fps, resolution, onProgress, isCancelled, bench, jobId){
   const tStart = bench ? performance.now() : 0;
   const exportCanvas = document.createElement('canvas');
   const canvasSize = computeExportCanvasSize(el.videoWidth, el.videoHeight, resolution);
@@ -8724,14 +8764,23 @@ async function captureClipFrames(el, tag, fps, resolution, onProgress, isCancell
   const frameInterval = 1/fps;
   const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
   // Sempre criado (não só sob bench) — ver o comentário grande em withFrameTimeout/drawStats.
-  const drawStats = {shapeFailures:0, frameTimeouts:0, frameErrors:0};
+  const drawStats = {shapeFailures:0, frameTimeouts:0, frameErrors:0, jobId};
+  const expectedFrames = Math.round(totalSec*fps);
+  let frameIdx = 0;
+  exportLog(jobId, `captureClipFrames start: clip inSec=${tag.inSec} outSec=${tag.outSec} durationSec=${totalSec.toFixed(2)} fps=${fps} expectedFrames=${expectedFrames} shapes=${(tag.shapes||[]).map(s=>s.type).join(',')||'(none)'} zoom=${tag.zoom?('scale='+tag.zoom.scale):'none'} freezes=${(tag.freezes||[]).length}`);
 
   function drawFrame(atTime){
-    return withFrameTimeout(drawExportFrame(ectx, exportCanvas, tag, atTime, el, bench, drawStats), drawStats);
+    const idx = frameIdx++;
+    exportLog(jobId, `frame ${idx+1}/${expectedFrames}: drawing at t=${atTime.toFixed(3)}s`);
+    const p = withFrameTimeout(drawExportFrame(ectx, exportCanvas, tag, atTime, el, bench, drawStats), drawStats);
+    p.then(v => exportLog(jobId, `frame ${idx+1}/${expectedFrames}: ${v ? 'encoded ok ('+v.length+' bytes)' : 'FAILED/TIMED OUT — substituído pelo anterior'}`));
+    return p;
   }
 
   if(typeof el.requestVideoFrameCallback !== 'function'){
+    exportLog(jobId, 'requestVideoFrameCallback not supported — using seek-per-frame fallback path');
     const seekFrames = await captureClipFramesBySeeking(el, tag, fps, drawFrame, onProgress, isCancelled);
+    exportLog(jobId, `captureClipFrames (seek fallback) done: ${seekFrames.length} frames captured`);
     return { frames: fillFailedFrames(seekFrames), drawStats };
   }
 
@@ -8756,9 +8805,19 @@ async function captureClipFrames(el, tag, fps, resolution, onProgress, isCancell
     // the two being strictly serial. Real measurement (scripts/export-bench) showed decode-wait
     // averaging far less per frame than JPEG-encode — serializing them was adding the full encode
     // cost on top of decode-pacing for every single frame.
+    // CORREÇÃO urgente — reproduzido a sério (não suposto): quando outSec cai exatamente na
+    // duração real do vídeo (ex.: o corte vai até ao fim do ficheiro), o log mostrou o ÚLTIMO
+    // frame esperado desenhado e codificado com sucesso, e a seguir NADA — nem mais uma linha.
+    // Causa: requestVideoFrameCallback pode simplesmente não disparar mais uma vez depois do
+    // vídeo chegar ao fim — a condição `metadata.mediaTime>=outSec || el.ended` dentro de
+    // onFrame() nunca chega a ser avaliada de novo porque onFrame() em si nunca é chamado outra
+    // vez, e a promessa fica presa para sempre à espera. Isto só afeta o caminho com desenhos
+    // (só ele usa este loop) — sem desenhos, exportClipDirect() lê o ficheiro fonte diretamente
+    // via ffmpeg, nunca passa por aqui — exatamente porque só "com desenhos" reproduzia.
     await new Promise((resolve, reject) => {
       let nextSampleTime = tag.inSec;
       let freezeIdx = 0;
+      let settled = false;
 
       function captureUpTo(t){
         while(nextSampleTime <= t && nextSampleTime <= tag.outSec + 1e-6){
@@ -8774,6 +8833,31 @@ async function captureClipFrames(el, tag, fps, resolution, onProgress, isCancell
         }
       }
 
+      function finish(reason){
+        if(settled) return;
+        settled = true;
+        exportLog(jobId, `capture loop finishing (${reason}) — capturing any remaining samples up to outSec`);
+        captureUpTo(tag.outSec);
+        clearTimeout(hardTimeoutId);
+        el.removeEventListener('ended', onEndedFallback);
+        el.pause();
+        resolve();
+      }
+      // O sinal NATIVO do <video>, garantido independentemente de o rVFC voltar a disparar ou
+      // não — é o que realmente falta acima. {once:true} evita chamadas duplicadas.
+      function onEndedFallback(){
+        exportLog(jobId, `video 'ended' event fired natively — requestVideoFrameCallback may never fire again after this`);
+        finish("evento 'ended' nativo");
+      }
+      el.addEventListener('ended', onEndedFallback, {once:true});
+      // Rede de segurança adicional, independente da causa: nunca à espera para sempre. Gasto
+      // generoso (a duração real do corte + 20s de folga) — só dispara se AMBOS os sinais acima
+      // falharem por alguma razão ainda não vista.
+      const hardTimeoutId = setTimeout(() => {
+        exportLog(jobId, `HARD TIMEOUT no loop de captura (${totalSec.toFixed(1)}s de corte + 20s de folga) — a forçar o fim com o que já foi capturado`);
+        finish('timeout de segurança');
+      }, totalSec*1000 + 20000);
+
       async function onFrame(now, metadata){
         if(bench){
           const tNow = performance.now();
@@ -8783,15 +8867,16 @@ async function captureClipFrames(el, tag, fps, resolution, onProgress, isCancell
           if(isCancelled && isCancelled()) throw new Error(EXPORT_CANCELLED);
           captureUpTo(metadata.mediaTime);
           if(metadata.mediaTime >= tag.outSec || el.ended){
-            el.pause();
-            resolve();
+            finish(metadata.mediaTime >= tag.outSec ? 'mediaTime alcançou outSec' : 'el.ended verdadeiro');
             return;
           }
-        }catch(err){ el.pause(); reject(err); return; }
+        }catch(err){ el.pause(); clearTimeout(hardTimeoutId); el.removeEventListener('ended', onEndedFallback); reject(err); return; }
+        if(settled) return; // finish() já correu (ex.: via 'ended') enquanto isto estava em curso
         // requestVideoFrameCallback already yields between calls — this extra explicit macrotask
         // yield just guarantees the browser gets a real turn to paint (queue panel progress, window
         // controls, etc.) after every captured frame, on top of that.
         await new Promise(r => setTimeout(r, 0));
+        if(settled) return;
         if(bench) tLastFrameEnd = performance.now();
         el.requestVideoFrameCallback(onFrame);
       }
@@ -8806,7 +8891,9 @@ async function captureClipFrames(el, tag, fps, resolution, onProgress, isCancell
     el.muted = originalMuted;
     el.playbackRate = originalRate;
   }
+  exportLog(jobId, `all ${frames.length} frame promises queued, waiting for Promise.all...`);
   const resolvedFrames = fillFailedFrames(await Promise.all(frames));
+  exportLog(jobId, `captureClipFrames done: ${resolvedFrames.length} frames ready (shapeFailures=${drawStats.shapeFailures} frameTimeouts=${drawStats.frameTimeouts} frameErrors=${drawStats.frameErrors})`);
   onProgress(100);
   if(bench){
     bench.captureTotalMs = performance.now()-tStart;
@@ -9208,6 +9295,7 @@ async function beginExportItem(item){
   if(!tag){ item.status = 'error'; item.error = 'O corte foi removido antes de ser exportado.'; renderExportQueuePanel(); return null; }
   item.status = 'processing';
   item.jobId = uid();
+  exportLog(item.jobId, `beginExportItem START: filename=${item.filename} tagId=${item.tagId} resolution=${item.options.resolution} quality=${item.options.quality}`);
   renderExportQueuePanel();
   // Opt-in wall-clock instrumentation for the export benchmark harness (scripts/export-bench) —
   // window.__EXPORT_BENCH__ is never set in normal use, so this is a no-op branch for everyone
@@ -9250,6 +9338,7 @@ async function beginExportItem(item){
     // cost in a clip export, well ahead of ffmpeg's own encode — this path skips it entirely
     // rather than trying to speed it up, for what's likely the majority of tagged clips (a plain
     // cut with no drawings).
+    exportLog(item.jobId, `beginExportItem: clip has NO drawings/zoom/freezes — taking the fast direct-cut path (exportClipDirect)`);
     return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, true, async () =>
       window.api.exportClipDirect({
         sourceVideoPath: electronVideoSourcePath, inSec: tag.inSec, outSec: tag.outSec,
@@ -9262,10 +9351,11 @@ async function beginExportItem(item){
   try{
     const el = await ensureExportVideoLoaded();
     if(isElectron()){
+      exportLog(item.jobId, `beginExportItem: clip has drawings/zoom/freezes — taking the captureClipFrames path`);
       const captured = await captureClipFrames(el, tag, CLIP_EXPORT_FPS, item.options.resolution, pct => {
         item.progress = Math.round(pct*0.5);
         renderExportQueuePanel();
-      }, () => item.cancelRequested, bench);
+      }, () => item.cancelRequested, bench, item.jobId);
       const frames = captured.frames;
       if(item.cancelRequested) throw new Error(EXPORT_CANCELLED);
       item.progress = 50;
@@ -9284,16 +9374,20 @@ async function beginExportItem(item){
         toast('⚠ ' + item.degradedMessage);
       }
       renderExportQueuePanel();
+      exportLog(item.jobId, `capture done, ${frames.length} frame buffers ready — handing off to main process via IPC (video:exportClipFrames)`);
       // Hand frames to the native ffmpeg pipeline via IPC — item.outputPath ends up a real
       // filesystem path once this resolves.
-      return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, false, async () =>
-        window.api.exportClipFrames({
+      return { tail: runExportEncode(item, bench, tItemStart, tag.outSec-tag.inSec, false, async () => {
+        exportLog(item.jobId, `IPC call to window.api.exportClipFrames starting...`);
+        const outPath = await window.api.exportClipFrames({
           frames, fps: CLIP_EXPORT_FPS, sourceVideoPath: electronVideoSourcePath || null,
           audioInSec: tag.inSec, audioOutSec: tag.outSec,
           folderPath: item.options.destFolder, filename: item.filename,
           resolution: item.options.resolution, quality: item.options.quality, jobId: item.jobId
-        })
-      ) };
+        });
+        exportLog(item.jobId, `IPC call to window.api.exportClipFrames resolved: ${outPath}`);
+        return outPath;
+      }) };
     }
     // Web/PWA: no ffmpeg exists outside Electron at all, so this is the WebCodecs path instead —
     // capture and encode happen together in ONE streaming pass (see captureAndEncodeClipWeb's own
@@ -9345,6 +9439,9 @@ async function beginExportItem(item){
 // on — cancelling still works normally since item.jobId/cancelExportJob() reach the ffmpeg
 // process directly, independent of whether this promise has been awaited by anything yet.
 async function runExportEncode(item, bench, tItemStart, clipDurationSec, fastPath, runIpc){
+  // Usado pelo handler de onExportProgress acima para saber que troço (0-100 ou 50-100) da barra
+  // pertence a este item — antes, a barra ficava sempre parada nos 50% durante o encode inteiro.
+  item.fastPath = fastPath;
   await acquireEncodeSlot();
   // A cancel requested while this item was queued behind the concurrency limit (still 'processing'
   // in the UI, but ffmpeg was never actually spawned for it yet) has no in-flight process for
@@ -9359,6 +9456,7 @@ async function runExportEncode(item, bench, tItemStart, clipDurationSec, fastPat
   try{
     const tIpc0 = bench ? performance.now() : 0;
     const outputPath = await runIpc();
+    exportLog(item.jobId, `runExportEncode: runIpc() resolved successfully, outputPath=${outputPath}`);
     item.status = 'done';
     item.progress = 100;
     item.outputPath = outputPath;
@@ -9392,6 +9490,7 @@ async function runExportEncode(item, bench, tItemStart, clipDurationSec, fastPat
       }
     }
   }catch(err){
+    exportLog(item.jobId, `runExportEncode: runIpc() THREW/rejected: ${err && err.message}`);
     finishExportItemWithError(item, err);
   } finally {
     releaseEncodeSlot();
