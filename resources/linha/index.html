@@ -8586,7 +8586,7 @@ function canvasToJpegBytes(canvas, quality, bench){
 // Pure drawing, no encoding — shared by the Electron JPEG path (drawExportFrame below) and the
 // Web streaming path (captureAndEncodeClipWeb further down), so both draw shapes/zoom identically
 // and neither can drift from the other.
-function drawExportFrameContent(ectx, exportCanvas, tag, atTime, source){
+function drawExportFrameContent(ectx, exportCanvas, tag, atTime, source, drawStats){
   const zoom = tag.zoom;
   // sx/sy/sw/sh: the region of the FULL frame that the zoom crops into (in exportCanvas px,
   // pre-zoom coordinate space) — identity (0,0,full width,full height) when there's no zoom.
@@ -8611,19 +8611,70 @@ function drawExportFrameContent(ectx, exportCanvas, tag, atTime, source){
   const shapeScale = exportCanvas.width/sw; // === zoom.scale quando há zoom, 1 caso contrário
   ectx.save();
   if(zoom && zoom.scale > 1) ectx.setTransform(shapeScale, 0, 0, shapeScale, -sx*shapeScale, -sy*shapeScale);
+  // CORREÇÃO urgente (exportação a ficar parada com desenhos): try/catch por forma — uma forma
+  // com dados inválidos/inesperados podia lançar uma exceção aqui dentro de uma função síncrona
+  // chamada a partir de drawExportFrame() (async); isso transforma-se numa promessa REJEITADA em
+  // vez de uma exceção no próprio ponto de chamada, e essa rejeição só era observada bem mais
+  // tarde no await Promise.all(frames) — nunca chegava a "Erro" de forma clara, e no caminho
+  // ficava sem correr onProgress/o resto do pipeline, lido pelo utilizador como "parado". Agora
+  // uma forma partida é ignorada (registada em drawStats) em vez de arriscar todo o clipe.
   (tag.shapes||[]).forEach(s => {
     const start = s.startSec!=null ? s.startSec : tag.inSec;
     const end = s.endSec!=null ? s.endSec : tag.outSec;
-    if(atTime>=start && atTime<=end) drawShapeToCanvas(ectx, exportCanvas, s);
+    if(atTime>=start && atTime<=end){
+      // save/restore PRÓPRIOS desta forma (para além do que renderShape já faz por dentro): se
+      // renderShape lançar exceção a meio (depois do seu próprio ctx.save(), antes do seu
+      // ctx.restore()), este restore aqui força a reposição do estado de qualquer forma — sem
+      // isto, um save() interno sem o restore() correspondente ficava a acumular-se e corrompia
+      // o desenho (transform/estilo) de TODAS as formas seguintes, neste frame e nos próximos
+      // (o mesmo ectx é reutilizado em todo o clipe).
+      ectx.save();
+      try{ drawShapeToCanvas(ectx, exportCanvas, s); }
+      catch(err){
+        console.error('[export] falha ao desenhar forma, ignorada:', s.type, err);
+        if(drawStats) drawStats.shapeFailures++;
+      } finally { ectx.restore(); }
+    }
   });
   ectx.restore();
 }
 
-async function drawExportFrame(ectx, exportCanvas, tag, atTime, source, bench){
+async function drawExportFrame(ectx, exportCanvas, tag, atTime, source, bench, drawStats){
   const tDraw0 = bench ? performance.now() : 0;
-  drawExportFrameContent(ectx, exportCanvas, tag, atTime, source);
+  drawExportFrameContent(ectx, exportCanvas, tag, atTime, source, drawStats);
   if(bench) bench.drawMs = (bench.drawMs||0) + (performance.now()-tDraw0);
   return canvasToJpegBytes(exportCanvas, 0.88, bench);
+}
+// CORREÇÃO urgente: nunca deixar um frame preso para sempre. drawFrame()/canvasToJpegBytes() são
+// promessas empurradas para frames[] SEM await individual (ver o comentário grande em
+// captureClipFrames sobre o pipelining) — se uma delas nunca resolver nem rejeitar (ex.: um bug
+// raro do Chromium em que canvas.toBlob() não chama o callback), o await Promise.all(frames) mais
+// tarde fica parado para sempre, e como isso acontece DEPOIS de onProgress já ter chegado a ~99%
+// (tudo o que resta é a resolução final), o utilizador vê a barra presa a meio — o próprio
+// sintoma reportado. withFrameTimeout nunca rejeita: ao fim de FRAME_DRAW_TIMEOUT_MS resolve com
+// null (sentinela de "falhou"), para o Promise.all poder sempre terminar; a chamada nunca é
+// cancelada de verdade (não há como abortar canvas.toBlob() a meio), só deixa de se ESPERAR por
+// ela — o pior caso é um frame a mais a demorar em segundo plano, não a exportação inteira presa.
+const FRAME_DRAW_TIMEOUT_MS = 8000;
+function withFrameTimeout(promise, drawStats){
+  return new Promise(resolve => {
+    let settled = false;
+    const timer = setTimeout(()=>{
+      if(settled) return; settled = true;
+      console.error('[export] frame excedeu '+FRAME_DRAW_TIMEOUT_MS+'ms a desenhar/codificar — ignorado.');
+      if(drawStats) drawStats.frameTimeouts++;
+      resolve(null);
+    }, FRAME_DRAW_TIMEOUT_MS);
+    promise.then(
+      v => { if(settled) return; settled = true; clearTimeout(timer); resolve(v); },
+      err => {
+        if(settled) return; settled = true; clearTimeout(timer);
+        console.error('[export] falha a desenhar/codificar frame, ignorado:', err);
+        if(drawStats) drawStats.frameErrors++;
+        resolve(null);
+      }
+    );
+  });
 }
 
 const EXPORT_CANCELLED = 'EXPORT_CANCELLED'; // must match ffmpeg.ts's EXPORT_CANCELLED_MESSAGE
@@ -8672,13 +8723,16 @@ async function captureClipFrames(el, tag, fps, resolution, onProgress, isCancell
   const freezes = (tag.freezes||[]).slice().sort((a,b)=>a.atSec-b.atSec);
   const frameInterval = 1/fps;
   const totalSec = Math.max(0.05, tag.outSec - tag.inSec);
+  // Sempre criado (não só sob bench) — ver o comentário grande em withFrameTimeout/drawStats.
+  const drawStats = {shapeFailures:0, frameTimeouts:0, frameErrors:0};
 
   function drawFrame(atTime){
-    return drawExportFrame(ectx, exportCanvas, tag, atTime, el, bench);
+    return withFrameTimeout(drawExportFrame(ectx, exportCanvas, tag, atTime, el, bench, drawStats), drawStats);
   }
 
   if(typeof el.requestVideoFrameCallback !== 'function'){
-    return captureClipFramesBySeeking(el, tag, fps, drawFrame, onProgress, isCancelled);
+    const seekFrames = await captureClipFramesBySeeking(el, tag, fps, drawFrame, onProgress, isCancelled);
+    return { frames: fillFailedFrames(seekFrames), drawStats };
   }
 
   const tSeek0 = bench ? performance.now() : 0;
@@ -8752,13 +8806,21 @@ async function captureClipFrames(el, tag, fps, resolution, onProgress, isCancell
     el.muted = originalMuted;
     el.playbackRate = originalRate;
   }
-  const resolvedFrames = await Promise.all(frames);
+  const resolvedFrames = fillFailedFrames(await Promise.all(frames));
   onProgress(100);
   if(bench){
     bench.captureTotalMs = performance.now()-tStart;
     bench.frameCount = resolvedFrames.length;
   }
-  return resolvedFrames;
+  return { frames: resolvedFrames, drawStats };
+}
+// Um frame falhado/expirado (ver withFrameTimeout) chega aqui como null — substitui-se pelo
+// último frame bem-sucedido (mantém a contagem/timing certos para o ffmpeg) em vez de o deixar
+// como null (que partiria a codificação) ou encolher a lista (desincronizava vídeo/áudio). Só um
+// início de clipe inteiramente falhado (nenhum frame bom ainda) fica sem alternativa — filtrado.
+function fillFailedFrames(rawFrames){
+  let lastGood = null;
+  return rawFrames.map(f => { if(f){ lastGood = f; return f; } return lastGood; }).filter(f => f != null);
 }
 
 // Fallback path (no requestVideoFrameCallback support): seek-per-frame.
@@ -9200,12 +9262,27 @@ async function beginExportItem(item){
   try{
     const el = await ensureExportVideoLoaded();
     if(isElectron()){
-      const frames = await captureClipFrames(el, tag, CLIP_EXPORT_FPS, item.options.resolution, pct => {
+      const captured = await captureClipFrames(el, tag, CLIP_EXPORT_FPS, item.options.resolution, pct => {
         item.progress = Math.round(pct*0.5);
         renderExportQueuePanel();
       }, () => item.cancelRequested, bench);
+      const frames = captured.frames;
       if(item.cancelRequested) throw new Error(EXPORT_CANCELLED);
       item.progress = 50;
+      // CORREÇÃO urgente — protege contra a exportação nunca terminar quando um desenho ou um
+      // frame falha (ver withFrameTimeout/drawStats): em vez de deixar a promessa presa, o
+      // clipe continua sem essa forma/frame e avisa no fim, reaproveitando o mesmo aviso já usado
+      // para o caminho web com frames repetidos (item.degraded/degradedMessage).
+      const ds = captured.drawStats;
+      if(ds && (ds.shapeFailures || ds.frameTimeouts || ds.frameErrors)){
+        item.degraded = true;
+        const parts = [];
+        if(ds.shapeFailures) parts.push(ds.shapeFailures+' desenho(s) com erro, ignorado(s)');
+        if(ds.frameTimeouts || ds.frameErrors) parts.push((ds.frameTimeouts+ds.frameErrors)+' frame(s) que não desenharam/codificaram a tempo, substituído(s) pelo anterior');
+        item.degradedMessage = 'Exportado com avisos — ' + parts.join('; ') + '.';
+        console.error('[export] clipe exportado com avisos:', item.degradedMessage);
+        toast('⚠ ' + item.degradedMessage);
+      }
       renderExportQueuePanel();
       // Hand frames to the native ffmpeg pipeline via IPC — item.outputPath ends up a real
       // filesystem path once this resolves.

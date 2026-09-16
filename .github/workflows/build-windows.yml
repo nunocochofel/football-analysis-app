@@ -41,27 +41,28 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.88 specifically — update this block for whatever the next release's own
+          # v0.8.89 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Correção urgente: popups escondidos atrás do vídeo, e posse de bola volta a estar
-            sempre visível**
+            **Correção urgente: exportação nunca mais fica presa a meio quando o clipe tem
+            desenhos**
 
-            - **"Desenhar" e "LIVE" apareciam por trás do vídeo, inutilizáveis.** Mesma causa do
-            "+ Objeto" já corrigido no quadro tático: usavam um popup `position:absolute`, que fica
-            sujeito ao `overflow:hidden` de qualquer antepassado — neste caso o mecanismo "⋯ Mais"
-            da barra do vídeo, introduzido na correção do layout. Convertidos para o mesmo popup
-            `position:fixed` (com posição calculada em JS) já usado no resto da app: nunca mais
-            fica escondido, nunca sai da janela, fecha ao clicar fora ou com Esc.
-            - **Posse de bola volta a ter os três botões sempre visíveis na barra** (Time A / Time
-            B / parada) — tinham passado a popup na correção do layout anterior, mas a posse
-            muda-se em tempo real a olhar para o jogo, e abrir um popup para isso tornava-se lento.
-            O botão ativo continua preenchido com a cor da equipa, para ver de relance.
+            Testados os 7 tipos de desenho (linha, seta, zona, holofote, vinheta, régua, texto),
+            vários ao mesmo tempo e zoom+desenhos juntos, sempre em exportações reais (não só a
+            barra de progresso) — nenhum ficou preso nestes testes. Mesmo assim, adicionadas três
+            proteções para o caso de acontecer com filmagem real ou uma combinação não testada:
 
-            Regra para o futuro: só o que se usa ocasionalmente vai a popup — o que se usa em tempo
-            real durante o jogo (posse, categorias, controlos de reprodução) fica sempre visível.
+            - **Cada forma desenha-se dentro do seu próprio try/catch** — uma forma com dados
+            inválidos é ignorada (registada) em vez de arriscar todo o clipe. Corrigido também um
+            desequilíbrio de save/restore do canvas que uma forma partida a meio podia deixar,
+            capaz de corromper o desenho de todas as formas seguintes no mesmo clipe.
+            - **Cada frame tem um limite de 8 segundos** para desenhar e codificar — se nunca
+            resolver (ex.: um bug raro do próprio Chromium em que `canvas.toBlob()` não chama o
+            callback), esse frame é substituído pelo anterior e a exportação continua, em vez de
+            ficar presa para sempre à espera dele.
+            - **Aviso no fim** se alguma forma ou frame tiver falhado — "Exportado com avisos" — em
+            vez de silêncio ou uma exportação que nunca termina.
 
-            Verificado com testes automatizados reais (Electron + Playwright): os dois popups
-            confirmados visualmente por cima do vídeo (não só presentes no HTML) e interativos,
-            fecho por Esc e por clique fora, e a posse a ativar num único clique sem popup.
+            Verificado com testes automatizados reais (Electron + Playwright) exportando os 7
+            tipos de desenho, vários juntos, e zoom+desenhos — todos completos sem travar.
