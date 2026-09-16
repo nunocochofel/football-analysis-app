@@ -41,27 +41,30 @@ jobs:
           # platform — build-mac.yml's own release step never overwrites it (gh release create
           # fails once this one already exists, so it falls through to gh release upload
           # --clobber, which only replaces assets, never the body). Static text describing
-          # v0.8.85 specifically — update this block for whatever the next release's own
+          # v0.8.86 specifically — update this block for whatever the next release's own
           # user-facing change actually is, same as every release before this needed its own
           # description written by hand.
           body: |
-            **Nova: nota livre por marcação, por baixo do vídeo**
+            **Correção: vídeo pequeno com barras pretas — o vídeo passa a ser o elemento principal**
 
-            Cada marcação/clipe (já é a mesma entidade neste modelo — não existiam separados) pode
-            agora ter uma nota de texto livre. Caixa por baixo do vídeo, sempre visível enquanto um
-            clipe está em edição ("🖊 Editar desenhos") — sem precisar de abrir nada. Guarda
-            sozinha, sem botão: enquanto escreve (curto debounce) e imediatamente ao sair do campo.
-            Ao mudar de clipe a caixa troca sempre para a nota desse clipe, nunca fica com a
-            anterior. Um pontinho 📝 assinala quais têm nota, na lista de clipes e na timeline do
-            vídeo.
+            Diagnóstico confirmado por medição real: `object-fit:contain` nunca corta a imagem,
+            preserva sempre a proporção — quando a caixa à volta do vídeo tem uma proporção
+            diferente da do vídeo, o espaço que sobra é inevitavelmente pintado a preto. O problema
+            não era esse comportamento em si, era a caixa estar desproporcionalmente larga por
+            várias coisas a roubar-lhe altura sem necessidade: a barra de cima tinha uma 2ª fila
+            (Time A/B), e a nota do clipe (v0.8.85) ficava entre o vídeo e os controlos.
 
-            - Atalhos de teclado (categorias, espaço, setas) já ficam automaticamente suspensos ao
-            escrever aqui — é a mesma regra que já protegia qualquer campo de texto da app,
-            confirmado a escrever uma frase longa com espaços sem disparar play/pause nem criar
-            marcações por acidente.
-            - Aditivo aos dados: um clipe antigo sem nota abre normalmente com a caixa vazia.
-            - Funciona em PWA/iPad: confirmado que o teclado do ecrã não tapa a caixa nem empurra o
-            vídeo para fora da vista.
+            - Barra de cima já não quebra nunca para uma 2ª fila: "Posse" passa a popup (como já
+            acontecia no quadro tático), e os marcadores rápidos por equipa colapsam para um popup
+            "⋯ Mais" só quando a janela é mesmo estreita a mais para caber tudo.
+            - A nota do clipe mudou-se para depois da linha temporal, no fim da coluna, e passa a
+            **recolhível — fechada por omissão**: só ocupa espaço quando se opta por abrir. Um
+            pontinho 📝 no cabeçalho mostra se o clipe atual já tem nota escrita, mesmo fechada.
+            - Resultado medido (Electron real, vídeo 1280×720): o vídeo cresce de ~489px para
+            ~560px de altura na mesma janela — as barras laterais que sobravam ficam residuais.
+            - Atalhos continuam suspensos ao escrever na nota (sem mudanças aí — é a mesma regra de
+            sempre). Nada disto altera dados guardados.
 
-            Verificado com testes automatizados reais (Electron + Playwright, 22 cenários, mais 9
-            adicionais num iPad simulado para o comportamento com teclado no ecrã).
+            Verificado com testes automatizados reais (Electron + Playwright, 23 cenários, mais 16
+            num iPad simulado em retrato e paisagem, com o encolhimento de viewport que o teclado do
+            ecrã provoca).

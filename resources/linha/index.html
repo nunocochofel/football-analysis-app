@@ -322,6 +322,7 @@
   .zoom-control .mono{color:var(--chalk); width:36px;}
 
   .possession-control{display:flex; align-items:center; gap:6px;}
+  #possessionPopupTrigger.active{background:var(--pitch); border-color:var(--pitch); color:#08110A; font-weight:600;}
   .poss-btn{font-size:12px; padding:5px 10px; transition:background .12s ease, border-color .12s ease;}
   /* Pedido: o estado ativo tem de ser inequívoco DE RELANCE, sem ler texto — antes disto só o
      texto ficava a negrito/escuro sobre o MESMO fundo do botão inativo (praticamente impercetível
@@ -344,7 +345,7 @@
   .video-zoom-layer{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; transform-origin:center center;}
   .stage-toolbar{
     display:flex; align-items:center; gap:5px; padding:5px 8px;
-    background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap;
+    background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:nowrap; overflow-x:hidden;
   }
   .tool-btn{
     position:relative; background:transparent; border:1px solid transparent; color:var(--muted);
@@ -652,16 +653,25 @@
   .stopwatch-view .time{font-family:'IBM Plex Mono'; font-size:64px; font-weight:500;}
   .stopwatch-view .hint{color:var(--muted); font-size:13px;}
 
+  /* Recolhível por omissão (ver o comentário no HTML) — só o cabeçalho ocupa altura enquanto
+     fechada, para não roubar espaço ao vídeo quando não se está a escrever nada. */
   .clip-note-panel{
-    display:flex; align-items:flex-start; gap:8px; padding:6px 12px;
     background:var(--panel); border-top:1px solid var(--line); flex-shrink:0;
   }
-  .clip-note-panel textarea{
+  .clip-note-toggle{
+    display:flex; align-items:center; gap:6px; width:100%; padding:6px 12px; background:transparent;
+    border:none; color:var(--chalk); font-size:11.5px; text-align:left; cursor:pointer;
+  }
+  .clip-note-toggle:hover{background:var(--panel-alt);}
+  .clip-note-toggle .chev{color:var(--muted); font-size:10px; width:8px;}
+  .clip-note-toggle .clip-note-has-dot{margin-left:2px;}
+  .clip-note-body{display:flex; align-items:flex-start; gap:8px; padding:0 12px 8px;}
+  .clip-note-body textarea{
     flex:1; resize:vertical; min-height:34px; max-height:140px; font-size:12.5px; line-height:1.4;
     font-family:inherit; background:var(--panel-alt); border:1px solid var(--line); border-radius:var(--radius-sm);
     color:var(--chalk); padding:6px 8px;
   }
-  .clip-note-panel textarea:disabled{opacity:.5; cursor:not-allowed;}
+  .clip-note-body textarea:disabled{opacity:.5; cursor:not-allowed;}
   .clip-note-status{font-size:10.5px; color:var(--muted); white-space:nowrap; margin-top:9px; min-width:52px;}
   .clip-note-dot{font-size:11px; margin-left:2px;}
   .flag-note-dot{
@@ -1843,12 +1853,23 @@
             <span class="mono" id="zoomReadout">1.0×</span>
           </label>
           <div class="toolbar-sep"></div>
-          <div class="possession-control" id="possessionControl" title="Regista quem tem a posse de bola, para calcular a percentagem de posse nas Estatísticas">
-            <span class="mono" style="color:var(--muted); font-size:11px;">Posse:</span>
-            <button class="btn poss-btn" id="btnPossA" data-team="A">Time A</button>
-            <button class="btn poss-btn" id="btnPossB" data-team="B">Time B</button>
-            <button class="btn icon" id="btnPossStop" title="Parar contagem de posse — bola fora/parada">⏹</button>
-            <span class="mono" id="possReadout" style="color:var(--muted); font-size:11px;"></span>
+          <!-- Convertido a popup (mesmo padrão .popup-menu do quadro tático, lote C) — "Time A"/
+               "Time B" eram os botões que empurravam esta barra para uma 2ª linha em janelas mais
+               estreitas, roubando altura ao vídeo. O gatilho mostra sempre o estado atual (equipa
+               com posse, ou "Posse" quando parada) para não perder a leitura ao relance que a barra
+               tinha antes — ver o fim de renderPossessionControl(). Os botões dentro do popup não o
+               fecham ao clicar (ver o comentário junto ao listener do trigger): trocar de posse
+               repetidamente durante o jogo é o uso normal deste controlo. -->
+          <div class="popup-menu-wrap" id="possessionFlyoutWrap">
+            <button class="btn popup-menu-trigger-btn" id="possessionPopupTrigger" title="Regista quem tem a posse de bola, para calcular a percentagem de posse nas Estatísticas">⚽ Posse</button>
+            <div class="popup-menu" id="possessionPopup" style="min-width:210px;">
+              <div class="possession-control" id="possessionControl">
+                <button class="btn poss-btn" id="btnPossA" data-team="A">Time A</button>
+                <button class="btn poss-btn" id="btnPossB" data-team="B">Time B</button>
+                <button class="btn icon" id="btnPossStop" title="Parar contagem de posse — bola fora/parada">⏹</button>
+              </div>
+              <div class="mono" id="possReadout" style="color:var(--muted); font-size:11px; text-align:center; margin-top:6px;"></div>
+            </div>
           </div>
           <div class="toolbar-sep"></div>
           <div class="possession-control" id="quickTagA" title="Marca estes eventos para esta equipa com um clique — usa a categoria correspondente, criando-a se ainda não existir">
@@ -1864,6 +1885,14 @@
             <button class="btn icon" data-qt="passerr" title="Passe errado">❌</button>
             <button class="btn icon" data-qt="shot" title="Remate">🎯</button>
             <button class="btn icon" data-qt="shottarget" title="Remate à baliza">🥅</button>
+          </div>
+          <!-- Correção de layout: #videoToolbar nunca quebra para uma 2ª fila (deixou de ter
+               flex-wrap:wrap) — quando não cabe, quickTagA/quickTagB (os marcadores rápidos por
+               equipa, os menos essenciais desta barra) mudam-se para este popup "⋯ Mais", mesmo
+               mecanismo/DOM-move já usado no quadro tático (ver layoutOverflowToolbar()). -->
+          <div class="popup-menu-wrap" id="videoOverflowWrap" style="display:none;">
+            <button class="btn popup-menu-trigger-btn" id="videoOverflowTrigger" title="Mais opções">⋯ Mais</button>
+            <div class="popup-menu" id="videoOverflowPopup" style="flex-direction:column; min-width:220px;"></div>
           </div>
           <div class="toolbar-sep"></div>
           <!-- Mobile only: everything above this point except the marked mobile-toolbar-primary
@@ -1940,11 +1969,6 @@
           </div>
         </div>
 
-        <div class="clip-note-panel" id="clipNotePanel">
-          <textarea id="clipNoteInput" rows="2" disabled placeholder='Sem clipe em edição — usa "🖊 Editar desenhos" num clipe para escrever uma nota.'></textarea>
-          <span class="clip-note-status" id="clipNoteStatus"></span>
-        </div>
-
         <div class="playback-bar" id="playbackBar">
           <button class="btn icon" id="btnSkipBack30" title="Recuar 30s">«30</button>
           <button class="btn icon" id="btnSkipBack10" title="Recuar 10s">«10</button>
@@ -1981,6 +2005,19 @@
             <div class="shape-tl-head">🎨 Desenhos deste clip — arrasta para escolher quando aparecem<span class="shape-tl-drag-label" id="shapeTlDragLabel"></span></div>
             <div class="shape-tl-lanes" id="shapeTimelineRows"></div>
             <div class="shape-tl-ruler" id="shapeTimelineRuler"></div>
+          </div>
+        </div>
+
+        <!-- Movida para depois da timeline (era entre o vídeo e os controlos de reprodução —
+             roubava altura ao vídeo, que é o elemento principal deste ecrã). Recolhível e fechada
+             por omissão: só ocupa espaço quando o utilizador decide abri-la. -->
+        <div class="clip-note-panel" id="clipNotePanel">
+          <button class="clip-note-toggle" id="clipNoteToggle" type="button" aria-expanded="false">
+            <span class="chev" id="clipNoteChev">▸</span> 📝 Nota do clipe<span class="clip-note-has-dot" id="clipNoteHasDot"></span>
+          </button>
+          <div class="clip-note-body" id="clipNoteBody" style="display:none;">
+            <textarea id="clipNoteInput" rows="3" disabled placeholder='Sem clipe em edição — usa "🖊 Editar desenhos" num clipe para escrever uma nota.'></textarea>
+            <span class="clip-note-status" id="clipNoteStatus"></span>
           </div>
         </div>
       </div>
@@ -3533,6 +3570,13 @@ async function openProject(id){
   sizeDrawCanvas();
   tryRestoreVideo();
   backupActiveProject();
+  // A chamada feita no arranque do script corre demasiado cedo (projeto ainda nem estava aberto,
+  // fontes por carregar) — sem outro evento a repô-la em causa depois (ao contrário do quadro
+  // tático, que tem vários pontos que já a chamam de novo por outros motivos), essa medição inicial
+  // ficava presa: nunca detetava que quickTagA/B não cabiam, e ficavam cortados em silêncio pelo
+  // overflow-x:hidden em vez de irem para o popup "⋯ Mais". Aqui já há um projeto real e layout
+  // estável — repetir garante uma medição correta pelo menos uma vez por sessão de projeto aberto.
+  requestAnimationFrame(layoutVideoToolbar);
 }
 
 /* ===================================================================
@@ -4618,12 +4662,14 @@ let clipNoteStatusTimer = null;
 function renderClipNotePanel(){
   const ta = document.getElementById('clipNoteInput');
   const status = document.getElementById('clipNoteStatus');
+  const hasDot = document.getElementById('clipNoteHasDot');
   const clip = selectedClipId ? state.tags.find(t => t.id === selectedClipId) : null;
   if(!clip){
     ta.disabled = true;
     ta.value = '';
     delete ta.dataset.clipId;
     status.textContent = '';
+    hasDot.textContent = '';
     return;
   }
   ta.disabled = false;
@@ -4633,7 +4679,21 @@ function renderClipNotePanel(){
     ta.value = clip.note || '';
     ta.dataset.clipId = clip.id;
   }
+  // Indicador no cabeçalho (recolhido por omissão) de que HÁ nota — sem isto, uma nota escrita
+  // antes ficava invisível atrás do painel fechado até se abrir "às cegas".
+  hasDot.textContent = (ta.value && ta.value.trim()) ? '📝' : '';
 }
+function toggleClipNotePanel(forceOpen){
+  const body = document.getElementById('clipNoteBody');
+  const chev = document.getElementById('clipNoteChev');
+  const toggle = document.getElementById('clipNoteToggle');
+  const isOpen = body.style.display !== 'none';
+  const open = forceOpen != null ? forceOpen : !isOpen;
+  body.style.display = open ? 'flex' : 'none';
+  chev.textContent = open ? '▾' : '▸';
+  toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+document.getElementById('clipNoteToggle').addEventListener('click', () => toggleClipNotePanel());
 function saveClipNoteNow(){
   const ta = document.getElementById('clipNoteInput');
   const clip = ta.dataset.clipId ? state.tags.find(t => t.id === ta.dataset.clipId) : null;
@@ -4643,6 +4703,7 @@ function saveClipNoteNow(){
   saveState();
   renderClipTable();
   renderTouchlineFlags();
+  document.getElementById('clipNoteHasDot').textContent = (ta.value && ta.value.trim()) ? '📝' : '';
   const status = document.getElementById('clipNoteStatus');
   status.textContent = 'Guardado';
   clearTimeout(clipNoteStatusTimer);
@@ -5684,6 +5745,13 @@ function renderPossessionControl(){
   const sum = totals.A + totals.B;
   const readout = document.getElementById('possReadout');
   if(readout) readout.textContent = sum>0 ? Math.round(totals.A/sum*100)+'% / '+Math.round(totals.B/sum*100)+'%' : '';
+  // O gatilho do popup precisa de mostrar o estado atual sozinho — é a única parte disto que
+  // continua visível na barra depois da conversão a popup (lote de correção do layout do vídeo).
+  const trigger = document.getElementById('possessionPopupTrigger');
+  if(trigger){
+    trigger.classList.toggle('active', !!open);
+    trigger.textContent = open ? '⚽ '+state.roster[open.team].name : '⚽ Posse';
+  }
 }
 // Destaque momentâneo (ver @keyframes possFlash) — só chamado a partir de uma mudança de estado
 // REAL (clique num botão, tecla, ou o ciclo abaixo), nunca a partir do timeupdate que já corre
@@ -5937,6 +6005,9 @@ function setupColResizer(resizerEl, side){
     resizerEl.classList.remove('dragging');
     videoBody.classList.remove('resizing');
     requestAnimationFrame(sizeDrawCanvas);
+    // A largura de .video-stage (e por isso do #videoToolbar) muda com o arrasto — recalcula o
+    // que cabe numa só fila, tal como um resize da janela já fazia.
+    layoutVideoToolbar();
   });
 }
 setupColResizer(document.getElementById('colResizerLeft'), 'left');
@@ -10026,12 +10097,12 @@ document.addEventListener('keydown', e=>{
 // simples e sem casos especiais de ordem.
 // Desenhar/+Objeto/+Jogador/Exportar/Campo/Mover/Borracha/undo-redo-etc nunca colapsam — só o que
 // tipicamente se usa uma vez por sessão ou raramente.
-const TACTIC_TOOLBAR_COLLAPSE_ORDER = ['labelModeFlyoutWrap', 'formationsFlyoutWrap', 'tacticImageLabelWrap', 'playerFlyoutWrap', 'objectFlyoutWrap'];
-let tacticToolbarOverflowAnchors = {}; // id -> {parent, nextSibling}, para devolver ao sítio exato
-function layoutTacticToolbar(){
-  const toolbar = document.getElementById('tacticToolbar');
-  const overflowWrap = document.getElementById('tacticOverflowWrap');
-  const overflowPopup = document.getElementById('tacticOverflowPopup');
+// Generalizado (correção do layout do vídeo) a partir do mecanismo já existente do quadro
+// tático — mesma lógica de colapsar item a item (do menos para o mais prioritário) até caber
+// numa só fila, movendo o NÓ DOM real (não uma cópia) para dentro do popup "⋯ Mais" e devolvendo-o
+// ao sítio exato quando volta a haver espaço. `anchors` é o objeto id->{parent,nextSibling} de
+// CADA barra — nunca partilhado entre toolbars diferentes.
+function layoutOverflowToolbar(toolbar, overflowWrap, overflowPopup, collapseOrder, anchors){
   if(!toolbar || !overflowWrap) return;
   // Nunca corre em mobile-touch-ui — esse tem o seu próprio mecanismo (Mais ferramentas, wrap +
   // display:none), completamente à parte, com uma filosofia diferente (esconder tudo o que não é
@@ -10040,23 +10111,36 @@ function layoutTacticToolbar(){
   // 1. Devolve tudo ao sítio de origem — em ordem INVERSA à de colapsar (ver comentário longo em
   // TACTIC_TOOLBAR_COLLAPSE_ORDER): o nextSibling gravado de um item colapsado mais cedo pode ser
   // um item colapsado mais tarde, que só volta a existir na barra depois de SER ele próprio devolvido.
-  for(let i=TACTIC_TOOLBAR_COLLAPSE_ORDER.length-1; i>=0; i--){
-    const id = TACTIC_TOOLBAR_COLLAPSE_ORDER[i];
-    const anchor = tacticToolbarOverflowAnchors[id];
+  for(let i=collapseOrder.length-1; i>=0; i--){
+    const id = collapseOrder[i];
+    const anchor = anchors[id];
     if(!anchor) continue;
     const el = document.getElementById(id);
     if(el) anchor.parent.insertBefore(el, anchor.nextSibling);
-    delete tacticToolbarOverflowAnchors[id];
+    delete anchors[id];
   }
-  // 2. Esconde do MENOS para o MAIS prioritário até caber numa só fila.
-  for(const id of TACTIC_TOOLBAR_COLLAPSE_ORDER){
+  // 2. Esconde do MENOS para o MAIS prioritário até caber numa só fila. O próprio gatilho "⋯ Mais"
+  // começa escondido (display:none no HTML) quando nada está colapsado — por isso é mostrado JÁ
+  // AQUI, antes de medir, não só no fim: a barra tem de caber COM o gatilho visível, senão o
+  // colapso pode parar "a caber" sem o gatilho e voltar a transbordar assim que este aparece
+  // (encontrado a sério: sobravam ~48px depois de colapsar só o suficiente para caber sem ele).
+  overflowWrap.style.display = '';
+  for(const id of collapseOrder){
     if(toolbar.scrollWidth <= toolbar.clientWidth + 1) break;
     const el = document.getElementById(id);
     if(!el) continue;
-    tacticToolbarOverflowAnchors[id] = {parent: el.parentNode, nextSibling: el.nextSibling};
+    anchors[id] = {parent: el.parentNode, nextSibling: el.nextSibling};
     overflowPopup.appendChild(el);
   }
-  overflowWrap.style.display = Object.keys(tacticToolbarOverflowAnchors).length ? '' : 'none';
+  if(!Object.keys(anchors).length) overflowWrap.style.display = 'none';
+}
+const TACTIC_TOOLBAR_COLLAPSE_ORDER = ['labelModeFlyoutWrap', 'formationsFlyoutWrap', 'tacticImageLabelWrap', 'playerFlyoutWrap', 'objectFlyoutWrap'];
+let tacticToolbarOverflowAnchors = {}; // id -> {parent, nextSibling}, para devolver ao sítio exato
+function layoutTacticToolbar(){
+  layoutOverflowToolbar(
+    document.getElementById('tacticToolbar'), document.getElementById('tacticOverflowWrap'),
+    document.getElementById('tacticOverflowPopup'), TACTIC_TOOLBAR_COLLAPSE_ORDER, tacticToolbarOverflowAnchors
+  );
 }
 document.getElementById('tacticOverflowTrigger').addEventListener('click', e=>{
   e.stopPropagation();
@@ -10066,12 +10150,31 @@ document.getElementById('tacticOverflowTrigger').addEventListener('click', e=>{
 // +Objeto, +Jogador escolhidos de lá dentro já chamam closePopupMenu() nos seus próprios handlers —
 // isto só cobre o botão "+ Imagem", que não tinha nenhum antes por nunca ter precisado).
 document.getElementById('tacticImageLabelWrap').addEventListener('click', ()=>closePopupMenu());
+
+// Correção de layout do vídeo — #videoToolbar deixou de ter flex-wrap:wrap (era o que empurrava
+// "Time B"/os marcadores rápidos para uma 2ª fila, roubando altura ao vídeo, que é o elemento
+// principal deste ecrã). quickTagA/quickTagB são os únicos a colapsar — "Carregar vídeo", LIVE,
+// Desenhar, zoom e Posse ficam sempre visíveis, por pedido explícito.
+const VIDEO_TOOLBAR_COLLAPSE_ORDER = ['quickTagA', 'quickTagB'];
+let videoToolbarOverflowAnchors = {};
+function layoutVideoToolbar(){
+  layoutOverflowToolbar(
+    document.getElementById('videoToolbar'), document.getElementById('videoOverflowWrap'),
+    document.getElementById('videoOverflowPopup'), VIDEO_TOOLBAR_COLLAPSE_ORDER, videoToolbarOverflowAnchors
+  );
+}
+document.getElementById('videoOverflowTrigger').addEventListener('click', e=>{
+  e.stopPropagation();
+  togglePopupMenu(document.getElementById('videoOverflowPopup'), e.currentTarget);
+});
+
 let tacticToolbarResizeTimer = null;
 window.addEventListener('resize', ()=>{
   clearTimeout(tacticToolbarResizeTimer);
-  tacticToolbarResizeTimer = setTimeout(layoutTacticToolbar, 80);
+  tacticToolbarResizeTimer = setTimeout(()=>{ layoutTacticToolbar(); layoutVideoToolbar(); }, 80);
 });
 layoutTacticToolbar(); // no-op inofensivo se a aba tática não for a ativa no arranque (mede 0x0)
+layoutVideoToolbar(); // #tab-video já é a aba ativa no arranque, por isso mede a largura real já aqui
 
 function addObject(kind){
   pushTacticHistory();
@@ -12213,6 +12316,13 @@ document.querySelectorAll('#exportPopup [data-export-image]').forEach(b=>{
 document.getElementById('exportPopupTrigger').addEventListener('click', e=>{
   e.stopPropagation();
   togglePopupMenu(document.getElementById('exportPopup'), e.currentTarget);
+});
+// Sem closePopupMenu() nos botões lá dentro (ao contrário do #exportPopup) — trocar de posse
+// repetidamente durante o jogo é o uso normal deste controlo, fechar a cada clique obrigava a
+// reabrir o popup constantemente.
+document.getElementById('possessionPopupTrigger').addEventListener('click', e=>{
+  e.stopPropagation();
+  togglePopupMenu(document.getElementById('possessionPopup'), e.currentTarget);
 });
 
 /* ===================================================================
