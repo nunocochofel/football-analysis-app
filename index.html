@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#10141A">
+<title>LINHA mudou de endereço</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="icon" href="./icons/icon-192.png">
+<!--
+  Página de MUDANÇA DE ENDEREÇO da versão web — publicada no endereço ANTIGO no lugar da app
+  (gerada por scripts/pagina-mudanca.mjs). Lê os projetos guardados neste browser (localStorage
+  "linha:*", que fica preso a este endereço) e leva-os para o endereço novo (config.js → destino):
+   - direto: abre a app nova e passa-lhe os dados por postMessage (só para a origem do destino);
+   - ficheiro: descarrega uma cópia .json para importar lá ("Importar cópia de dados").
+  NUNCA apaga os dados daqui — ficam como cópia de segurança.
+-->
+<style>
+  :root{
+    --bg:#10141A; --panel:#1A2027; --panel-alt:#212A33; --line:#2C3540; --chalk:#ECEFF2;
+    --muted:#8993A1; --pitch:#3F9142; --crimson:#C1533D; --radius:10px; --radius-sm:6px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0; background:var(--bg); color:var(--chalk); font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;}
+  body{min-height:100vh; display:flex; align-items:center; justify-content:center;
+    padding:max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));}
+  .card{width:100%; max-width:480px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:24px;}
+  .brand{display:flex; align-items:center; gap:10px; margin-bottom:18px;}
+  .mark{width:28px; height:28px; border-radius:6px; background:var(--pitch);}
+  .brand b{font-family:"Space Grotesk",Inter,sans-serif; font-size:20px; letter-spacing:.5px;}
+  h1{font-family:"Space Grotesk",Inter,sans-serif; font-size:21px; margin:0 0 8px;}
+  p{color:var(--muted); line-height:1.5; font-size:14.5px; margin:0 0 12px;}
+  .novo{display:block; background:var(--panel-alt); border:1px solid var(--line); border-radius:var(--radius-sm);
+    padding:10px 12px; color:var(--chalk); font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:14px; word-break:break-all; margin:0 0 16px;}
+  .acoes{display:flex; flex-direction:column; gap:10px; margin-top:6px;}
+  button,a.btn{display:block; width:100%; text-align:center; text-decoration:none; border-radius:var(--radius-sm);
+    padding:12px 14px; font-size:15px; font-weight:600; border:1px solid var(--line); background:var(--panel-alt); color:var(--chalk); cursor:pointer;}
+  .prim{background:var(--pitch) !important; border-color:var(--pitch) !important; color:#08110A !important;}
+  .status{min-height:20px; font-size:14px; margin-top:14px; color:var(--chalk);}
+  .status.ok{color:#5fbf63;} .status.erro{color:var(--crimson);}
+  .nota{font-size:12.5px; margin-top:16px; border-top:1px solid var(--line); padding-top:12px;}
+  .escondido{display:none !important;}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand"><div class="mark"></div><b>LINHA</b></div>
+  <h1>A LINHA mudou de endereço</h1>
+  <p>A partir de agora, a LINHA está em:</p>
+  <a class="novo" id="novoEndereco" href="#"></a>
+
+  <div id="comDados" class="escondido">
+    <p id="txtProjetos"></p>
+    <div class="acoes">
+      <button class="prim" id="btnLevar">Levar os meus projetos para o novo endereço</button>
+      <button id="btnDescarregar">Descarregar cópia dos meus dados (.json)</button>
+    </div>
+    <div class="status" id="status"></div>
+    <p class="nota" id="notaIphone">
+      <b>iPhone/iPad com a LINHA no ecrã principal:</b> a app instalada guarda os dados à parte do
+      Safari. Descarrega a cópia, abre o novo endereço no Safari, escolhe "Partilhar → Adicionar ao
+      Ecrã Principal", abre a nova app e usa "Importar cópia de dados" no ecrã de projetos.
+    </p>
+    <p class="nota">Os teus projetos continuam também guardados aqui, como cópia de segurança.</p>
+  </div>
+
+  <div id="semDados" class="escondido">
+    <p>Não há projetos guardados neste browser. A abrir o novo endereço…</p>
+    <div class="acoes"><a class="btn prim" id="btnAbrir" href="#">Abrir a LINHA</a></div>
+  </div>
+</div>
+
+<script src="./config.js"></script>
+<script src="./pacote.js"></script>
+<script>
+(function(){
+  'use strict';
+  const cfg = window.LINHA_MIGRACAO;
+  const P = window.LinhaPacote;
+  const destino = cfg.destino;
+  const origemDestino = new URL(destino).origin;
+  const $ = id => document.getElementById(id);
+
+  $('novoEndereco').textContent = destino.replace(/\/$/, '');
+  $('novoEndereco').href = destino;
+  $('btnAbrir').href = destino;
+
+  let pacote;
+  try{ pacote = P.recolherPacote(localStorage, location.origin); }
+  catch(e){ pacote = null; }
+  const nProjetos = pacote ? P.contarProjetos(pacote) : 0;
+  const temDados = pacote && Object.keys(pacote.dados).length > 0;
+
+  if(!temDados){
+    $('semDados').classList.remove('escondido');
+    setTimeout(() => location.replace(destino), 2500);
+    return;
+  }
+  $('comDados').classList.remove('escondido');
+  $('txtProjetos').textContent = nProjetos === 1
+    ? 'Encontrámos 1 projeto guardado neste browser.'
+    : 'Encontrámos ' + nProjetos + ' projetos guardados neste browser.';
+  const instalada = window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if(!(ios && instalada)) $('notaIphone').classList.add('escondido');
+
+  function estado(msg, tipo){ $('status').textContent = msg; $('status').className = 'status' + (tipo ? ' ' + tipo : ''); }
+
+  $('btnDescarregar').onclick = () => {
+    const blob = new Blob([JSON.stringify(pacote)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'linha-copia-dados-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    estado('Cópia descarregada. No novo endereço, usa "Importar cópia de dados" no ecrã de projetos.', 'ok');
+  };
+
+  $('btnLevar').onclick = () => {
+    // Sem 'noopener': a janela nova precisa de window.opener para pedir os dados.
+    const janela = window.open(destino.replace(/#.*$/, '') + '#receber-dados', '_blank');
+    if(!janela){ estado('O browser bloqueou a nova janela. Permite janelas deste site ou usa a cópia (.json).', 'erro'); return; }
+    estado('A enviar os projetos para o novo endereço…');
+    let enviado = false;
+    const tempo = setTimeout(() => {
+      if(!enviado) estado('O novo endereço não respondeu. Tenta outra vez, ou usa a cópia (.json).', 'erro');
+    }, 30000);
+    window.addEventListener('message', function ouvir(ev){
+      if(ev.origin !== origemDestino || !ev.data) return;
+      if(ev.data.tipo === 'linha-migracao-pronto' && !enviado){
+        enviado = true;
+        // Só para a origem do destino — nenhuma outra página pode receber os dados.
+        janela.postMessage({ tipo: 'linha-migracao-dados', pacote }, origemDestino);
+      } else if(ev.data.tipo === 'linha-migracao-concluida'){
+        clearTimeout(tempo);
+        window.removeEventListener('message', ouvir);
+        const r = ev.data.resumo || {};
+        estado('✓ Projetos levados para o novo endereço (' + ((r.novos || 0) + (r.copias || 0)) + ' novos, ' + (r.iguais || 0) + ' já lá estavam). Já podes usar a LINHA no novo endereço.', 'ok');
+      } else if(ev.data.tipo === 'linha-migracao-erro'){
+        clearTimeout(tempo);
+        estado('O novo endereço não conseguiu guardar os projetos. Usa a cópia (.json).', 'erro');
+      }
+    });
+  };
+})();
+</script>
+</body>
+</html>
